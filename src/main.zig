@@ -1,5 +1,5 @@
 const std = @import("std");
-const parser = @import("parser.zig");
+const Parser = @import("parser.zig").Parser;
 const Lexer = @import("lexer.zig").Lexer;
 
 pub fn main() !void {
@@ -10,13 +10,17 @@ pub fn main() !void {
         std.debug.print("gpa deinit status = {}\n", .{deinit_status});
     }
 
-    const source = try std.fs.cwd().readFileAlloc(al, "test.clop", 1337420);
+    const source = try std.fs.cwd().readFileAlloc(al, "test.kkc", 1337420);
     defer al.free(source);
-    var lexer = Lexer.init(source);
-    while (!lexer.finished()) {
-        const tok = lexer.nextToken();
-        std.debug.print("{}\n", .{tok.type});
+    const lexer = Lexer.init(source);
+    var l = lexer;
+    while (!l.finished()) {
+        const tok = l.nextToken();
+        std.debug.print("{}\n", .{tok});
     }
+
+    var parser = Parser.init(lexer);
+    try parser.parse();
 
     // var what = std.ArrayList(u8).init(al);
     // defer what.deinit();

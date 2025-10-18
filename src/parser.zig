@@ -2,58 +2,118 @@ const std = @import("std");
 const token = @import("token.zig");
 const TokenType = token.TokenType;
 const Token = token.Token;
+const Lexer = @import("lexer.zig").Lexer;
 
-pub fn parse() !void {
-    std.debug.print("in parser\n", .{});
+pub const Parser = struct {
+    lexer: Lexer,
+    currentToken: Token,
 
-    while (!check(.EOF)) {
-        toplevel() catch {
-            sync_to_next_toplevel();
-            return;
+    const Self = @This();
+    pub fn init(l: Lexer) Self {
+        var parser = Self{
+            .lexer = l,
+            .currentToken = undefined,
         };
+
+        parser.currentToken = parser.lexer.nextToken();
+        return parser;
     }
-}
 
-fn toplevel() !void {
-    if (consume(.IDENTIFIER)) |id| {
-        _ = id;
+    pub fn parse(self: *Self) !void {
+        std.debug.print("in parser\n", .{});
 
-        // fn
-        if (consume(.LEFT_PAREN)) |_| {
-            _ = try expect(.RIGHT_PAREN);
-            _ = undefined;
+        while (self.consume(.EOF) == null) {
+            self.toplevel() catch {
+                std.debug.print("Err.\n", .{});
+                sync_to_next_toplevel();
+                return;
+            };
         }
 
-        // constant
-        else if (consume(.EQUALS)) |_| {
-            _ = undefined;
+        std.debug.print("parsing success\n", .{});
+    }
+
+    fn toplevel(self: *Self) !void {
+        if (self.consume(.IDENTIFIER)) |id| {
+            _ = id;
+
+            // fn
+            if (self.consume(.LEFT_PAREN)) |_| {
+                while (self.consume(.RIGHT_PAREN) == null) {
+                    try self.expect(.IDENTIFIER);
+                    if (self.consume(.TYPE)) |_| {}
+                }
+
+                try self.body();
+            }
+
+            // constant
+            else if (self.consume(.EQUALS)) |_| {
+                _ = undefined;
+            } else {
+                return self.err(void, "Expect function or constant definition", .{});
+            }
         } else {
-            try err("Expect function or constant definition, but got %");
+            return self.err(void, "Unexpected definition", .{});
+        }
+
+        // consume statement separators
+        while (self.consume(.STMT_SEP) != null) {}
+    }
+
+    fn body(self: *Self) !void {
+        try self.expect(.INDENT);
+
+        while (self.consume(.DEDENT) == null) {
+            try self.statement();
         }
     }
-}
 
-fn expect(tt: TokenType) !Token {
-    _ = tt;
-    return undefined;
-}
+    fn statement(self: *Self) ParseError!void {
+        if (self.consume(.RETURN)) |_| {
+            try self.expression();
+        } else if (self.consume(.IDENTIFIER)) |v| {
+            _ = v;
+            try self.expect(.EQUALS);
+            try self.expression();
+        } else if (self.consume(.IF)) |_| {
+            try self.expression();
+            try self.body();
+        } else {
+            return self.err(void, "Expect statement.", .{});
+        }
 
-fn consume(tt: TokenType) ?Token {
-    _ = tt;
-    return undefined;
-}
+        if (self.currentToken.type != .DEDENT) {
+            try self.expect(.STMT_SEP);
+        }
+    }
 
-fn check(tt: TokenType) bool {
-    _ = tt;
-    return undefined;
-}
+    fn expression(self: *Self) !void {
+        // placeholder!
+        try self.expect(.IDENTIFIER);
+    }
 
-fn err(comptime s: []const u8) !void {
-    _ = s;
-    return error.ParseError;
-}
+    fn expect(self: *Self, tt: TokenType) !void {
+        _ = self.consume(tt) orelse return self.err(void, "Expect {}", .{tt});
+    }
 
-// this might be in the tokenizer.
-fn sync_to_next_toplevel() void {}
+    fn consume(self: *Self, tt: TokenType) ?Token {
+        const tok = self.currentToken;
+        if (tok.type == tt) {
+            self.currentToken = self.lexer.nextToken();
+            return tok;
+        } else {
+            return null;
+        }
+    }
 
-const ParseError = error{ParseError};
+    fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
+        std.debug.print(fmt ++ " at {}\n", args ++ .{self.currentToken});
+        return error.ParseError;
+    }
+
+    // this might be in the tokenizer.
+    fn sync_to_next_toplevel() void {}
+
+    const ParseError = error{ParseError};
+};

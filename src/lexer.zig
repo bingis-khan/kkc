@@ -40,21 +40,6 @@ pub const Lexer = struct {
             return Token{ .type = .EOF, .from = self.currentIndex, .to = self.currentIndex };
         }
 
-        // check if should indent
-        // std.debug.print("stack size: {}\nline offset: {?}\n", .{ self.indentStack.current, self.lineBeginOffset });
-        if (self.lineBeginOffset) |off| {
-            const currentIndent = self.indentStack.top();
-            if (off > currentIndent) {
-                self.indentStack.push(off);
-                return Token{ .type = .INDENT, .from = self.currentIndex - off, .to = self.currentIndex };
-            } else if (off < currentIndent) {
-                _ = self.indentStack.pop();
-                return Token{ .type = .DEDENT, .from = self.currentIndex - off, .to = self.currentIndex };
-            }
-        }
-
-        self.lineBeginOffset = null; // we have accounted for this line, so remove.
-
         const from = self.currentIndex;
         const tt: TokenType = switch (self.nextChar()) {
             '\n' => .STMT_SEP,
@@ -101,7 +86,15 @@ pub const Lexer = struct {
         self.skipWhitespace();
 
         if (tt == .STMT_SEP) {
-            self.lineBeginOffset = self.currentIndex - to;
+            const off = self.currentIndex - (from + 1);
+            const currentIndent = self.indentStack.top();
+            if (off > currentIndent) {
+                self.indentStack.push(off);
+                return Token{ .type = .INDENT, .from = to, .to = self.currentIndex };
+            } else if (off < currentIndent) {
+                _ = self.indentStack.pop();
+                return Token{ .type = .DEDENT, .from = to, .to = self.currentIndex };
+            }
         }
 
         return Token{ .type = tt, .from = from, .to = to };
