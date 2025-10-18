@@ -1,0 +1,7 @@
+add-1 (x Int)
+	return x + 1
+
+main ()
+	x = 1
+	if x
+		return x

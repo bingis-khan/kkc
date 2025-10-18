@@ -1,0 +1,28 @@
+use Term
+
+Maybe a {
+	Just(a)
+	None
+}
+
+Record {
+	left Int
+	right Int
+}
+
+constant = 420
+
+class Str a {
+	print-str(self _) -> Unit
+}
+
+inst Str Record {
+	print-str(self Record) -> Unit {
+		print-str(self.left)
+		print-str(self.right)
+	}
+}
+
+main () {
+	Term.println('cock \(constant)')
+}
