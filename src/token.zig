@@ -15,10 +15,10 @@ pub const TokenType = enum {
     RIGHT_PAREN,
     COMMA,
 
-    RETURN,
-    IF,
-    ELIF,
-    ELSE,
+    STMT_SEP,
+
+    INDENT,
+    DEDENT,
 
     IDENTIFIER,
     TYPE,
@@ -26,11 +26,22 @@ pub const TokenType = enum {
 
     EQUALS,
     PLUS,
+    TIMES,
 
-    STMT_SEP,
+    REF, // &, both ref and deref
+    DOT, // .member
 
-    INDENT,
-    DEDENT,
+    LEFT_BRACE,
+    RIGHT_BRACE,
+
+    RETURN,
+    IF,
+    ELIF,
+    ELSE,
+
+    // class
+    CLASS,
+    INST,
 
     EOF,
 };

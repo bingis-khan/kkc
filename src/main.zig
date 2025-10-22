@@ -1,5 +1,5 @@
 const std = @import("std");
-const Parser = @import("parser.zig").Parser;
+const Parser = @import("parser.zig");
 const Lexer = @import("lexer.zig").Lexer;
 
 pub fn main() !void {

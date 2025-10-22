@@ -3,5 +3,14 @@ add-1 (x Int)
 
 main ()
 	x = y
-	if x
+	if x + y + z * kk + 1 * asd * asd + 123
 		return x
+	elif 333 + m * 123
+		return 429
+	else
+		n = 123
+
+	if 420
+		if 1336 + 1
+			if x + x + x + x
+				return x
