@@ -25,8 +25,11 @@ pub fn main() !void {
     }
 
     var parser = Parser.init(lexer, aa);
-    const ast = try parser.parse();
-    ast.print();
+    const module = try parser.parse();
+    module.ast.print();
+    for (module.errors.items) |err| {
+        err.print();
+    }
 
     // var what = std.ArrayList(u8).init(al);
     // defer what.deinit();

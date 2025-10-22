@@ -87,7 +87,15 @@ pub const Lexer = struct {
         self.skipWhitespace();
 
         if (tt == .STMT_SEP) {
-            const off = self.currentIndex - (from + 1);
+            // continually skip whitespace and newlines until we get another non STMT_SEP. we have to update the line beginning.
+            var beginLine = to;
+            while (!self.isAtEnd() and self.curChar() == '\n') {
+                _ = self.nextChar();
+                beginLine = self.currentIndex;
+                self.skipWhitespace();
+            }
+
+            const off = self.currentIndex - beginLine;
             const currentIndent = self.indentStack.top();
             if (off > currentIndent) {
                 self.indentStack.push(off);

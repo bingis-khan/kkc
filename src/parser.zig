@@ -4,24 +4,60 @@ const TokenType = token.TokenType;
 const Token = token.Token;
 const Lexer = @import("lexer.zig").Lexer;
 const AST = @import("ast.zig");
+const Common = @import("common.zig");
+const Str = Common.Str;
+const Loc = Common.Location;
+const UniqueGen = @import("UniqueGen.zig");
+const Unique = UniqueGen.Unique;
+const Error = @import("error.zig").Error;
 
+const ModuleResult = struct {
+    ast: AST,
+    errors: Errors,
+};
+
+// fuck it. let's do it one pass.
+arena: std.mem.Allocator,
+
+errors: Errors,
+
+// parser zone
 lexer: Lexer,
 currentToken: Token,
-arena: std.mem.Allocator,
+
+// resolver zone
+gen: struct {
+    vars: UniqueGen,
+    // types: UniqueGen,
+    // cons: UniqueGen,
+    // mems: UniqueGen,
+    // classes: UniqueGen,
+    // instances: UniqueGen,
+},
+vars: VarLookup,
 
 const Self = @This();
 pub fn init(l: Lexer, arena: std.mem.Allocator) Self {
     var parser = Self{
-        .lexer = l,
         .arena = arena,
+        .errors = Errors.init(arena), // TODO: use GPA
+
+        // parser
+        .lexer = l,
         .currentToken = undefined,
+
+        // resolver
+        .vars = VarLookup.init(arena), // TODO: use GPA
+        .gen = .{
+            .vars = UniqueGen.init(),
+        },
     };
 
     parser.currentToken = parser.lexer.nextToken();
     return parser;
 }
 
-pub fn parse(self: *Self) !AST {
+pub fn parse(self: *Self) !ModuleResult {
     std.debug.print("in parser\n", .{});
 
     var decs = std.ArrayList(AST.Declaration).init(self.arena);
@@ -40,7 +76,10 @@ pub fn parse(self: *Self) !AST {
 
     std.debug.print("parsing success\n", .{});
 
-    return AST{ .declarations = decs.items };
+    return .{
+        .ast = AST{ .declarations = decs.items },
+        .errors = self.errors,
+    };
 }
 
 fn toplevel(self: *Self) !AST.Declaration {
@@ -52,8 +91,9 @@ fn toplevel(self: *Self) !AST.Declaration {
             while (self.consume(.RIGHT_PAREN) == null) {
                 const pnt = try self.expect(.IDENTIFIER);
                 const pt = try self.mtyp();
+                const v = try self.newVar(pnt);
                 try params.append(.{
-                    .pn = pnt.literal(self.lexer.source),
+                    .pn = v,
                     .pt = pt,
                 });
             }
@@ -100,12 +140,17 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
     const stmtVal: AST.Stmt = b: {
         if (self.check(.RETURN)) {
             const expr = try self.expression();
+
+            try self.endStmt();
             break :b .{ .Return = expr };
         } else if (self.consume(.IDENTIFIER)) |v| {
             try self.devour(.EQUALS);
             const expr = try self.expression();
+
+            try self.endStmt();
+
             break :b .{ .VarDec = .{
-                .varName = v.literal(self.lexer.source),
+                .varDef = try self.newVar(v),
                 .varValue = expr,
             } };
         } else if (self.check(.IF)) {
@@ -136,9 +181,7 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
         }
     };
 
-    if (self.currentToken.type != .DEDENT) {
-        try self.devour(.STMT_SEP);
-    }
+    self.consumeSeps();
 
     const stmt = try self.arena.create(AST.Stmt);
     stmt.* = stmtVal;
@@ -146,12 +189,23 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
     return stmt;
 }
 
+// for single line statements that do not contain a body.
+fn endStmt(self: *Self) !void {
+    if (self.peek().type != .DEDENT) {
+        try self.devour(.STMT_SEP);
+    }
+}
+
+fn consumeSeps(self: *Self) void {
+    while (self.check(.STMT_SEP)) {}
+}
+
 // jon blow my c0c :3
 fn expression(self: *Self) !*AST.Expr {
     return self.precedenceExpression(0);
 }
 
-fn precedenceExpression(self: *Self, minPrec: u32) Error!*AST.Expr {
+fn precedenceExpression(self: *Self, minPrec: u32) ParserError!*AST.Expr {
     var left = try self.term();
 
     while (true) {
@@ -184,7 +238,9 @@ fn term(self: *Self) !*AST.Expr {
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
     const ev: AST.Expr = b: {
         if (self.consume(.IDENTIFIER)) |v| {
-            break :b .{ .Var = v.literal(self.lexer.source) };
+            break :b .{
+                .Var = try self.lookupVar(v),
+            };
         } else if (self.consume(.INTEGER)) |i| {
             break :b .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable };
         } else {
@@ -236,6 +292,39 @@ fn typ(self: *Self) !AST.Type {
     } };
 }
 
+// resolver zone
+const VarLookup = std.StringHashMap(AST.Var);
+
+pub fn newVar(self: *Self, varTok: Token) !AST.Var {
+    const varName = varTok.literal(self.lexer.source);
+    const thisVar = AST.Var{ .name = varName, .uid = self.gen.vars.newUnique() };
+    try self.vars.put(varName, thisVar);
+    return thisVar;
+}
+
+pub fn lookupVar(self: *Self, varTok: Token) !AST.Var {
+    const varName = varTok.literal(self.lexer.source);
+    if (self.vars.get(varName)) |v| {
+        return v;
+    } else {
+        const placeholderVar = AST.Var{
+            .name = varName,
+            .uid = self.gen.vars.newUnique(),
+        };
+        try self.errors.append(.{
+            .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
+                .from = varTok.from,
+                .to = varTok.to,
+                .source = self.lexer.source,
+            } },
+        });
+
+        // return placeholder var after an error.
+        return placeholderVar;
+    }
+}
+
+// parser zone
 fn expect(self: *Self, tt: TokenType) !Token {
     return self.consume(tt) orelse return self.err(Token, "Expect {}", .{tt});
 }
@@ -276,4 +365,8 @@ fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !
 fn sync_to_next_toplevel() void {}
 
 const ParseError = error{ParseError};
-const Error = error{ ParseError, OutOfMemory }; // full error set when it cannot be inferred.
+const ParserError = error{ ParseError, OutOfMemory }; // full error set when it cannot be inferred.
+
+// stores user errors.
+//   might this def put it somewhere else.
+const Errors = std.ArrayList(Error);

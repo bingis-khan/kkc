@@ -1,5 +1,5 @@
 add-1 (x Int)
-	return x
+	return x + 1
 
 main ()
 	x = y
@@ -10,7 +10,11 @@ main ()
 	else
 		n = 123
 
-	if 420
-		if 1336 + 1
-			if x + x + x + x
-				return x
+
+
+	cock = 1
+
+
+
+
+	return 1

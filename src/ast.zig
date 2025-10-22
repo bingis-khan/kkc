@@ -1,5 +1,6 @@
 const Str = @import("common.zig").Str;
 const std = @import("std");
+const Unique = @import("UniqueGen.zig").Unique;
 
 declarations: []Declaration, // top level
 
@@ -14,9 +15,7 @@ const Ctx = struct {
             if (c == '\n') {
                 if (last_nl_i != i) {
                     if (self.hadNewline.*) {
-                        for (0..self.indent) |_| {
-                            std.debug.print(" ", .{});
-                        }
+                        self.sindent();
                     }
                     std.debug.print("{s}\n", .{ss[last_nl_i..i]});
                 } else {
@@ -30,21 +29,23 @@ const Ctx = struct {
         // copied from upper shit.
         if (last_nl_i != ss.len) {
             if (self.hadNewline.*) {
-                for (0..self.indent) |_| {
-                    std.debug.print(" ", .{});
-                }
+                self.sindent();
                 self.hadNewline.* = false;
             }
             std.debug.print("{s}", .{ss[last_nl_i..ss.len]});
         }
     }
 
+    fn sindent(self: Self) void {
+        for (0..self.indent) |_| {
+            std.debug.print("  ", .{});
+        }
+    }
+
     // HACK: don't use newlines in format strings PLS
     fn sp(self: Self, comptime fmt: []const u8, args: anytype) void {
         if (fmt.len > 0 and self.hadNewline.*) {
-            for (0..self.indent) |_| {
-                std.debug.print(" ", .{});
-            }
+            self.sindent();
             self.hadNewline.* = false;
         }
         std.debug.print(fmt, args);
@@ -78,12 +79,12 @@ pub const Function = struct {
     ret: ?*Type,
     body: []*Stmt,
 
-    pub const Param = struct { pn: Str, pt: ?*Type };
+    pub const Param = struct { pn: Var, pt: ?*Type };
 
     fn print(self: @This(), c: Ctx) void {
         c.sp("{s} (", .{self.name});
         for (self.params) |param| {
-            c.s(param.pn);
+            param.pn.print(c);
             if (param.pt) |t| {
                 c.s(" ");
                 t.print(c);
@@ -105,16 +106,14 @@ fn printBody(stmts: []*Stmt, oldC: Ctx) void {
     c.indent +%= 1;
 
     for (stmts) |stmt| {
-        for (0..c.indent) |_| {
-            c.s(" ");
-        }
         stmt.print(c);
-        c.s("\n");
+        // this will happen in Stmt.print(), because we don't want to put newlines after nesting stmts
+        // c.s("\n");
     }
 }
 
 pub const Stmt = union(enum) {
-    VarDec: struct { varName: Str, varValue: *Expr },
+    VarDec: struct { varDef: Var, varValue: *Expr },
     If: struct {
         cond: *Expr,
         bTrue: []Rec,
@@ -129,8 +128,10 @@ pub const Stmt = union(enum) {
     fn print(self: @This(), c: Ctx) void {
         switch (self) {
             .VarDec => |vd| {
-                c.sp("{s} = ", .{vd.varName});
+                vd.varDef.print(c);
+                c.s(" = ");
                 vd.varValue.print(c);
+                c.s("\n");
             },
             .If => |ifstmt| {
                 c.s("if ");
@@ -153,6 +154,7 @@ pub const Stmt = union(enum) {
             .Return => |expr| {
                 c.s("return ");
                 expr.print(c);
+                c.s("\n");
             },
         }
     }
@@ -160,14 +162,16 @@ pub const Stmt = union(enum) {
 
 pub const Expr = union(enum) {
     BinOp: struct { l: Rec, op: BinOp, r: Rec },
-    Var: Str,
+    Var: Var,
     Int: i64, // obv temporary.
 
     const Rec = *@This();
 
     fn print(self: @This(), c: Ctx) void {
         switch (self) {
-            .Var => |v| c.s(v),
+            .Var => |v| {
+                v.print(c);
+            },
             .Int => |i| c.sp("{}", .{i}),
             .BinOp => |bop| {
                 c.s("(");
@@ -227,5 +231,15 @@ pub const Type = union(enum) {
             },
             else => unreachable,
         }
+    }
+};
+
+pub const Var = struct {
+    name: Str,
+    uid: Unique,
+
+    fn print(v: @This(), c: Ctx) void {
+        c.s(v.name);
+        c.sp("{}", .{v.uid});
     }
 };

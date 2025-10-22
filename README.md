@@ -13,15 +13,17 @@ The syntax is similar on purpose, as writing a lexer and tokenizer for this is n
 ## Features
 
   - ADTs, typeclasses, lambdas and all that.
-  - anonymous record (tbd in KindaC)
+  - anonymous records (tbd in KindaC)
   - sensible STD
+  - one pass: parsing, resolving, typechecking (that's the goal)
 
 
 ## Differences with kc
 
-t  - separate type for function-likes.
+  - separate type for function-likes. (voldemort lambdas)
   - no arbitrary nesting (maybe I'll allow nested functions, but nested will actually act as anonymous lambdas.)
   - arbitrary declaration order!
+  - top level CONSTANTS (or just keep em globals? gotta check how Rust handles them)
 
 
 ## Closures?
