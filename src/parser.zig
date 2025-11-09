@@ -11,6 +11,7 @@ const UniqueGen = @import("UniqueGen.zig");
 const Unique = UniqueGen.Unique;
 const Error = @import("error.zig").Error;
 const stack = @import("stack.zig");
+const TypeContext = @import("TypeContext.zig");
 
 const ModuleResult = struct {
     ast: AST,
@@ -29,13 +30,15 @@ currentToken: Token,
 // resolver zone
 gen: struct {
     vars: UniqueGen,
-    // types: UniqueGen,
     // cons: UniqueGen,
     // mems: UniqueGen,
     // classes: UniqueGen,
     // instances: UniqueGen,
 },
 scope: Scope,
+
+// type zone
+typeContext: TypeContext,
 
 const Self = @This();
 pub fn init(l: Lexer, arena: std.mem.Allocator) Self {
@@ -52,6 +55,9 @@ pub fn init(l: Lexer, arena: std.mem.Allocator) Self {
         .gen = .{
             .vars = UniqueGen.init(),
         },
+
+        // typeshit
+        .typeContext = TypeContext.init(arena),
     };
 
     parser.currentToken = parser.lexer.nextToken();
@@ -85,24 +91,30 @@ pub fn parse(self: *Self) !ModuleResult {
 
 fn toplevel(self: *Self) !AST.Declaration {
     if (self.consume(.IDENTIFIER)) |id| {
-
         // fn
         if (self.consume(.LEFT_PAREN)) |_| {
+            const fnv = try self.newVar(id);
             var params = std.ArrayList(AST.Function.Param).init(self.arena);
-            while (self.consume(.RIGHT_PAREN) == null) {
-                const pnt = try self.expect(.IDENTIFIER);
-                const pt = try self.mtyp();
-                const v = try self.newVar(pnt);
-                try params.append(.{
-                    .pn = v,
-                    .pt = pt,
-                });
+            if (!self.check(.RIGHT_PAREN)) {
+                while (true) {
+                    const pnt = try self.expect(.IDENTIFIER);
+                    const pt = try self.mtyp();
+                    const v = try self.newVar(pnt);
+                    try params.append(.{
+                        .pn = v,
+                        .pt = pt,
+                    });
+
+                    if (!self.check(.COMMA)) break;
+                }
+
+                try self.devour(.RIGHT_PAREN);
             }
 
             const ret = try self.mtyp();
             const fnBody = try self.body();
             const fnd = AST.Function{
-                .name = id.literal(self.lexer.source),
+                .name = fnv,
                 .params = params.items,
                 .ret = ret,
                 .body = fnBody,
@@ -147,15 +159,22 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
             try self.endStmt();
             break :b .{ .Return = expr };
         } else if (self.consume(.IDENTIFIER)) |v| {
-            try self.devour(.EQUALS);
-            const expr = try self.expression();
+            // here, choose between identifier and call
+            if (self.check(.EQUALS)) {
+                const expr = try self.expression();
 
-            try self.endStmt();
+                try self.endStmt();
 
-            break :b .{ .VarDec = .{
-                .varDef = try self.newVar(v),
-                .varValue = expr,
-            } };
+                break :b .{ .VarDec = .{
+                    .varDef = try self.newVar(v),
+                    .varValue = expr,
+                } };
+            } else if (self.check(.LEFT_PAREN)) {
+                // parse call
+                return self.err(*AST.Stmt, "todo.", .{});
+            } else {
+                return self.err(*AST.Stmt, "Expect statement.", .{});
+            }
         } else if (self.check(.IF)) {
             const cond = try self.expression();
             const bTrue = try self.body();
@@ -229,28 +248,58 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
         return left;
     } else {
         self.skip(); // if accepted, consume
+
+        if (binop == .Call) {
+            var params = std.ArrayList(*AST.Expr).init(self.arena);
+            if (!self.check(.RIGHT_PAREN)) {
+                while (true) {
+                    try params.append(try self.expression());
+                    if (!self.check(.COMMA)) break;
+                }
+
+                try self.devour(.RIGHT_PAREN);
+            }
+
+            return self.allocExpr(.{
+                .t = undefined,
+                .e = .{ .Call = .{
+                    .callee = left,
+                    .args = params.items,
+                } },
+            });
+        }
+
         const right = try self.precedenceExpression(nextPrec);
 
-        const e = try self.arena.create(AST.Expr);
-        e.* = .{ .BinOp = .{ .op = binop, .l = left, .r = right } };
-        return e;
+        return self.allocExpr(.{
+            .t = undefined,
+            .e = .{ .BinOp = .{ .op = binop, .l = left, .r = right } },
+        });
     }
 }
 
 fn term(self: *Self) !*AST.Expr {
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
-    const ev: AST.Expr = b: {
-        if (self.consume(.IDENTIFIER)) |v| {
-            break :b .{
-                .Var = try self.lookupVar(v),
-            };
-        } else if (self.consume(.INTEGER)) |i| {
-            break :b .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable };
-        } else {
-            return self.err(*AST.Expr, "Unexpected term ", .{});
-        }
-    };
+    if (self.consume(.IDENTIFIER)) |v| {
+        return self.allocExpr(.{
+            .t = undefined,
+            .e = .{ .Var = try self.lookupVar(v) },
+        });
+    } else if (self.consume(.INTEGER)) |i| {
+        return self.allocExpr(.{
+            .t = undefined,
+            .e = .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable },
+        });
+    } else if (self.check(.LEFT_PAREN)) {
+        const expr = try self.expression();
+        try self.devour(.RIGHT_PAREN);
+        return expr;
+    } else {
+        return self.err(*AST.Expr, "Unexpected term ", .{});
+    }
+}
 
+fn allocExpr(self: Self, ev: AST.Expr) error{OutOfMemory}!*AST.Expr {
     const e = try self.arena.create(AST.Expr);
     e.* = ev;
     return e;
@@ -260,6 +309,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
     return switch (tok.type) {
         .PLUS => .Plus,
         .TIMES => .Times,
+        .LEFT_PAREN => .Call,
         else => null,
     };
 }
@@ -270,20 +320,23 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
         // 0 means it won't be consumed, like a sentinel value.
         .Plus => 1,
         .Times => 2,
+
+        .Call => 10,
+        .RecordAccess => 10,
         else => unreachable,
     };
 }
 
-fn mtyp(self: *Self) !?*AST.Type {
+fn mtyp(self: *Self) !AST.Type {
     // temp
-    const conT = self.consume(.TYPE) orelse return null;
-    const t = try self.arena.create(AST.Type);
-    t.* = AST.Type{ .Con = .{
-        .typename = conT.literal(self.lexer.source),
-        .application = &.{},
-    } };
-
-    return t;
+    if (self.consume(.TYPE)) |conT| {
+        return try self.typeContext.newType(.{ .Con = .{
+            .typename = conT.literal(self.lexer.source),
+            .application = &.{},
+        } });
+    } else {
+        return try self.typeContext.fresh();
+    }
 }
 
 fn typ(self: *Self) !AST.Type {

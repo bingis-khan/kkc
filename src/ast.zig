@@ -1,14 +1,19 @@
 const Str = @import("common.zig").Str;
 const std = @import("std");
 const Unique = @import("UniqueGen.zig").Unique;
+const TypeContext = @import("TypeContext.zig");
 
 declarations: []Declaration, // top level
 
-const Ctx = struct {
+pub const Ctx = struct {
     indent: u32,
     hadNewline: *bool, // check newlines and automatically indent
 
     const Self = @This();
+    pub fn init(hadNewline: *bool) Self {
+        hadNewline.* = true;
+        return Ctx{ .indent = 0, .hadNewline = hadNewline };
+    }
     fn s(self: Self, ss: Str) void {
         var last_nl_i: usize = 0;
         for (ss, 0..) |c, i| {
@@ -50,12 +55,23 @@ const Ctx = struct {
         }
         std.debug.print(fmt, args);
     }
+
+    fn sepBy(self: Self, args: anytype, sep: Str) void {
+        if (args.len == 0) return;
+
+        var margs = args;
+        margs.len = args.len - 1;
+
+        for (margs) |e| {
+            e.print(self);
+            self.s(sep);
+        }
+        args[args.len - 1].print(self);
+    }
 };
 
 // NOTE: right now, use debug statements
-pub fn print(self: @This()) void {
-    var hadNewline = true;
-    const c = Ctx{ .indent = 0, .hadNewline = &hadNewline };
+pub fn print(self: @This(), c: Ctx) void {
     for (self.declarations) |dec| {
         dec.print(c);
     }
@@ -74,27 +90,28 @@ pub const Declaration = union(enum) {
 };
 
 pub const Function = struct {
-    name: Str,
+    name: Var,
     params: []Param,
-    ret: ?*Type,
+    ret: Type,
     body: []*Stmt,
 
-    pub const Param = struct { pn: Var, pt: ?*Type };
+    pub const Param = struct {
+        pn: Var,
+        pt: Type,
+
+        fn print(param: @This(), c: Ctx) void {
+            param.pn.print(c);
+            c.s(" ");
+            param.pt.print(c);
+        }
+    };
 
     fn print(self: @This(), c: Ctx) void {
-        c.sp("{s} (", .{self.name});
-        for (self.params) |param| {
-            param.pn.print(c);
-            if (param.pt) |t| {
-                c.s(" ");
-                t.print(c);
-            }
-        }
+        c.sp("{s} (", .{self.name.name});
+        c.sepBy(self.params, ", ");
         c.s(")");
-        if (self.ret) |r| {
-            c.s(" ");
-            r.print(c);
-        }
+        c.s(" ");
+        self.ret.print(c);
         c.s("\n");
 
         printBody(self.body, c);
@@ -160,15 +177,22 @@ pub const Stmt = union(enum) {
     }
 };
 
-pub const Expr = union(enum) {
-    BinOp: struct { l: Rec, op: BinOp, r: Rec },
-    Var: Var,
-    Int: i64, // obv temporary.
+pub const Expr = struct {
+    t: Type,
+    e: union(enum) {
+        BinOp: struct { l: Rec, op: BinOp, r: Rec },
+        UnOp: struct { e: Rec, op: UnOp },
+        Access: struct { e: Rec, acc: Str },
+        Call: struct { callee: Rec, args: []Rec },
+        Var: Var,
+        Int: i64, // obv temporary.
+    },
 
     const Rec = *@This();
 
     fn print(self: @This(), c: Ctx) void {
-        switch (self) {
+        c.s("(");
+        switch (self.e) {
             .Var => |v| {
                 v.print(c);
             },
@@ -182,9 +206,42 @@ pub const Expr = union(enum) {
                 bop.r.print(c);
                 c.s(")");
             },
+            .UnOp => |uop| {
+                c.s("(");
+                switch (uop.op) {
+                    .Ref => {
+                        c.s("&");
+                        uop.e.print(c);
+                    },
+                    .Deref => {
+                        uop.e.print(c);
+                        c.s("&");
+                    },
+                }
+                c.s(")");
+            },
+            .Access => |acc| {
+                acc.e.print(c);
+                c.sp(".{s}", .{acc.acc});
+            },
+            .Call => |call| {
+                call.callee.print(c);
+                c.s("(");
+                c.sepBy(call.args, ", ");
+                c.s(")");
+            },
         }
+        c.s(" :: ");
+        self.t.print(c);
+        c.s(")");
     }
 };
+
+pub const UnOp = enum {
+    Ref,
+    Deref,
+};
+
 pub const BinOp = enum {
     Plus,
     Minus,
@@ -198,6 +255,10 @@ pub const BinOp = enum {
     GreaterEqualThan,
     LessEqualThan,
 
+    // TODO: explain
+    Call,
+    RecordAccess,
+
     fn print(self: @This(), c: Ctx) void {
         const sop = switch (self) {
             .Plus => "+",
@@ -208,31 +269,43 @@ pub const BinOp = enum {
         c.s(sop);
     }
 };
-pub const Type = union(enum) {
-    Con: struct { typename: Str, application: []Rec },
-    Function: struct { args: []Rec, ret: Rec },
-    TVar: Str,
 
-    const Rec = *@This();
+pub const Type = TyRef;
+pub const TyRef = struct {
+    id: usize,
 
-    fn print(self: @This(), c: Ctx) void {
-        switch (self) {
-            .Con => |con| {
-                c.s(con.typename);
-
-                if (con.application.len > 0) {
-                    c.s("(");
-                    for (con.application) |t| {
-                        t.print(c);
-                        c.s(" ");
-                    }
-                    c.s(")");
-                }
-            },
-            else => unreachable,
-        }
+    fn print(tid: @This(), c: Ctx) void {
+        c.sp("{}", .{tid.id});
     }
 };
+
+pub fn TypeF(comptime a: ?type) type {
+    return union(enum) {
+        const Rec = a orelse *@This();
+
+        Con: struct { typename: Str, application: []Rec },
+        Function: struct { args: []Rec, ret: Rec },
+        TVar: Str,
+
+        fn print(self: @This(), c: Ctx) void {
+            switch (self) {
+                .Con => |con| {
+                    c.s(con.typename);
+
+                    if (con.application.len > 0) {
+                        c.s("(");
+                        for (con.application) |t| {
+                            t.print(c);
+                            c.s(" ");
+                        }
+                        c.s(")");
+                    }
+                },
+                else => unreachable,
+            }
+        }
+    };
+}
 
 pub const Var = struct {
     name: Str,
@@ -240,6 +313,6 @@ pub const Var = struct {
 
     fn print(v: @This(), c: Ctx) void {
         c.s(v.name);
-        c.sp("{}", .{v.uid});
+        c.sp("{}", .{v.uid}); // ZIG BUG: there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
     }
 };

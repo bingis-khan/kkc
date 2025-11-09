@@ -13,9 +13,10 @@ main ()
 
 	cock = x
 	x = cock
-	cock = x
+	cock = ((x) + (1)) * (1 + 234)
 	x = cock
 	cock = x
+	fn = add-1(1, 2)
 
 
 

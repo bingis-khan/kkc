@@ -1,6 +1,7 @@
 const std = @import("std");
 const Parser = @import("parser.zig");
 const Lexer = @import("lexer.zig").Lexer;
+const ast = @import("ast.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -26,7 +27,9 @@ pub fn main() !void {
 
     var parser = Parser.init(lexer, aa);
     const module = try parser.parse();
-    module.ast.print();
+    var hadNewline: bool = undefined;
+    const ctx = ast.Ctx.init(&hadNewline);
+    module.ast.print(ctx);
     for (module.errors.items) |err| {
         err.print();
     }
