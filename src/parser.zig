@@ -10,6 +10,7 @@ const Loc = Common.Location;
 const UniqueGen = @import("UniqueGen.zig");
 const Unique = UniqueGen.Unique;
 const Error = @import("error.zig").Error;
+const stack = @import("stack.zig");
 
 const ModuleResult = struct {
     ast: AST,
@@ -34,7 +35,7 @@ gen: struct {
     // classes: UniqueGen,
     // instances: UniqueGen,
 },
-vars: VarLookup,
+scope: Scope,
 
 const Self = @This();
 pub fn init(l: Lexer, arena: std.mem.Allocator) Self {
@@ -47,7 +48,7 @@ pub fn init(l: Lexer, arena: std.mem.Allocator) Self {
         .currentToken = undefined,
 
         // resolver
-        .vars = VarLookup.init(arena), // TODO: use GPA
+        .scope = Scope.init(arena), // TODO: use GPA
         .gen = .{
             .vars = UniqueGen.init(),
         },
@@ -127,11 +128,13 @@ fn toplevel(self: *Self) !AST.Declaration {
 fn body(self: *Self) ![]*AST.Stmt {
     try self.devour(.INDENT);
 
+    self.scope.beginScope();
     var stmts = std.ArrayList(*AST.Stmt).init(self.arena);
     while (!self.check(.DEDENT)) {
         const stmt = try self.statement();
         try stmts.append(stmt);
     }
+    self.scope.endScope();
 
     return stmts.items;
 }
@@ -293,19 +296,58 @@ fn typ(self: *Self) !AST.Type {
 }
 
 // resolver zone
-const VarLookup = std.StringHashMap(AST.Var);
+const Scope = struct {
+    al: std.mem.Allocator,
+    scopes: stack.Fixed(CurrentScope, Common.MaxIndent),
+
+    pub fn init(al: std.mem.Allocator) @This() {
+        const Scopes = stack.Fixed(CurrentScope, Common.MaxIndent);
+        var scopes = Scopes.init();
+        const defaultScope = CurrentScope.init(al);
+        scopes.push(defaultScope);
+        return .{
+            .al = al,
+            .scopes = scopes,
+        };
+    }
+
+    pub fn currentScope(self: *@This()) *CurrentScope {
+        return self.scopes.topp();
+    }
+
+    pub fn beginScope(self: *@This()) void {
+        self.scopes.push(CurrentScope.init(self.al));
+    }
+
+    pub fn endScope(self: *@This()) void {
+        _ = self.scopes.pop();
+    }
+};
+const CurrentScope = struct {
+    const VarLookup = std.StringHashMap(AST.Var);
+    vars: VarLookup,
+
+    fn init(al: std.mem.Allocator) @This() {
+        return .{
+            .vars = VarLookup.init(al),
+        };
+    }
+};
 
 pub fn newVar(self: *Self, varTok: Token) !AST.Var {
     const varName = varTok.literal(self.lexer.source);
     const thisVar = AST.Var{ .name = varName, .uid = self.gen.vars.newUnique() };
-    try self.vars.put(varName, thisVar);
+    try self.scope.currentScope().vars.put(varName, thisVar);
     return thisVar;
 }
 
 pub fn lookupVar(self: *Self, varTok: Token) !AST.Var {
     const varName = varTok.literal(self.lexer.source);
-    if (self.vars.get(varName)) |v| {
-        return v;
+    var lastVars = self.scope.scopes.iterateFromTop();
+    while (lastVars.next()) |cursc| {
+        if (cursc.vars.get(varName)) |v| {
+            return v;
+        }
     } else {
         const placeholderVar = AST.Var{
             .name = varName,

@@ -2,19 +2,23 @@ add-1 (x Int)
 	return x + 1
 
 main ()
-	x = y
-	if x + y + z * kk + 1 * asd * asd + 123
+	x = 1
+	if x + 123
+		x = 2
 		return x
-	elif 333 + m * 123
-		return 429
 	else
 		n = 123
 
 
 
-	cock = 1
+	cock = x
+	x = cock
+	cock = x
+	x = cock
+	cock = x
 
 
 
 
-	return 1
+	return x
+

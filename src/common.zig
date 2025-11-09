@@ -4,3 +4,5 @@ pub const Location = struct {
     to: usize,
     source: Str, // store this, because errors can come from diffent files.
 };
+
+pub const MaxIndent = 512;

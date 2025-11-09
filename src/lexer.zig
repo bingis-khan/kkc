@@ -2,6 +2,8 @@ const token = @import("token.zig");
 const Token = token.Token;
 const TokenType = token.TokenType;
 const std = @import("std");
+const Common = @import("common.zig");
+const stack = @import("stack.zig");
 pub const Lexer = struct {
     source: []u8,
     indentStack: IndentStack,
@@ -12,7 +14,7 @@ pub const Lexer = struct {
     // nil when it's already done something.
     lineBeginOffset: ?usize,
 
-    const IndentStack = FixedStack(usize, 512);
+    const IndentStack = stack.Fixed(usize, Common.MaxIndent);
     const Self = @This();
 
     pub fn init(src: []u8) Self {
@@ -160,34 +162,3 @@ pub const Lexer = struct {
         }
     }
 };
-
-fn FixedStack(comptime t: type, comptime sz: usize) type {
-    return struct {
-        mem: [sz]t,
-        current: usize,
-
-        const Self = @This();
-
-        fn init() Self {
-            return .{
-                .mem = undefined,
-                .current = 0,
-            };
-        }
-
-        // TODO: add overflow checking  and errors (but it should not happen when the code is correct, so I'm not sure)
-        fn push(s: *Self, item: t) void {
-            s.mem[s.current] = item;
-            s.current += 1;
-        }
-
-        fn pop(s: *Self) t {
-            s.current -= 1;
-            return s.mem[s.current];
-        }
-
-        fn top(s: *const Self) t {
-            return s.mem[s.current - 1];
-        }
-    };
-}
