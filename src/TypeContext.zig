@@ -53,6 +53,7 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
     const tt1 = self.getType(t1);
 
     // handle tyvars, cuz it's easier.
+    // TODO: occurs check
     switch (tt1) {
         .TyVar => {
             self.setType(t1, t2);

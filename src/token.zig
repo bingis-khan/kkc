@@ -25,6 +25,7 @@ pub const TokenType = enum {
     INTEGER,
 
     EQUALS,
+    EQEQ,
     PLUS,
     TIMES,
 

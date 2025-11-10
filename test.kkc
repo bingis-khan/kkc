@@ -1,13 +1,15 @@
 add-1 (x Int)
 	return x + 1
 
+id (x)
+	return x
+
 main ()
 	x = 1
-	if x + 123
+	if x + 123 == 1
 		x = 2
+		x = x
 		return x
-	elif 1
-		return cock
 	else
 		n = 123
 
@@ -17,9 +19,9 @@ main ()
 	cock = ((x) + (1)) * (1 + 234)
 	x = cock
 	cock = x
-	fn = add-1(1, 2)
-
-
+	fn = add-1
+	x = fn(1)
+	x = id(id)
 
 
 	return x

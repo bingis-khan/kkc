@@ -268,6 +268,7 @@ pub const BinOp = enum {
         const sop = switch (self) {
             .Plus => "+",
             .Times => "*",
+            .Equals => "==",
             else => "XXX",
         };
 

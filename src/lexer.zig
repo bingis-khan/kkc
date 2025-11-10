@@ -48,7 +48,14 @@ pub const Lexer = struct {
             '(' => .LEFT_PAREN,
             ')' => .RIGHT_PAREN,
             ',' => .COMMA,
-            '=' => .EQUALS,
+            '=' => b: {
+                if (self.curChar() == '=') {
+                    _ = self.nextChar();
+                    break :b .EQEQ;
+                }
+
+                break :b .EQUALS;
+            },
             '+' => .PLUS,
             '*' => .TIMES,
             'a'...'z' => b: {

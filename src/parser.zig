@@ -41,9 +41,11 @@ scope: Scope,
 
 // type zone
 typeContext: TypeContext,
+returnType: AST.Type,
 
 const Self = @This();
 pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
+    const context = try TypeContext.init(arena, errors);
     var parser = Self{
         .arena = arena,
         .errors = errors, // TODO: use GPA
@@ -59,7 +61,8 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
         },
 
         // typeshit
-        .typeContext = try TypeContext.init(arena, errors),
+        .typeContext = context,
+        .returnType = context.defined(.Int),
     };
 
     parser.currentToken = parser.lexer.nextToken();
@@ -102,6 +105,7 @@ fn toplevel(self: *Self) !AST.Declaration {
                     const pnt = try self.expect(.IDENTIFIER);
                     const pt = try self.mtyp();
                     const v = try self.newVar(pnt);
+                    try self.typeContext.unify(v.t, pt);
                     try params.append(.{
                         .pn = v,
                         .pt = pt,
@@ -114,7 +118,23 @@ fn toplevel(self: *Self) !AST.Declaration {
             }
 
             const ret = try self.mtyp();
+
+            // make type from function
+            const paramTs = try self.arena.alloc(AST.Type, params.items.len);
+            for (params.items, 0..) |et, i| {
+                paramTs[i] = et.pt;
+            }
+            const fnType = try self.typeContext.newType(.{
+                .Fun = .{ .args = paramTs, .ret = ret },
+            });
+            try self.typeContext.unify(fnv.t, fnType);
+
+            // set return and parse body
+            const oldReturnType = self.returnType;
+            self.returnType = ret;
             const fnBody = try self.body();
+            self.returnType = oldReturnType;
+
             const fnd = AST.Function{
                 .name = fnv,
                 .params = params.items,
@@ -156,6 +176,7 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
     const stmtVal: AST.Stmt = b: {
         if (self.check(.RETURN)) {
             const expr = try self.expression();
+            try self.typeContext.unify(expr.t, self.returnType);
 
             try self.endStmt();
             break :b .{ .Return = expr };
@@ -163,11 +184,13 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
             // here, choose between identifier and call
             if (self.check(.EQUALS)) {
                 const expr = try self.expression();
+                const vv = try self.newVar(v);
+                try self.typeContext.unify(vv.t, expr.t);
 
                 try self.endStmt();
 
                 break :b .{ .VarDec = .{
-                    .varDef = try self.newVar(v),
+                    .varDef = vv,
                     .varValue = expr,
                 } };
             } else if (self.check(.LEFT_PAREN)) {
@@ -278,7 +301,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             try self.typeContext.unify(callType, left.t);
 
             return self.allocExpr(.{
-                .t = callType,
+                .t = retType,
                 .e = .{ .Call = .{
                     .callee = left,
                     .args = params.items,
@@ -351,6 +374,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
     return switch (tok.type) {
         .PLUS => .Plus,
         .TIMES => .Times,
+        .EQEQ => .Equals,
         .LEFT_PAREN => .Call,
         else => null,
     };
@@ -360,8 +384,9 @@ fn getBinOp(tok: Token) ?AST.BinOp {
 fn binOpPrecedence(op: AST.BinOp) u32 {
     return switch (op) {
         // 0 means it won't be consumed, like a sentinel value.
-        .Plus => 1,
-        .Times => 2,
+        .Equals => 1,
+        .Plus => 2,
+        .Times => 3,
 
         .Call => 10,
         .RecordAccess => 10,
