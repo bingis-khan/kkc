@@ -2,6 +2,7 @@ const std = @import("std");
 const Parser = @import("parser.zig");
 const Lexer = @import("lexer.zig").Lexer;
 const ast = @import("ast.zig");
+const Errors = @import("error.zig").Errors;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -25,13 +26,18 @@ pub fn main() !void {
         std.debug.print("{}\n", .{tok});
     }
 
-    var parser = Parser.init(lexer, aa);
+    var errors = Errors.init(aa);
+    var parser = try Parser.init(lexer, &errors, aa);
     const module = try parser.parse();
     var hadNewline: bool = undefined;
-    const ctx = ast.Ctx.init(&hadNewline);
+    const ctx = ast.Ctx.init(&hadNewline, &parser.typeContext);
     module.ast.print(ctx);
-    for (module.errors.items) |err| {
-        err.print();
+
+    var fakeNewline: bool = undefined;
+    const fakeHackCtx = ast.Ctx.init(&fakeNewline, &parser.typeContext);
+    fakeNewline = false; // SIKE (but obv. temporary)
+    for (errors.items) |err| {
+        err.print(fakeHackCtx);
     }
 
     // var what = std.ArrayList(u8).init(al);

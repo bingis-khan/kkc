@@ -1,4 +1,8 @@
+const std = @import("std");
 pub const Str = []const u8;
+pub fn streq(s1: Str, s2: Str) bool {
+    return std.mem.eql(u8, s1, s2);
+}
 pub const Location = struct {
     from: usize,
     to: usize,

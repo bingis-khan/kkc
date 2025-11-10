@@ -9,19 +9,21 @@ const Str = Common.Str;
 const Loc = Common.Location;
 const UniqueGen = @import("UniqueGen.zig");
 const Unique = UniqueGen.Unique;
-const Error = @import("error.zig").Error;
+const @"error" = @import("error.zig");
+const Error = @"error".Error;
+const Errors = @"error".Errors;
 const stack = @import("stack.zig");
 const TypeContext = @import("TypeContext.zig");
 
 const ModuleResult = struct {
     ast: AST,
-    errors: Errors,
+    // errors: Errors,
 };
 
 // fuck it. let's do it one pass.
 arena: std.mem.Allocator,
 
-errors: Errors,
+errors: *Errors,
 
 // parser zone
 lexer: Lexer,
@@ -41,10 +43,10 @@ scope: Scope,
 typeContext: TypeContext,
 
 const Self = @This();
-pub fn init(l: Lexer, arena: std.mem.Allocator) Self {
+pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
     var parser = Self{
         .arena = arena,
-        .errors = Errors.init(arena), // TODO: use GPA
+        .errors = errors, // TODO: use GPA
 
         // parser
         .lexer = l,
@@ -57,7 +59,7 @@ pub fn init(l: Lexer, arena: std.mem.Allocator) Self {
         },
 
         // typeshit
-        .typeContext = TypeContext.init(arena),
+        .typeContext = try TypeContext.init(arena, errors),
     };
 
     parser.currentToken = parser.lexer.nextToken();
@@ -85,7 +87,7 @@ pub fn parse(self: *Self) !ModuleResult {
 
     return .{
         .ast = AST{ .declarations = decs.items },
-        .errors = self.errors,
+        // .errors = self.errors,
     };
 }
 
@@ -127,7 +129,6 @@ fn toplevel(self: *Self) !AST.Declaration {
 
         // constant
         else if (self.check(.EQUALS)) {
-            _ = undefined;
             return self.err(AST.Declaration, "todo: unimplemented", .{});
         } else {
             return self.err(AST.Declaration, "Expect function or constant definition", .{});
@@ -177,11 +178,13 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
             }
         } else if (self.check(.IF)) {
             const cond = try self.expression();
+            try self.typeContext.unify(cond.t, self.typeContext.defined(.Bool));
             const bTrue = try self.body();
 
             var elifs = std.ArrayList(AST.Stmt.Elif).init(self.arena);
             while (self.check(.ELIF)) {
                 const elifCond = try self.expression();
+                try self.typeContext.unify(elifCond.t, self.typeContext.defined(.Bool));
                 const elifBody = try self.body();
                 try elifs.append(AST.Stmt.Elif{ .cond = elifCond, .body = elifBody });
             }
@@ -260,8 +263,22 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 try self.devour(.RIGHT_PAREN);
             }
 
+            // how a function is represented.
+            const paramTs = try self.arena.alloc(AST.Type, params.items.len);
+            for (params.items, 0..) |et, i| {
+                paramTs[i] = et.t;
+            }
+
+            const retType = try self.typeContext.fresh();
+
+            const callType = try self.typeContext.newType(.{
+                .Fun = .{ .args = paramTs, .ret = retType },
+            });
+
+            try self.typeContext.unify(callType, left.t);
+
             return self.allocExpr(.{
-                .t = undefined,
+                .t = callType,
                 .e = .{ .Call = .{
                     .callee = left,
                     .args = params.items,
@@ -271,8 +288,32 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
 
         const right = try self.precedenceExpression(nextPrec);
 
+        const exprType = switch (binop) {
+            .Plus,
+            .Minus,
+            .Times,
+            .Divide,
+            .GreaterThan,
+            .LessThan,
+            .GreaterEqualThan,
+            .LessEqualThan,
+            => b: {
+                const intTy = self.typeContext.defined(.Int);
+                try self.typeContext.unify(left.t, intTy);
+                try self.typeContext.unify(right.t, intTy);
+                break :b intTy;
+            },
+
+            .Equals, .NotEquals => b: {
+                try self.typeContext.unify(left.t, right.t);
+                break :b self.typeContext.defined(.Bool);
+            },
+
+            else => unreachable,
+        };
+
         return self.allocExpr(.{
-            .t = undefined,
+            .t = exprType,
             .e = .{ .BinOp = .{ .op = binop, .l = left, .r = right } },
         });
     }
@@ -281,13 +322,14 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
 fn term(self: *Self) !*AST.Expr {
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
     if (self.consume(.IDENTIFIER)) |v| {
+        const dv = try self.lookupVar(v);
         return self.allocExpr(.{
-            .t = undefined,
-            .e = .{ .Var = try self.lookupVar(v) },
+            .t = dv.t,
+            .e = .{ .Var = dv },
         });
     } else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
-            .t = undefined,
+            .t = self.typeContext.defined(.Int),
             .e = .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable },
         });
     } else if (self.check(.LEFT_PAREN)) {
@@ -295,7 +337,7 @@ fn term(self: *Self) !*AST.Expr {
         try self.devour(.RIGHT_PAREN);
         return expr;
     } else {
-        return self.err(*AST.Expr, "Unexpected term ", .{});
+        return self.err(*AST.Expr, "Unexpected term", .{});
     }
 }
 
@@ -389,7 +431,11 @@ const CurrentScope = struct {
 
 pub fn newVar(self: *Self, varTok: Token) !AST.Var {
     const varName = varTok.literal(self.lexer.source);
-    const thisVar = AST.Var{ .name = varName, .uid = self.gen.vars.newUnique() };
+    const thisVar = AST.Var{
+        .name = varName,
+        .uid = self.gen.vars.newUnique(),
+        .t = try self.typeContext.fresh(),
+    };
     try self.scope.currentScope().vars.put(varName, thisVar);
     return thisVar;
 }
@@ -405,6 +451,7 @@ pub fn lookupVar(self: *Self, varTok: Token) !AST.Var {
         const placeholderVar = AST.Var{
             .name = varName,
             .uid = self.gen.vars.newUnique(),
+            .t = try self.typeContext.fresh(),
         };
         try self.errors.append(.{
             .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
@@ -461,7 +508,3 @@ fn sync_to_next_toplevel() void {}
 
 const ParseError = error{ParseError};
 const ParserError = error{ ParseError, OutOfMemory }; // full error set when it cannot be inferred.
-
-// stores user errors.
-//   might this def put it somewhere else.
-const Errors = std.ArrayList(Error);

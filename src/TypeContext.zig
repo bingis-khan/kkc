@@ -2,39 +2,160 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const UniqueGen = @import("UniqueGen.zig");
 const Unique = UniqueGen.Unique;
+const @"error" = @import("error.zig");
+const Errors = @"error".Errors;
+const common = @import("common.zig");
 
 // Personal Note: bruh, I mean, an allocator for this would basically be the same.
 // I guess this is more local.
 const TyRef = ast.TyRef;
-const TyVar = Unique;
 const TyStoreElem = union(enum) {
-    Ref: TyVar,
+    Ref: TyRef,
     Type: ast.TypeF(TyRef), // not necessarily good, because it takes a lot of space. Ideally, it would be a second index to an array of actual immutable AST types.
 };
 const TyStore = std.ArrayList(TyStoreElem);
 
 context: TyStore,
 gen: UniqueGen,
+errors: *Errors, // pointer to the global error array (kinda bad design.)
 
 const Self = @This();
-pub fn init(al: std.mem.Allocator) Self {
+pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
+    var context = TyStore.init(al);
+
+    // init premade types
+    inline for (@typeInfo(PremadeType).Enum.fields) |enumField| {
+        try context.append(.{ .Type = .{ .Con = .{
+            .typename = enumField.name,
+            .application = &.{},
+        } } });
+    }
+
     return .{
-        .context = TyStore.init(al),
+        .context = context,
         .gen = UniqueGen.init(),
+        .errors = errors,
     };
 }
 
-pub fn fresh(self: *Self) !TyRef {
+pub fn fresh(self: *Self) !ast.Type {
     const tid = self.gen.newUnique();
-    return self.addType(.{ .Ref = tid });
+    return self.newType(.{ .TyVar = tid });
 }
 
-pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !TyRef {
-    return self.addType(.{ .Type = t });
-}
-
-fn addType(self: *Self, t: TyStoreElem) !TyRef {
-    try self.context.append(t);
+pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
+    try self.context.append(.{ .Type = t });
     const tid = self.context.items.len - 1;
     return .{ .id = tid };
+}
+
+pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
+    const tt1 = self.getType(t1);
+
+    // handle tyvars, cuz it's easier.
+    switch (tt1) {
+        .TyVar => {
+            self.setType(t1, t2);
+            return;
+        },
+        else => {
+            const tt2 = self.getType(t2);
+            switch (tt2) {
+                .TyVar => {
+                    self.setType(t2, t1);
+                    return;
+                },
+                else => {},
+            }
+        },
+    }
+
+    const tt2 = self.getType(t2);
+    switch (tt1) {
+        .TyVar => unreachable,
+        .Con => |lcon| {
+            switch (tt2) {
+                .Con => |rcon| {
+                    if (!common.streq(lcon.typename, rcon.typename)) {
+                        try self.errMismatch(t1, t2);
+                        return;
+                    }
+
+                    try self.unifyParams(lcon.application, rcon.application);
+                },
+                else => try self.errMismatch(t1, t2),
+            }
+        },
+        .Fun => |lfun| {
+            switch (tt2) {
+                .Fun => |rfun| {
+                    try self.unify(lfun.ret, rfun.ret);
+                    try self.unifyParams(lfun.args, rfun.args);
+                },
+                else => try self.errMismatch(t1, t2),
+            }
+        },
+        .TVar => |tv| {
+            _ = tv;
+            unreachable;
+        }, // TODO
+    }
+}
+
+fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef) !void {
+    if (lps.len != rps.len) {
+        try self.paramLenMismatch(lps.len, rps.len);
+        return;
+    }
+
+    for (lps, rps) |lp, rp| {
+        try self.unify(lp, rp);
+    }
+}
+
+fn errMismatch(self: *Self, lt: TyRef, rt: TyRef) !void {
+    try self.errors.append(.{ .MismatchingTypes = .{ .lt = lt, .rt = rt } });
+}
+
+fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize) !void {
+    try self.errors.append(.{ .MismatchingParamLen = .{ .lpl = lpl, .rpl = rpl } });
+}
+
+fn setType(self: *Self, tref: TyRef, tdest: TyRef) void {
+    var current = tref;
+    while (true) {
+        const next = self.context.items[current.id];
+        self.context.items[current.id] = .{ .Ref = tdest };
+        switch (next) {
+            .Ref => |newTy| current = newTy,
+            .Type => return,
+        }
+    }
+}
+
+pub fn getType(self: *const Self, t: TyRef) ast.TypeF(TyRef) {
+    var current = t;
+    while (true) {
+        switch (self.context.items[current.id]) {
+            .Ref => |newTy| current = newTy,
+            .Type => |actualType| return actualType,
+        }
+    }
+}
+
+// later should be defined in prelude?
+const PremadeType = enum {
+    Bool,
+    Int,
+};
+pub fn defined(self: *const Self, premade: PremadeType) ast.Type {
+    _ = self;
+    return .{ .id = @intCast(@intFromEnum(premade)) };
+}
+
+// copied from parser.zig until I solve how I should report errors (probably an Errors struct that can be passed down to various components.)
+fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
+    std.debug.print(fmt ++ " at {}\n", args ++ .{self.currentToken});
+    std.debug.print("{s}\n", .{self.lexer.source[self.currentToken.from -% 5 .. @min(self.lexer.source.len, self.currentToken.to +% 5)]});
+    return error.ParseError;
 }

@@ -8,13 +8,18 @@ declarations: []Declaration, // top level
 pub const Ctx = struct {
     indent: u32,
     hadNewline: *bool, // check newlines and automatically indent
+    typeContext: *const TypeContext,
 
     const Self = @This();
-    pub fn init(hadNewline: *bool) Self {
+    pub fn init(hadNewline: *bool, typeContext: *const TypeContext) Self {
         hadNewline.* = true;
-        return Ctx{ .indent = 0, .hadNewline = hadNewline };
+        return Ctx{
+            .indent = 0,
+            .hadNewline = hadNewline,
+            .typeContext = typeContext,
+        };
     }
-    fn s(self: Self, ss: Str) void {
+    pub fn s(self: Self, ss: Str) void {
         var last_nl_i: usize = 0;
         for (ss, 0..) |c, i| {
             if (c == '\n') {
@@ -274,18 +279,19 @@ pub const Type = TyRef;
 pub const TyRef = struct {
     id: usize,
 
-    fn print(tid: @This(), c: Ctx) void {
-        c.sp("{}", .{tid.id});
+    pub fn print(tid: @This(), c: Ctx) void {
+        c.typeContext.getType(tid).print(c);
     }
 };
-
+pub const TyVar = Unique;
 pub fn TypeF(comptime a: ?type) type {
     return union(enum) {
         const Rec = a orelse *@This();
 
         Con: struct { typename: Str, application: []Rec },
-        Function: struct { args: []Rec, ret: Rec },
+        Fun: struct { args: []Rec, ret: Rec },
         TVar: Str,
+        TyVar: TyVar,
 
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
@@ -301,6 +307,17 @@ pub fn TypeF(comptime a: ?type) type {
                         c.s(")");
                     }
                 },
+
+                .Fun => |fun| {
+                    c.s("(");
+                    c.sepBy(fun.args, ", ");
+                    c.s(") -> ");
+                    fun.ret.print(c);
+                },
+
+                .TyVar => |tyv| {
+                    c.sp("tyv{}", .{tyv});
+                },
                 else => unreachable,
             }
         }
@@ -310,6 +327,7 @@ pub fn TypeF(comptime a: ?type) type {
 pub const Var = struct {
     name: Str,
     uid: Unique,
+    t: Type,
 
     fn print(v: @This(), c: Ctx) void {
         c.s(v.name);

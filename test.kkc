@@ -6,9 +6,10 @@ main ()
 	if x + 123
 		x = 2
 		return x
+	elif 1
+		return cock
 	else
 		n = 123
-
 
 
 	cock = x
