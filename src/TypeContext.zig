@@ -21,15 +21,7 @@ errors: *Errors, // pointer to the global error array (kinda bad design.)
 
 const Self = @This();
 pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
-    var context = TyStore.init(al);
-
-    // init premade types
-    inline for (@typeInfo(PremadeType).Enum.fields) |enumField| {
-        try context.append(.{ .Type = .{ .Con = .{
-            .typename = enumField.name,
-            .application = &.{},
-        } } });
-    }
+    const context = TyStore.init(al);
 
     return .{
         .context = context,
@@ -77,7 +69,7 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
         .Con => |lcon| {
             switch (tt2) {
                 .Con => |rcon| {
-                    if (!common.streq(lcon.typename, rcon.typename)) {
+                    if (!lcon.type.eq(rcon.type)) {
                         try self.errMismatch(t1, t2);
                         return;
                     }
@@ -142,16 +134,6 @@ pub fn getType(self: *const Self, t: TyRef) ast.TypeF(TyRef) {
             .Type => |actualType| return actualType,
         }
     }
-}
-
-// later should be defined in prelude?
-const PremadeType = enum {
-    Bool,
-    Int,
-};
-pub fn defined(self: *const Self, premade: PremadeType) ast.Type {
-    _ = self;
-    return .{ .id = @intCast(@intFromEnum(premade)) };
 }
 
 // copied from parser.zig until I solve how I should report errors (probably an Errors struct that can be passed down to various components.)

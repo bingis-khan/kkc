@@ -289,7 +289,7 @@ pub fn TypeF(comptime a: ?type) type {
     return union(enum) {
         const Rec = a orelse *@This();
 
-        Con: struct { typename: Str, application: []Rec },
+        Con: struct { type: *Data, application: []Rec },
         Fun: struct { args: []Rec, ret: Rec },
         TVar: Str,
         TyVar: TyVar,
@@ -297,7 +297,7 @@ pub fn TypeF(comptime a: ?type) type {
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
                 .Con => |con| {
-                    c.s(con.typename);
+                    con.type.print(c);
 
                     if (con.application.len > 0) {
                         c.s("(");
@@ -334,4 +334,24 @@ pub const Var = struct {
         c.s(v.name);
         c.sp("{}", .{v.uid}); // ZIG BUG: there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
     }
+};
+
+pub const Data = struct {
+    uid: Unique,
+    name: Str,
+    cons: []Con,
+
+    pub fn eq(l: *const @This(), r: *const @This()) bool {
+        return l.uid == r.uid;
+    }
+
+    fn print(self: *const @This(), c: Ctx) void {
+        c.sp("{s}@{}", .{ self.name, self.uid });
+    }
+};
+
+pub const Con = struct {
+    uid: Unique,
+    name: Str,
+    tys: []Type,
 };

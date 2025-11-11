@@ -14,6 +14,7 @@ const Error = @"error".Error;
 const Errors = @"error".Errors;
 const stack = @import("stack.zig");
 const TypeContext = @import("TypeContext.zig");
+const Prelude = @import("Prelude.zig");
 
 const ModuleResult = struct {
     ast: AST,
@@ -32,7 +33,8 @@ currentToken: Token,
 // resolver zone
 gen: struct {
     vars: UniqueGen,
-    // cons: UniqueGen,
+    types: UniqueGen,
+    cons: UniqueGen,
     // mems: UniqueGen,
     // classes: UniqueGen,
     // instances: UniqueGen,
@@ -41,7 +43,8 @@ scope: Scope,
 
 // type zone
 typeContext: TypeContext,
-returnType: AST.Type,
+prelude: ?Prelude,
+returnType: ?AST.Type,
 
 const Self = @This();
 pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
@@ -56,13 +59,12 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
 
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
-        .gen = .{
-            .vars = UniqueGen.init(),
-        },
+        .gen = .{ .vars = UniqueGen.init(), .types = UniqueGen.init(), .cons = UniqueGen.init() },
 
         // typeshit
         .typeContext = context,
-        .returnType = context.defined(.Int),
+        .returnType = null,
+        .prelude = null,
     };
 
     parser.currentToken = parser.lexer.nextToken();
@@ -74,16 +76,16 @@ pub fn parse(self: *Self) !ModuleResult {
 
     var decs = std.ArrayList(AST.Declaration).init(self.arena);
     while (self.consume(.EOF) == null) {
-        const dec = self.toplevel() catch {
+        const dec = self.toplevel() catch |e| {
             std.debug.print("Err.\n", .{});
             sync_to_next_toplevel();
-            return error.ParseError;
+            return e;
         };
 
         // consume statement separators
         while (self.consume(.STMT_SEP) != null) {}
 
-        try decs.append(dec);
+        if (dec != null) try decs.append(dec.?);
     }
 
     std.debug.print("parsing success\n", .{});
@@ -94,7 +96,7 @@ pub fn parse(self: *Self) !ModuleResult {
     };
 }
 
-fn toplevel(self: *Self) !AST.Declaration {
+fn toplevel(self: *Self) !?AST.Declaration {
     if (self.consume(.IDENTIFIER)) |id| {
         // fn
         if (self.consume(.LEFT_PAREN)) |_| {
@@ -149,12 +151,47 @@ fn toplevel(self: *Self) !AST.Declaration {
 
         // constant
         else if (self.check(.EQUALS)) {
-            return self.err(AST.Declaration, "todo: unimplemented", .{});
+            return self.err(?AST.Declaration, "todo: unimplemented", .{});
         } else {
-            return self.err(AST.Declaration, "Expect function or constant definition", .{});
+            return self.err(?AST.Declaration, "Expect function or constant definition", .{});
         }
+    } else if (self.consume(.TYPE)) |typename| {
+        if (!self.check(.INDENT)) {
+            // Add type without any constructors
+            _ = try self.newType(.{
+                .uid = self.gen.types.newUnique(),
+                .name = typename.literal(self.lexer.source),
+                .cons = &.{},
+            });
+            return null;
+        }
+
+        var cons = std.ArrayList(AST.Con).init(self.arena);
+        while (!self.check(.DEDENT)) {
+            const conName = try self.expect(.TYPE);
+            var tys = std.ArrayList(AST.Type).init(self.arena);
+            while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
+                // TODO: for now, no complicated types!
+                const ty = try self.typ();
+                try tys.append(ty);
+            }
+            self.consumeSeps();
+
+            try cons.append(.{
+                .uid = self.gen.cons.newUnique(),
+                .name = conName.literal(self.lexer.source),
+                .tys = tys.items,
+            });
+        }
+
+        _ = try self.newType(.{
+            .uid = self.gen.types.newUnique(),
+            .name = typename.literal(self.lexer.source),
+            .cons = cons.items,
+        });
+        return null;
     } else {
-        return self.err(AST.Declaration, "Unexpected definition", .{});
+        return self.err(?AST.Declaration, "Unexpected definition", .{});
     }
 }
 
@@ -172,11 +209,11 @@ fn body(self: *Self) ![]*AST.Stmt {
     return stmts.items;
 }
 
-fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
+fn statement(self: *Self) ParserError!*AST.Stmt {
     const stmtVal: AST.Stmt = b: {
         if (self.check(.RETURN)) {
             const expr = try self.expression();
-            try self.typeContext.unify(expr.t, self.returnType);
+            try self.typeContext.unify(expr.t, try self.getReturnType());
 
             try self.endStmt();
             break :b .{ .Return = expr };
@@ -201,13 +238,13 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
             }
         } else if (self.check(.IF)) {
             const cond = try self.expression();
-            try self.typeContext.unify(cond.t, self.typeContext.defined(.Bool));
+            try self.typeContext.unify(cond.t, try self.defined(.Bool));
             const bTrue = try self.body();
 
             var elifs = std.ArrayList(AST.Stmt.Elif).init(self.arena);
             while (self.check(.ELIF)) {
                 const elifCond = try self.expression();
-                try self.typeContext.unify(elifCond.t, self.typeContext.defined(.Bool));
+                try self.typeContext.unify(elifCond.t, try self.defined(.Bool));
                 const elifBody = try self.body();
                 try elifs.append(AST.Stmt.Elif{ .cond = elifCond, .body = elifBody });
             }
@@ -238,6 +275,7 @@ fn statement(self: *Self) error{ ParseError, OutOfMemory }!*AST.Stmt {
 }
 
 // for single line statements that do not contain a body.
+// (why? in IF and such, a dedent is equivalent to STMTSEP, so we must accept both. it depends on the type of statement.)
 fn endStmt(self: *Self) !void {
     if (self.peek().type != .DEDENT) {
         try self.devour(.STMT_SEP);
@@ -321,7 +359,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .GreaterEqualThan,
             .LessEqualThan,
             => b: {
-                const intTy = self.typeContext.defined(.Int);
+                const intTy = try self.defined(.Int);
                 try self.typeContext.unify(left.t, intTy);
                 try self.typeContext.unify(right.t, intTy);
                 break :b intTy;
@@ -329,7 +367,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
 
             .Equals, .NotEquals => b: {
                 try self.typeContext.unify(left.t, right.t);
-                break :b self.typeContext.defined(.Bool);
+                break :b try self.defined(.Bool);
             },
 
             else => unreachable,
@@ -352,7 +390,7 @@ fn term(self: *Self) !*AST.Expr {
         });
     } else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
-            .t = self.typeContext.defined(.Int),
+            .t = try self.defined(.Int),
             .e = .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable },
         });
     } else if (self.check(.LEFT_PAREN)) {
@@ -398,7 +436,7 @@ fn mtyp(self: *Self) !AST.Type {
     // temp
     if (self.consume(.TYPE)) |conT| {
         return try self.typeContext.newType(.{ .Con = .{
-            .typename = conT.literal(self.lexer.source),
+            .type = try self.lookupType(conT),
             .application = &.{},
         } });
     } else {
@@ -409,13 +447,94 @@ fn mtyp(self: *Self) !AST.Type {
 fn typ(self: *Self) !AST.Type {
     // temp
     const conT = try self.expect(.TYPE);
-    return AST.Type{ .Con = .{
-        .typename = conT.literal(self.lexer.source),
-        .application = .{},
-    } };
+    return try self.typeContext.newType(.{ .Con = .{
+        .type = try self.lookupType(conT),
+        .application = &.{},
+    } });
 }
 
 // resolver zone
+// VARS
+fn newVar(self: *@This(), varTok: Token) !AST.Var {
+    const varName = varTok.literal(self.lexer.source);
+    const thisVar = AST.Var{
+        .name = varName,
+        .uid = self.gen.vars.newUnique(),
+        .t = try self.typeContext.fresh(),
+    };
+    try self.scope.currentScope().vars.put(varName, thisVar);
+    return thisVar;
+}
+
+fn lookupVar(self: *@This(), varTok: Token) !AST.Var {
+    const varName = varTok.literal(self.lexer.source);
+    var lastVars = self.scope.scopes.iterateFromTop();
+    while (lastVars.next()) |cursc| {
+        if (cursc.vars.get(varName)) |v| {
+            return v;
+        }
+    } else {
+        const placeholderVar = AST.Var{
+            .name = varName,
+            .uid = self.gen.vars.newUnique(),
+            .t = try self.typeContext.fresh(),
+        };
+        try self.errors.append(.{
+            .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
+                .from = varTok.from,
+                .to = varTok.to,
+                .source = self.lexer.source,
+            } },
+        });
+
+        // return placeholder var after an error.
+        return placeholderVar;
+    }
+}
+
+// TYPES
+// (requires US to generate a new unique.)
+fn newType(self: *@This(), data: AST.Data) !*AST.Data {
+    const dp = try self.arena.create(AST.Data); // NOTE: I should allocate outside, but it's less writing that way.
+    dp.* = data;
+    try self.scope.currentScope().types.put(data.name, dp);
+    return dp;
+}
+
+fn lookupType(self: *Self, tyTok: Token) !*AST.Data {
+    const typename = tyTok.literal(self.lexer.source);
+    if (self.maybeLookupType(typename)) |ty| {
+        return ty;
+    } else {
+        const placeholderType = try Common.allocOne(self.arena, AST.Data, .{
+            .name = typename,
+            .uid = self.gen.vars.newUnique(),
+            .cons = &.{},
+        });
+        const location = Common.Location{
+            .from = tyTok.from,
+            .to = tyTok.to,
+            .source = self.lexer.source,
+        };
+        try self.errors.append(.{
+            .UndefinedType = .{ .typename = typename, .loc = location },
+        });
+
+        return placeholderType;
+    }
+}
+
+fn maybeLookupType(self: *Self, typename: Str) ?*AST.Data {
+    var lastScopes = self.scope.scopes.iterateFromTop();
+    while (lastScopes.next()) |cursc| {
+        if (cursc.types.get(typename)) |t| {
+            return t;
+        }
+    } else {
+        return null;
+    }
+}
+
 const Scope = struct {
     al: std.mem.Allocator,
     scopes: stack.Fixed(CurrentScope, Common.MaxIndent),
@@ -443,52 +562,37 @@ const Scope = struct {
         _ = self.scopes.pop();
     }
 };
+
 const CurrentScope = struct {
-    const VarLookup = std.StringHashMap(AST.Var);
-    vars: VarLookup,
+    vars: std.StringHashMap(AST.Var),
+    types: std.StringHashMap(*AST.Data),
+    cons: std.StringHashMap(*AST.Con),
 
     fn init(al: std.mem.Allocator) @This() {
         return .{
-            .vars = VarLookup.init(al),
+            .vars = std.StringHashMap(AST.Var).init(al),
+            .types = std.StringHashMap(*AST.Data).init(al),
+            .cons = std.StringHashMap(*AST.Con).init(al),
         };
     }
 };
 
-pub fn newVar(self: *Self, varTok: Token) !AST.Var {
-    const varName = varTok.literal(self.lexer.source);
-    const thisVar = AST.Var{
-        .name = varName,
-        .uid = self.gen.vars.newUnique(),
-        .t = try self.typeContext.fresh(),
-    };
-    try self.scope.currentScope().vars.put(varName, thisVar);
-    return thisVar;
+// typechecking zone
+fn getReturnType(self: *Self) !AST.Type {
+    return self.returnType orelse try self.defined(.Int);
 }
 
-pub fn lookupVar(self: *Self, varTok: Token) !AST.Var {
-    const varName = varTok.literal(self.lexer.source);
-    var lastVars = self.scope.scopes.iterateFromTop();
-    while (lastVars.next()) |cursc| {
-        if (cursc.vars.get(varName)) |v| {
-            return v;
-        }
-    } else {
-        const placeholderVar = AST.Var{
-            .name = varName,
-            .uid = self.gen.vars.newUnique(),
-            .t = try self.typeContext.fresh(),
-        };
-        try self.errors.append(.{
-            .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
-                .from = varTok.from,
-                .to = varTok.to,
-                .source = self.lexer.source,
-            } },
-        });
-
-        // return placeholder var after an error.
-        return placeholderVar;
-    }
+fn defined(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
+    return if (self.prelude) |prelude|
+        prelude.defined(predefinedType)
+    else b: {
+        const data = self.maybeLookupType(Prelude.PremadeTypeName.get(predefinedType)) orelse break :b error.PreludeError;
+        // too much work. We should create a TypeRef and then cache it.
+        break :b try self.typeContext.newType(.{ .Con = .{
+            .type = data,
+            .application = &.{},
+        } });
+    };
 }
 
 // parser zone
@@ -532,4 +636,4 @@ fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !
 fn sync_to_next_toplevel() void {}
 
 const ParseError = error{ParseError};
-const ParserError = error{ ParseError, OutOfMemory }; // full error set when it cannot be inferred.
+const ParserError = error{ ParseError, PreludeError, OutOfMemory }; // full error set when it cannot be inferred.
