@@ -39,9 +39,4 @@ pub fn main() !void {
     for (errors.items) |err| {
         err.print(fakeHackCtx);
     }
-
-    // var what = std.ArrayList(u8).init(al);
-    // defer what.deinit();
-    // try what.append('m');
-    // defer what.deinit();
 }

@@ -78,16 +78,16 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
 pub fn parse(self: *Self) !ModuleResult {
     std.debug.print("in parser\n", .{});
 
-    var decs = std.ArrayList(AST.Declaration).init(self.arena);
+    var decs = std.ArrayList(*AST.Stmt).init(self.arena);
     while (self.consume(.EOF) == null) {
-        const dec = self.toplevel() catch |e| {
+        const dec = self.statement() catch |e| {
             std.debug.print("Err.\n", .{});
             sync_to_next_toplevel();
             return e;
         };
 
         // consume statement separators
-        while (self.consume(.STMT_SEP) != null) {}
+        self.consumeSeps();
 
         if (dec != null) try decs.append(dec.?);
     }
@@ -95,111 +95,98 @@ pub fn parse(self: *Self) !ModuleResult {
     std.debug.print("parsing success\n", .{});
 
     return .{
-        .ast = AST{ .declarations = decs.items },
+        .ast = AST{ .toplevel = decs.items },
         // .errors = self.errors,
     };
 }
 
-fn toplevel(self: *Self) !?AST.Declaration {
-    if (self.consume(.IDENTIFIER)) |id| {
-        // fn
-        if (self.consume(.LEFT_PAREN)) |_| {
-            const fnv = try self.newVar(id);
-            var params = std.ArrayList(AST.Function.Param).init(self.arena);
-            if (!self.check(.RIGHT_PAREN)) {
-                while (true) {
-                    const pnt = try self.expect(.IDENTIFIER);
-                    const pt = try self.mtyp();
-                    const v = try self.newVar(pnt);
-                    try self.typeContext.unify(v.t, pt);
-                    try params.append(.{
-                        .pn = v,
-                        .pt = pt,
-                    });
-
-                    if (!self.check(.COMMA)) break;
-                }
-
-                try self.devour(.RIGHT_PAREN);
-            }
-
-            const ret = try self.mtyp();
-
-            // make type from function
-            const paramTs = try self.arena.alloc(AST.Type, params.items.len);
-            for (params.items, 0..) |et, i| {
-                paramTs[i] = et.pt;
-            }
-            const fnType = try self.typeContext.newType(.{
-                .Fun = .{ .args = paramTs, .ret = ret },
-            });
-            try self.typeContext.unify(fnv.t, fnType);
-
-            // set return and parse body
-            const oldReturnType = self.returnType;
-            self.returnType = ret;
-            const fnBody = try self.body();
-            self.returnType = oldReturnType;
-
-            const fnd = AST.Function{
-                .name = fnv,
-                .params = params.items,
-                .ret = ret,
-                .body = fnBody,
-            };
-
-            const fndec = AST.Declaration{ .Function = fnd };
-
-            return fndec;
-        }
-
-        // constant
-        else if (self.check(.EQUALS)) {
-            return self.err(?AST.Declaration, "todo: unimplemented", .{});
-        } else {
-            return self.err(?AST.Declaration, "Expect function or constant definition", .{});
-        }
-    } else if (self.consume(.TYPE)) |typename| {
-        if (!self.check(.INDENT)) {
-            // Add type without any constructors
-            try self.newData(try Common.allocOne(self.arena, AST.Data, .{
-                .uid = self.gen.types.newUnique(),
-                .name = typename.literal(self.lexer.source),
-                .cons = &.{},
-            }));
-            return null;
-        }
-
-        const data = try self.arena.create(AST.Data);
-        data.uid = self.gen.types.newUnique();
-        data.name = typename.literal(self.lexer.source);
-
-        var cons = std.ArrayList(AST.Con).init(self.arena);
-        while (!self.check(.DEDENT)) {
-            const conName = try self.expect(.TYPE);
-            var tys = std.ArrayList(AST.Type).init(self.arena);
-            while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
-                // TODO: for now, no complicated types!
-                const ty = try self.typ();
-                try tys.append(ty);
-            }
-            self.consumeSeps();
-
-            try cons.append(.{
-                .uid = self.gen.cons.newUnique(),
-                .name = conName.literal(self.lexer.source),
-                .tys = tys.items,
-                .data = data,
-            });
-        }
-
-        data.cons = cons.items;
-
-        try self.newData(data);
-        return null;
-    } else {
-        return self.err(?AST.Declaration, "Unexpected definition", .{});
+fn dataDef(self: *Self, typename: Token) !void {
+    if (!self.check(.INDENT)) {
+        // Add type without any constructors
+        try self.newData(try Common.allocOne(self.arena, AST.Data, .{
+            .uid = self.gen.types.newUnique(),
+            .name = typename.literal(self.lexer.source),
+            .cons = &.{},
+        }));
+        return;
     }
+
+    const data = try self.arena.create(AST.Data);
+    data.uid = self.gen.types.newUnique();
+    data.name = typename.literal(self.lexer.source);
+
+    var cons = std.ArrayList(AST.Con).init(self.arena);
+    while (!self.check(.DEDENT)) {
+        const conName = try self.expect(.TYPE);
+        var tys = std.ArrayList(AST.Type).init(self.arena);
+        while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
+            // TODO: for now, no complicated types!
+            const ty = try self.typ();
+            try tys.append(ty);
+        }
+        self.consumeSeps();
+
+        try cons.append(.{
+            .uid = self.gen.cons.newUnique(),
+            .name = conName.literal(self.lexer.source),
+            .tys = tys.items,
+            .data = data,
+        });
+    }
+
+    data.cons = cons.items;
+
+    try self.newData(data);
+}
+
+fn function(self: *Self, id: Token) !AST.Stmt {
+    const fnv = try self.newVar(id);
+    var params = std.ArrayList(AST.Function.Param).init(self.arena);
+    if (!self.check(.RIGHT_PAREN)) {
+        while (true) {
+            const pnt = try self.expect(.IDENTIFIER);
+            const pt = try self.mtyp();
+            const v = try self.newVar(pnt);
+            try self.typeContext.unify(v.t, pt);
+            try params.append(.{
+                .pn = v,
+                .pt = pt,
+            });
+
+            if (!self.check(.COMMA)) break;
+        }
+
+        try self.devour(.RIGHT_PAREN);
+    }
+
+    const ret = try self.mtyp();
+
+    // make type from function
+    const paramTs = try self.arena.alloc(AST.Type, params.items.len);
+    for (params.items, 0..) |et, i| {
+        paramTs[i] = et.pt;
+    }
+    const fnType = try self.typeContext.newType(.{
+        .Fun = .{ .args = paramTs, .ret = ret },
+    });
+    try self.typeContext.unify(fnv.t, fnType);
+
+    // set return and parse body
+    const oldReturnType = self.returnType;
+    self.returnType = ret;
+    const fnBody = try self.body();
+    self.returnType = oldReturnType;
+
+    const fnd = AST.Function{
+        .name = fnv,
+        .params = params.items,
+        .ret = ret,
+        .body = fnBody,
+    };
+
+    const fndec = AST.Stmt{ .Function = fnd };
+
+    return fndec;
 }
 
 fn body(self: *Self) ![]*AST.Stmt {
@@ -209,15 +196,17 @@ fn body(self: *Self) ![]*AST.Stmt {
     var stmts = std.ArrayList(*AST.Stmt).init(self.arena);
     while (!self.check(.DEDENT)) {
         const stmt = try self.statement();
-        try stmts.append(stmt);
+        if (stmt) |s| {
+            try stmts.append(s);
+        }
     }
     self.scope.endScope();
 
     return stmts.items;
 }
 
-fn statement(self: *Self) ParserError!*AST.Stmt {
-    const stmtVal: AST.Stmt = b: {
+fn statement(self: *Self) ParserError!?*AST.Stmt {
+    const stmtVal: ?AST.Stmt = b: {
         if (self.check(.RETURN)) {
             const expr = try self.expression();
             try self.typeContext.unify(expr.t, try self.getReturnType());
@@ -239,10 +228,15 @@ fn statement(self: *Self) ParserError!*AST.Stmt {
                 } };
             } else if (self.check(.LEFT_PAREN)) {
                 // parse call
-                return self.err(*AST.Stmt, "todo.", .{});
+                // SIKE
+                // right now, parse function
+                break :b try self.function(v);
             } else {
                 return self.err(*AST.Stmt, "Expect statement.", .{});
             }
+        } else if (self.consume(.TYPE)) |typename| {
+            try self.dataDef(typename);
+            break :b null;
         } else if (self.check(.IF)) {
             const cond = try self.expression();
             try self.typeContext.unify(cond.t, try self.defined(.Bool));
@@ -275,10 +269,13 @@ fn statement(self: *Self) ParserError!*AST.Stmt {
 
     self.consumeSeps();
 
-    const stmt = try self.arena.create(AST.Stmt);
-    stmt.* = stmtVal;
+    if (stmtVal) |stmtValForSure| {
+        const stmt = try self.arena.create(AST.Stmt);
+        stmt.* = stmtValForSure;
+        return stmt;
+    }
 
-    return stmt;
+    return null;
 }
 
 // for single line statements that do not contain a body.

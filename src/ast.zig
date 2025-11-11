@@ -3,7 +3,7 @@ const std = @import("std");
 const Unique = @import("UniqueGen.zig").Unique;
 const TypeContext = @import("TypeContext.zig");
 
-declarations: []Declaration, // top level
+toplevel: []*Stmt, // top level
 
 pub const Ctx = struct {
     indent: u32,
@@ -77,22 +77,10 @@ pub const Ctx = struct {
 
 // NOTE: right now, use debug statements
 pub fn print(self: @This(), c: Ctx) void {
-    for (self.declarations) |dec| {
+    for (self.toplevel) |dec| {
         dec.print(c);
     }
 }
-
-pub const Declaration = union(enum) {
-    Function: Function,
-    Constant: struct { name: Str, value: Expr },
-
-    fn print(self: @This(), c: Ctx) void {
-        switch (self) {
-            .Function => |fnd| fnd.print(c),
-            .Constant => unreachable,
-        }
-    }
-};
 
 pub const Function = struct {
     name: Var,
@@ -143,6 +131,7 @@ pub const Stmt = union(enum) {
         bElse: ?[]Rec,
     },
     Return: *Expr,
+    Function: Function,
 
     const Rec = *@This();
     pub const Elif = struct { cond: *Expr, body: []Rec };
@@ -177,6 +166,9 @@ pub const Stmt = union(enum) {
                 c.s("return ");
                 expr.print(c);
                 c.s("\n");
+            },
+            .Function => |fun| {
+                fun.print(c);
             },
         }
     }
