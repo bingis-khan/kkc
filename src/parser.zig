@@ -59,7 +59,11 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
 
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
-        .gen = .{ .vars = UniqueGen.init(), .types = UniqueGen.init(), .cons = UniqueGen.init() },
+        .gen = .{
+            .vars = UniqueGen.init(),
+            .types = UniqueGen.init(),
+            .cons = UniqueGen.init(),
+        },
 
         // typeshit
         .typeContext = context,
@@ -158,13 +162,17 @@ fn toplevel(self: *Self) !?AST.Declaration {
     } else if (self.consume(.TYPE)) |typename| {
         if (!self.check(.INDENT)) {
             // Add type without any constructors
-            _ = try self.newType(.{
+            try self.newData(try Common.allocOne(self.arena, AST.Data, .{
                 .uid = self.gen.types.newUnique(),
                 .name = typename.literal(self.lexer.source),
                 .cons = &.{},
-            });
+            }));
             return null;
         }
+
+        const data = try self.arena.create(AST.Data);
+        data.uid = self.gen.types.newUnique();
+        data.name = typename.literal(self.lexer.source);
 
         var cons = std.ArrayList(AST.Con).init(self.arena);
         while (!self.check(.DEDENT)) {
@@ -181,14 +189,13 @@ fn toplevel(self: *Self) !?AST.Declaration {
                 .uid = self.gen.cons.newUnique(),
                 .name = conName.literal(self.lexer.source),
                 .tys = tys.items,
+                .data = data,
             });
         }
 
-        _ = try self.newType(.{
-            .uid = self.gen.types.newUnique(),
-            .name = typename.literal(self.lexer.source),
-            .cons = cons.items,
-        });
+        data.cons = cons.items;
+
+        try self.newData(data);
         return null;
     } else {
         return self.err(?AST.Declaration, "Unexpected definition", .{});
@@ -388,6 +395,12 @@ fn term(self: *Self) !*AST.Expr {
             .t = dv.t,
             .e = .{ .Var = dv },
         });
+    } else if (self.consume(.TYPE)) |con| {
+        const ct = try self.instantiateCon(con);
+        return self.allocExpr(.{
+            .e = .{ .Con = ct.con },
+            .t = ct.t,
+        });
     } else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
             .t = try self.defined(.Int),
@@ -436,7 +449,7 @@ fn mtyp(self: *Self) !AST.Type {
     // temp
     if (self.consume(.TYPE)) |conT| {
         return try self.typeContext.newType(.{ .Con = .{
-            .type = try self.lookupType(conT),
+            .type = try self.lookupData(conT),
             .application = &.{},
         } });
     } else {
@@ -448,7 +461,7 @@ fn typ(self: *Self) !AST.Type {
     // temp
     const conT = try self.expect(.TYPE);
     return try self.typeContext.newType(.{ .Con = .{
-        .type = try self.lookupType(conT),
+        .type = try self.lookupData(conT),
         .application = &.{},
     } });
 }
@@ -494,14 +507,17 @@ fn lookupVar(self: *@This(), varTok: Token) !AST.Var {
 
 // TYPES
 // (requires US to generate a new unique.)
-fn newType(self: *@This(), data: AST.Data) !*AST.Data {
-    const dp = try self.arena.create(AST.Data); // NOTE: I should allocate outside, but it's less writing that way.
-    dp.* = data;
-    try self.scope.currentScope().types.put(data.name, dp);
-    return dp;
+fn newData(self: *@This(), data: *AST.Data) !void {
+    // add type
+    try self.scope.currentScope().types.put(data.name, data);
+
+    // add constructors
+    for (data.cons) |*con| {
+        try self.scope.currentScope().cons.put(con.name, con);
+    }
 }
 
-fn lookupType(self: *Self, tyTok: Token) !*AST.Data {
+fn lookupData(self: *Self, tyTok: Token) !*AST.Data {
     const typename = tyTok.literal(self.lexer.source);
     if (self.maybeLookupType(typename)) |ty| {
         return ty;
@@ -532,6 +548,48 @@ fn maybeLookupType(self: *Self, typename: Str) ?*AST.Data {
         }
     } else {
         return null;
+    }
+}
+
+// CONS
+fn newCon(self: *@This(), con: *AST.Con) !void {
+    try self.scope.currentScope().cons.put(con.name, con);
+}
+
+fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST.Type } {
+    const conName = conTok.literal(self.lexer.source);
+    var lastVars = self.scope.scopes.iterateFromTop();
+    while (lastVars.next()) |cursc| {
+        if (cursc.cons.get(conName)) |con| {
+            // found con. now we instantiate it.
+            if (con.tys.len == 0) {
+                return .{ .con = con, .t = try self.typeContext.newType(.{ .Con = .{ .type = con.data, .application = &.{} } }) };
+            } else {
+                // todo
+                unreachable;
+            }
+        }
+    } else {
+        const data = try self.arena.create(AST.Data);
+        data.uid = self.gen.types.newUnique();
+        data.name = conName;
+        data.cons = try self.arena.alloc(AST.Con, 1);
+        data.cons[0] = .{
+            .uid = self.gen.cons.newUnique(),
+            .name = conName,
+            .tys = &.{},
+            .data = data,
+        };
+        try self.errors.append(.{
+            .UndefinedCon = .{ .conname = conName, .loc = .{
+                .from = conTok.from,
+                .to = conTok.to,
+                .source = self.lexer.source,
+            } },
+        });
+
+        // return placeholder var after an error.
+        return .{ .con = &data.cons[0], .t = try self.typeContext.fresh() };
     }
 }
 

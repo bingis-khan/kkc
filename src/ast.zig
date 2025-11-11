@@ -190,6 +190,7 @@ pub const Expr = struct {
         Access: struct { e: Rec, acc: Str },
         Call: struct { callee: Rec, args: []Rec },
         Var: Var,
+        Con: *Con,
         Int: i64, // obv temporary.
     },
 
@@ -200,6 +201,9 @@ pub const Expr = struct {
         switch (self.e) {
             .Var => |v| {
                 v.print(c);
+            },
+            .Con => |con| {
+                con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
             .BinOp => |bop| {
@@ -354,4 +358,13 @@ pub const Con = struct {
     uid: Unique,
     name: Str,
     tys: []Type,
+    data: *Data,
+
+    fn print(self: *const @This(), c: Ctx) void {
+        c.s(self.name);
+        if (self.tys.len > 0) {
+            c.s(" ");
+            c.sepBy(self.tys, " ");
+        }
+    }
 };
