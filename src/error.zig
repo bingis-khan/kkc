@@ -20,6 +20,11 @@ pub const Error = union(enum) {
         loc: Loc,
     },
 
+    UndefinedTVar: struct {
+        tvname: Str,
+        loc: Loc,
+    },
+
     // TODO: add location information
     MismatchingTypes: struct {
         lt: AST.Type,
@@ -39,6 +44,7 @@ pub const Error = union(enum) {
             .UndefinedVariable => |uv| p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to }),
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
             .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),
+            .UndefinedTVar => |e| p("undefined tvar {s} at ({}, {})", .{ e.tvname, e.loc.from, e.loc.to }),
             .MismatchingTypes => |e| {
                 c.s("Mismatching types: ");
                 e.lt.print(c); // UGLY

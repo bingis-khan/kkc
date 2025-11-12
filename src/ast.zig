@@ -279,29 +279,44 @@ pub const TyRef = struct {
     pub fn print(tid: @This(), c: Ctx) void {
         c.typeContext.getType(tid).print(c);
     }
+
+    pub fn eq(l: @This(), r: @This()) bool {
+        return l.id == r.id;
+    }
 };
 pub const TyVar = Unique;
+pub const TVar = struct {
+    uid: Unique,
+    name: Str,
+
+    pub fn eq(l: @This(), r: @This()) bool {
+        return l.uid == r.uid;
+    }
+
+    pub fn print(self: @This(), c: Ctx) void {
+        c.sp("{s}#{}", .{ self.name, self.uid });
+    }
+};
 pub fn TypeF(comptime a: ?type) type {
     return union(enum) {
         const Rec = a orelse *@This();
 
-        Con: struct { type: *Data, application: []Rec },
+        Con: struct { type: *Data, application: Match },
         Fun: struct { args: []Rec, ret: Rec },
-        TVar: Str,
+        TVar: TVar,
         TyVar: TyVar,
 
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
                 .Con => |con| {
-                    con.type.print(c);
-
-                    if (con.application.len > 0) {
+                    if (con.application.tvars.len > 0) {
                         c.s("(");
-                        for (con.application) |t| {
-                            t.print(c);
-                            c.s(" ");
-                        }
+                        con.type.print(c);
+                        c.s(" ");
+                        c.sepBy(con.application.tvars, " ");
                         c.s(")");
+                    } else {
+                        con.type.print(c);
                     }
                 },
 
@@ -313,9 +328,13 @@ pub fn TypeF(comptime a: ?type) type {
                 },
 
                 .TyVar => |tyv| {
-                    c.sp("tyv{}", .{tyv});
+                    c.sp("#{}", .{tyv});
                 },
-                else => unreachable,
+
+                .TVar => |tv| {
+                    tv.print(c);
+                },
+                // else => unreachable,
             }
         }
     };
@@ -335,6 +354,7 @@ pub const Var = struct {
 pub const Data = struct {
     uid: Unique,
     name: Str,
+    scheme: Scheme,
     cons: []Con,
 
     pub fn eq(l: *const @This(), r: *const @This()) bool {
@@ -343,6 +363,36 @@ pub const Data = struct {
 
     fn print(self: *const @This(), c: Ctx) void {
         c.sp("{s}@{}", .{ self.name, self.uid });
+    }
+};
+
+pub const Scheme = struct {
+    tvars: []TVar,
+
+    pub fn empty() @This() {
+        return .{ .tvars = &.{} };
+    }
+};
+pub const Match = struct {
+    scheme: Scheme,
+    tvars: []Type,
+
+    pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
+        for (self.scheme.tvars, self.tvars) |tv, t| {
+            if (tv.eq(tvar)) {
+                return t;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn empty(scheme: Scheme) @This() {
+        // sanity check. right now only used for placeholders in case of errors.
+        if (scheme.tvars.len > 0) {
+            unreachable;
+        }
+        return .{ .scheme = scheme, .tvars = &.{} };
     }
 };
 

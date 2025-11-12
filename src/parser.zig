@@ -35,6 +35,7 @@ gen: struct {
     vars: UniqueGen,
     types: UniqueGen,
     cons: UniqueGen,
+    tvars: UniqueGen,
     // mems: UniqueGen,
     // classes: UniqueGen,
     // instances: UniqueGen,
@@ -63,6 +64,7 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
             .vars = UniqueGen.init(),
             .types = UniqueGen.init(),
             .cons = UniqueGen.init(),
+            .tvars = UniqueGen.init(),
         },
 
         // typeshit
@@ -101,12 +103,24 @@ pub fn parse(self: *Self) !ModuleResult {
 }
 
 fn dataDef(self: *Self, typename: Token) !void {
+    self.scope.beginScope();
+
+    // tvars
+    var tvars = std.ArrayList(AST.TVar).init(self.arena);
+    while (self.consume(.IDENTIFIER)) |tvname| {
+        const tv = try self.newTVar(tvname);
+        try tvars.append(tv);
+    }
+
     if (!self.check(.INDENT)) {
         // Add type without any constructors
         try self.newData(try Common.allocOne(self.arena, AST.Data, .{
             .uid = self.gen.types.newUnique(),
             .name = typename.literal(self.lexer.source),
             .cons = &.{},
+            .scheme = .{
+                .tvars = tvars.items,
+            },
         }));
         return;
     }
@@ -114,6 +128,7 @@ fn dataDef(self: *Self, typename: Token) !void {
     const data = try self.arena.create(AST.Data);
     data.uid = self.gen.types.newUnique();
     data.name = typename.literal(self.lexer.source);
+    data.scheme = .{ .tvars = tvars.items }; // TODO: check for errors.
 
     var cons = std.ArrayList(AST.Con).init(self.arena);
     while (!self.check(.DEDENT)) {
@@ -136,6 +151,7 @@ fn dataDef(self: *Self, typename: Token) !void {
 
     data.cons = cons.items;
 
+    self.scope.endScope();
     try self.newData(data);
 }
 
@@ -145,12 +161,15 @@ fn function(self: *Self, id: Token) !AST.Stmt {
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
             const pnt = try self.expect(.IDENTIFIER);
-            const pt = try self.mtyp();
             const v = try self.newVar(pnt);
-            try self.typeContext.unify(v.t, pt);
+            const nextTok = self.peek().type;
+            if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
+                const pt = try self.typ();
+                try self.typeContext.unify(v.t, pt);
+            }
             try params.append(.{
                 .pn = v,
-                .pt = pt,
+                .pt = v.t,
             });
 
             if (!self.check(.COMMA)) break;
@@ -159,7 +178,11 @@ fn function(self: *Self, id: Token) !AST.Stmt {
         try self.devour(.RIGHT_PAREN);
     }
 
-    const ret = try self.mtyp();
+    const ret = try self.typeContext.fresh();
+    if (self.peek().type != .INDENT) {
+        const retTy = try self.typ();
+        try self.typeContext.unify(ret, retTy);
+    }
 
     // make type from function
     const paramTs = try self.arena.alloc(AST.Type, params.items.len);
@@ -445,25 +468,37 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
     };
 }
 
-fn mtyp(self: *Self) !AST.Type {
+fn typ(self: *Self) ParserError!AST.Type {
     // temp
-    if (self.consume(.TYPE)) |conT| {
-        return try self.typeContext.newType(.{ .Con = .{
-            .type = try self.lookupData(conT),
-            .application = &.{},
-        } });
-    } else {
-        return try self.typeContext.fresh();
+    if (self.consume(.TYPE)) |ty| {
+        return (try self.instantiateType(ty)).t;
+    } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
+        return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv) });
+    } else if (self.check(.LEFT_PAREN)) {
+        const ty = try self.sepTy();
+        try self.devour(.RIGHT_PAREN);
+        return ty;
     }
+    unreachable;
 }
 
-fn typ(self: *Self) !AST.Type {
-    // temp
-    const conT = try self.expect(.TYPE);
-    return try self.typeContext.newType(.{ .Con = .{
-        .type = try self.lookupData(conT),
-        .application = &.{},
-    } });
+fn sepTy(self: *Self) !AST.Type {
+    if (self.consume(.TYPE)) |tyName| {
+        const ty = try self.instantiateType(tyName);
+        var tyArgs = std.ArrayList(AST.Type).init(self.arena);
+        while (true) {
+            const tokType = self.peek().type;
+            if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER)) { // bad bad works
+                break;
+            }
+
+            try tyArgs.append(try self.typ());
+        }
+
+        try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
+        return ty.t;
+    }
+    unreachable;
 }
 
 // resolver zone
@@ -517,15 +552,42 @@ fn newData(self: *@This(), data: *AST.Data) !void {
     }
 }
 
-fn lookupData(self: *Self, tyTok: Token) !*AST.Data {
+fn instantiateData(self: *Self, data: *AST.Data) !struct {
+    t: AST.Type,
+    tyArgs: []AST.Type,
+    match: AST.Match,
+} {
+    const match = try self.instantiateScheme(data.scheme);
+
+    return .{
+        .t = try self.typeContext.newType(.{ .Con = .{
+            .type = data,
+            .application = match,
+        } }),
+        .tyArgs = match.tvars,
+        .match = match,
+    };
+}
+
+fn instantiateType(self: *Self, tyTok: Token) !struct {
+    t: AST.Type,
+    tyArgs: []AST.Type,
+    match: AST.Match,
+} {
     const typename = tyTok.literal(self.lexer.source);
-    if (self.maybeLookupType(typename)) |ty| {
-        return ty;
+    if (self.maybeLookupType(typename)) |data| {
+        const dt = try self.instantiateData(data);
+        return .{
+            .t = dt.t,
+            .tyArgs = dt.tyArgs,
+            .match = dt.match,
+        };
     } else {
         const placeholderType = try Common.allocOne(self.arena, AST.Data, .{
             .name = typename,
             .uid = self.gen.vars.newUnique(),
             .cons = &.{},
+            .scheme = .{ .tvars = &.{} },
         });
         const location = Common.Location{
             .from = tyTok.from,
@@ -536,7 +598,15 @@ fn lookupData(self: *Self, tyTok: Token) !*AST.Data {
             .UndefinedType = .{ .typename = typename, .loc = location },
         });
 
-        return placeholderType;
+        const match = AST.Match.empty(placeholderType.scheme);
+        return .{
+            .t = try self.typeContext.newType(.{ .Con = .{
+                .type = placeholderType,
+                .application = match,
+            } }),
+            .tyArgs = &.{},
+            .match = match,
+        };
     }
 }
 
@@ -551,6 +621,29 @@ fn maybeLookupType(self: *Self, typename: Str) ?*AST.Data {
     }
 }
 
+// TVar
+fn newTVar(self: *@This(), tvTok: Token) !AST.TVar {
+    const tvname = tvTok.literal(self.lexer.source);
+    const tv: AST.TVar = .{
+        .uid = self.gen.tvars.newUnique(),
+        .name = tvname,
+    };
+    try self.scope.currentScope().tvars.put(tvname, tv);
+    return tv;
+}
+
+fn lookupTVar(self: *Self, tvTok: Token) !AST.TVar {
+    const tvname = tvTok.literal(self.lexer.source);
+    var lastScopes = self.scope.scopes.iterateFromTop();
+    while (lastScopes.next()) |cursc| {
+        if (cursc.tvars.get(tvname)) |tv| {
+            return tv;
+        }
+    } else {
+        unreachable;
+    }
+}
+
 // CONS
 fn newCon(self: *@This(), con: *AST.Con) !void {
     try self.scope.currentScope().cons.put(con.name, con);
@@ -561,20 +654,19 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
     var lastVars = self.scope.scopes.iterateFromTop();
     while (lastVars.next()) |cursc| {
         if (cursc.cons.get(conName)) |con| {
+            const dt = try self.instantiateData(con.data);
+
             // found con. now we instantiate it.
             if (con.tys.len == 0) {
-                return .{ .con = con, .t = try self.typeContext.newType(.{ .Con = .{ .type = con.data, .application = &.{} } }) };
+                return .{ .con = con, .t = dt.t };
             } else {
                 var args = std.ArrayList(AST.Type).init(self.arena);
                 for (con.tys) |ty| {
-                    try args.append(ty);
+                    try args.append(try self.mapType(&dt.match, ty));
                 }
                 return .{ .con = con, .t = try self.typeContext.newType(.{ .Fun = .{
                     .args = args.items,
-                    .ret = try self.typeContext.newType(.{ .Con = .{
-                        .type = con.data,
-                        .application = &.{},
-                    } }),
+                    .ret = dt.t,
                 } }) };
             }
         }
@@ -589,6 +681,7 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
             .tys = &.{},
             .data = data,
         };
+        data.scheme = AST.Scheme.empty();
         try self.errors.append(.{
             .UndefinedCon = .{ .conname = conName, .loc = .{
                 .from = conTok.from,
@@ -600,6 +693,48 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
         // return placeholder var after an error.
         return .{ .con = &data.cons[0], .t = try self.typeContext.fresh() };
     }
+}
+
+fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match {
+    var tvars = std.ArrayList(AST.Type).init(self.arena);
+    for (scheme.tvars) |_| {
+        try tvars.append(try self.typeContext.fresh());
+    }
+    return .{
+        .scheme = scheme,
+        .tvars = tvars.items,
+    };
+}
+
+pub fn mapType(self: *Self, match: *const AST.Match, ty: AST.Type) !AST.Type {
+    const t = self.typeContext.getType(ty);
+    return switch (t) {
+        .Con => |con| b: {
+            var tvars = std.ArrayList(AST.Type).init(self.arena);
+            var changed = false;
+            for (con.application.tvars) |oldTy| {
+                const newTy = try self.mapType(match, oldTy);
+                changed = changed or !newTy.eq(oldTy);
+                try tvars.append(newTy);
+            }
+
+            if (!changed) {
+                tvars.deinit();
+                break :b ty;
+            }
+
+            break :b try self.typeContext.newType(.{ .Con = .{
+                .type = con.type,
+                .application = .{
+                    .scheme = con.application.scheme,
+                    .tvars = tvars.items,
+                },
+            } });
+        },
+        .Fun => unreachable,
+        .TVar => |tv| match.mapTVar(tv) orelse ty,
+        .TyVar => ty,
+    };
 }
 
 const Scope = struct {
@@ -634,12 +769,14 @@ const CurrentScope = struct {
     vars: std.StringHashMap(AST.Var),
     types: std.StringHashMap(*AST.Data),
     cons: std.StringHashMap(*AST.Con),
+    tvars: std.StringHashMap(AST.TVar),
 
     fn init(al: std.mem.Allocator) @This() {
         return .{
             .vars = std.StringHashMap(AST.Var).init(al),
             .types = std.StringHashMap(*AST.Data).init(al),
             .cons = std.StringHashMap(*AST.Con).init(al),
+            .tvars = std.StringHashMap(AST.TVar).init(al),
         };
     }
 };
@@ -657,7 +794,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
         // too much work. We should create a TypeRef and then cache it.
         break :b try self.typeContext.newType(.{ .Con = .{
             .type = data,
-            .application = &.{},
+            .application = AST.Match.empty(data.scheme),
         } });
     };
 }

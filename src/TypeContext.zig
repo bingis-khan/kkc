@@ -74,7 +74,7 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
                         return;
                     }
 
-                    try self.unifyParams(lcon.application, rcon.application);
+                    try self.unifyMatch(lcon.application, rcon.application);
                 },
                 else => try self.errMismatch(t1, t2),
             }
@@ -95,7 +95,11 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
     }
 }
 
-fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef) !void {
+pub fn unifyMatch(self: *Self, lm: ast.Match, rm: ast.Match) !void {
+    try self.unifyParams(lm.tvars, rm.tvars);
+}
+
+pub fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef) !void {
     if (lps.len != rps.len) {
         try self.paramLenMismatch(lps.len, rps.len);
         return;
@@ -117,6 +121,9 @@ fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize) !void {
 fn setType(self: *Self, tref: TyRef, tdest: TyRef) void {
     var current = tref;
     while (true) {
+        if (current.eq(tdest)) { // check for cycles. checking here to shorten.
+            break;
+        }
         const next = self.context.items[current.id];
         self.context.items[current.id] = .{ .Ref = tdest };
         switch (next) {

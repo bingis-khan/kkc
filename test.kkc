@@ -3,6 +3,13 @@ Bool
 	True
 	False
 
+Maybe a
+	Just a
+	None
+
+nnn = A
+mmm = A
+x = nnn == mmm
 
 x = 1
 
@@ -10,7 +17,7 @@ Maybe
 	Just Int
 	None
 m = Just(12)
-maybe ()
+maybe () Maybe
 	Maybe
 		Just Int
 		None
