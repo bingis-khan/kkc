@@ -265,6 +265,9 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         } else {
             return self.err(*AST.Stmt, "Expect statement.", .{});
         }
+
+        // (if we forget to return an expression, this should catch it)
+        unreachable;
     };
 
     self.consumeSeps();
@@ -562,8 +565,17 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
             if (con.tys.len == 0) {
                 return .{ .con = con, .t = try self.typeContext.newType(.{ .Con = .{ .type = con.data, .application = &.{} } }) };
             } else {
-                // todo
-                unreachable;
+                var args = std.ArrayList(AST.Type).init(self.arena);
+                for (con.tys) |ty| {
+                    try args.append(ty);
+                }
+                return .{ .con = con, .t = try self.typeContext.newType(.{ .Fun = .{
+                    .args = args.items,
+                    .ret = try self.typeContext.newType(.{ .Con = .{
+                        .type = con.data,
+                        .application = &.{},
+                    } }),
+                } }) };
             }
         }
     } else {

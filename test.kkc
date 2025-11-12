@@ -3,15 +3,24 @@ Bool
 	True
 	False
 
-x = 1
-if x == 1
-	return n
-elif False
-	return n
-else
-	return True
 
+x = 1
+
+Maybe
+	Just Int
+	None
+m = Just(12)
+maybe ()
+	Maybe
+		Just Int
+		None
+
+	m = (Just)(123)
+	return m
+
+add-1 (x)
+	return x + 1
 main ()
 	main2 ()
-		return 1
+		return add-1(1)
 	return main2
