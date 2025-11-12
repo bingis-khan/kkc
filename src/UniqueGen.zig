@@ -11,3 +11,6 @@ pub fn newUnique(self: *Self) u64 {
 pub fn init() Self {
     return .{ .state = 0 };
 }
+
+const std = @import("std");
+pub const Context = std.hash_map.AutoContext(Unique);

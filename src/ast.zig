@@ -87,6 +87,7 @@ pub const Function = struct {
     params: []Param,
     ret: Type,
     body: []*Stmt,
+    scheme: Scheme,
 
     pub const Param = struct {
         pn: Var,
@@ -131,7 +132,7 @@ pub const Stmt = union(enum) {
         bElse: ?[]Rec,
     },
     Return: *Expr,
-    Function: Function,
+    Function: *Function,
 
     const Rec = *@This();
     pub const Elif = struct { cond: *Expr, body: []Rec };
@@ -182,6 +183,7 @@ pub const Expr = struct {
         Access: struct { e: Rec, acc: Str },
         Call: struct { callee: Rec, args: []Rec },
         Var: Var,
+        Fun: *Function,
         Con: *Con,
         Int: i64, // obv temporary.
     },
@@ -193,6 +195,9 @@ pub const Expr = struct {
         switch (self.e) {
             .Var => |v| {
                 v.print(c);
+            },
+            .Fun => |fun| {
+                fun.name.print(c);
             },
             .Con => |con| {
                 con.print(c);
@@ -343,11 +348,10 @@ pub fn TypeF(comptime a: ?type) type {
 pub const Var = struct {
     name: Str,
     uid: Unique,
-    t: Type,
 
     fn print(v: @This(), c: Ctx) void {
         c.s(v.name);
-        c.sp("{}", .{v.uid}); // ZIG BUG: there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
+        c.sp("{}", .{v.uid}); // ZIG BUG(?): there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
     }
 };
 
