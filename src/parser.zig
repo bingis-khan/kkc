@@ -165,7 +165,7 @@ fn function(self: *Self, id: Token) !AST.Stmt {
             const v = try self.newVar(pnt);
             const nextTok = self.peek().type;
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
-                const pt = try self.typ();
+                const pt = try self.sepTy();
                 try self.typeContext.unify(v.t, pt);
             }
             try params.append(.{
@@ -180,8 +180,8 @@ fn function(self: *Self, id: Token) !AST.Stmt {
     }
 
     const ret = try self.typeContext.fresh();
-    if (self.peek().type != .INDENT) {
-        const retTy = try self.typ();
+    if (self.check(.RIGHT_ARROW)) {
+        const retTy = try self.sepTy();
         try self.typeContext.unify(ret, retTy);
     }
 
@@ -477,7 +477,11 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 fn typ(self: *Self) ParserError!AST.Type {
     // temp
     if (self.consume(.TYPE)) |ty| {
-        return (try self.instantiateType(ty)).t;
+        const ity = try self.instantiateType(ty);
+        if (ity.tyArgs.len != 0) {
+            try self.errors.append(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
+        }
+        return ity.t;
     } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
         return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv) });
     } else if (self.check(.LEFT_PAREN)) {
@@ -503,6 +507,8 @@ fn sepTy(self: *Self) !AST.Type {
 
         try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
         return ty.t;
+    } else {
+        return try self.typ();
     }
     unreachable;
 }
@@ -609,6 +615,7 @@ fn instantiateData(self: *Self, data: *AST.Data) !struct {
 }
 
 fn instantiateType(self: *Self, tyTok: Token) !struct {
+    data: *AST.Data,
     t: AST.Type,
     tyArgs: []AST.Type,
     match: AST.Match,
@@ -617,6 +624,7 @@ fn instantiateType(self: *Self, tyTok: Token) !struct {
     if (self.maybeLookupType(typename)) |data| {
         const dt = try self.instantiateData(data);
         return .{
+            .data = data,
             .t = dt.t,
             .tyArgs = dt.tyArgs,
             .match = dt.match,
@@ -639,6 +647,7 @@ fn instantiateType(self: *Self, tyTok: Token) !struct {
 
         const match = AST.Match.empty(placeholderType.scheme);
         return .{
+            .data = placeholderType,
             .t = try self.typeContext.newType(.{ .Con = .{
                 .type = placeholderType,
                 .application = match,

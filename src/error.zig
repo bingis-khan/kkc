@@ -2,11 +2,11 @@ const std = @import("std");
 const Common = @import("common.zig");
 const Str = Common.Str;
 const Loc = Common.Location;
-const AST = @import("ast.zig");
+const ast = @import("ast.zig");
 
 pub const Error = union(enum) {
     UndefinedVariable: struct {
-        varname: AST.Var,
+        varname: ast.Var,
         loc: Loc,
     },
 
@@ -27,8 +27,8 @@ pub const Error = union(enum) {
 
     // TODO: add location information
     MismatchingTypes: struct {
-        lt: AST.Type,
-        rt: AST.Type,
+        lt: ast.Type,
+        rt: ast.Type,
     },
 
     MismatchingParamLen: struct {
@@ -36,10 +36,16 @@ pub const Error = union(enum) {
         rpl: usize,
     },
 
+    MismatchingKind: struct {
+        data: *ast.Data,
+        expect: usize,
+        actual: usize,
+    },
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
-    pub fn print(self: @This(), c: AST.Ctx) void {
+    pub fn print(self: @This(), c: ast.Ctx) void {
         switch (self) {
             .UndefinedVariable => |uv| p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to }),
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
@@ -53,6 +59,7 @@ pub const Error = union(enum) {
                 p("", .{}); // newline
             },
             .MismatchingParamLen => |e| p("Mismatching lengths: {} =/= {}", .{ e.lpl, e.rpl }),
+            .MismatchingKind => |e| p("Mismatching kind for {s}: expect {}, but got {}", .{ e.data.name, e.expect, e.actual }),
         }
     }
 };

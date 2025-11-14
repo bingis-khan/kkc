@@ -57,6 +57,14 @@ pub const Lexer = struct {
                 break :b .EQUALS;
             },
             '+' => .PLUS,
+            '-' => b: {
+                if (self.curChar() == '>') {
+                    _ = self.nextChar();
+                    break :b .RIGHT_ARROW;
+                }
+
+                break :b .MINUS;
+            },
             '*' => .TIMES,
             'a'...'z' => b: {
                 self.identifier();

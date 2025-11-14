@@ -14,6 +14,7 @@ pub const TokenType = enum {
     LEFT_PAREN,
     RIGHT_PAREN,
     COMMA,
+    RIGHT_ARROW,
 
     STMT_SEP,
 
@@ -27,6 +28,7 @@ pub const TokenType = enum {
     EQUALS,
     EQEQ,
     PLUS,
+    MINUS,
     TIMES,
 
     REF, // &, both ref and deref
