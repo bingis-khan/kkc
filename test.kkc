@@ -5,9 +5,12 @@ Bool
 	True
 	False
 
-Maybe a
-	Just a
-	None
 
-what (x Maybe Int -> Maybe Int -> Maybe Int -> ()) -> Maybe Int -> ()
-	return x(None)(Just(123))
+apply (fn, x)
+	return fn(x)
+
+id (x)
+	return x
+
+n = apply(id, 1)
+m = apply(id, True)

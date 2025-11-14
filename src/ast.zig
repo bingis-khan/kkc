@@ -73,6 +73,12 @@ pub const Ctx = struct {
         }
         args[args.len - 1].print(self);
     }
+
+    pub fn encloseSepBy(self: Self, args: anytype, sep: Str, l: Str, r: Str) void {
+        self.s(l);
+        self.sepBy(args, sep);
+        self.s(r);
+    }
 };
 
 // NOTE: right now, use debug statements
@@ -88,6 +94,7 @@ pub const Function = struct {
     ret: Type,
     body: []*Stmt,
     scheme: Scheme,
+    env: Env,
 
     pub const Param = struct {
         pn: Var,
@@ -103,12 +110,38 @@ pub const Function = struct {
     fn print(self: @This(), c: Ctx) void {
         c.sp("{s} (", .{self.name.name});
         c.sepBy(self.params, ", ");
-        c.s(")");
-        c.s(" ");
+        c.s(")[");
+        c.sepBy(self.env, ", ");
+        c.s("] -> ");
         self.ret.print(c);
         c.s("\n");
 
         printBody(self.body, c);
+    }
+};
+
+pub const Env = []VarInst;
+pub const VarInst = struct {
+    v: union(enum) {
+        Fun: *Function,
+        Var: Var,
+    },
+    t: Type,
+
+    fn print(self: @This(), c: Ctx) void {
+        switch (self.v) {
+            .Fun => |fun| {
+                c.s("@"); // tag that it's a function instantiation.
+                fun.name.print(c);
+            },
+
+            .Var => |v| {
+                v.print(c);
+            },
+        }
+
+        c.s(" ");
+        self.t.print(c);
     }
 };
 
@@ -289,6 +322,17 @@ pub const TyRef = struct {
         return l.id == r.id;
     }
 };
+pub const EnvRef = struct {
+    id: usize,
+
+    pub fn print(eid: @This(), c: Ctx) void {
+        if (c.typeContext.envContext.items[eid.id]) |env| {
+            c.encloseSepBy(env, ", ", "[", "]");
+        } else {
+            c.s("[X]");
+        }
+    }
+};
 pub const TyVar = Unique;
 pub const TVar = struct {
     uid: Unique,
@@ -307,7 +351,7 @@ pub fn TypeF(comptime a: ?type) type {
         const Rec = a orelse *@This();
 
         Con: struct { type: *Data, application: Match },
-        Fun: struct { args: []Rec, ret: Rec },
+        Fun: struct { args: []Rec, ret: Rec, env: EnvRef },
         TVar: TVar,
         TyVar: TyVar,
 
@@ -328,7 +372,9 @@ pub fn TypeF(comptime a: ?type) type {
                 .Fun => |fun| {
                     c.s("(");
                     c.sepBy(fun.args, ", ");
-                    c.s(") -> ");
+                    c.s(")");
+                    fun.env.print(c);
+                    c.s(" -> ");
                     fun.ret.print(c);
                 },
 

@@ -104,7 +104,7 @@ pub fn parse(self: *Self) !ModuleResult {
 }
 
 fn dataDef(self: *Self, typename: Token) !void {
-    self.scope.beginScope();
+    self.scope.beginScope(null);
 
     // tvars
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
@@ -158,6 +158,11 @@ fn dataDef(self: *Self, typename: Token) !void {
 
 fn function(self: *Self, id: Token) !AST.Stmt {
     const fun = try self.newFunction(id);
+
+    // already begin env
+    var env = Env.init(self.arena);
+    self.scope.beginScope(&env);
+
     var params = std.ArrayList(AST.Function.Param).init(self.arena);
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
@@ -197,6 +202,9 @@ fn function(self: *Self, id: Token) !AST.Stmt {
     const fnBody = try self.body();
     self.returnType = oldReturnType;
 
+    // finish env.
+    self.scope.endScope();
+
     // after typechecking inside the function, create scheme.
     // TODO: unfinished, we don't care about the environment yet.
     const scheme = try self.mkSchemeforFunction(params.items, ret);
@@ -208,6 +216,7 @@ fn function(self: *Self, id: Token) !AST.Stmt {
         .ret = ret,
         .body = fnBody,
         .scheme = scheme,
+        .env = env.items,
     };
 
     const fndec = AST.Stmt{ .Function = fun };
@@ -218,7 +227,7 @@ fn function(self: *Self, id: Token) !AST.Stmt {
 fn body(self: *Self) ![]*AST.Stmt {
     try self.devour(.INDENT);
 
-    self.scope.beginScope();
+    self.scope.beginScope(null);
     var stmts = std.ArrayList(*AST.Stmt).init(self.arena);
     while (!self.check(.DEDENT)) {
         const stmt = try self.statement();
@@ -366,7 +375,11 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             const retType = try self.typeContext.fresh();
 
             const callType = try self.typeContext.newType(.{
-                .Fun = .{ .args = paramTs, .ret = retType },
+                .Fun = .{
+                    .args = paramTs,
+                    .ret = retType,
+                    .env = try self.typeContext.newEnv(null),
+                },
             });
 
             try self.typeContext.unify(callType, left.t);
@@ -488,6 +501,8 @@ fn typ(self: *Self) ParserError!AST.Type {
         const ty = try self.sepTy();
         try self.devour(.RIGHT_PAREN);
         return ty;
+    } else {
+        return try self.err(AST.Type, "Expect type", .{});
     }
     unreachable;
 }
@@ -515,6 +530,7 @@ fn sepTy(self: *Self) !AST.Type {
             return try self.typeContext.newType(.{ .Fun = .{
                 .args = args,
                 .ret = ret,
+                .env = try self.typeContext.newEnv(null),
             } });
         } else {
             return ty.t;
@@ -531,7 +547,11 @@ fn sepTy(self: *Self) !AST.Type {
 
         if (self.check(.RIGHT_ARROW)) {
             const ret = try self.typ();
-            return try self.typeContext.newType(.{ .Fun = .{ .ret = ret, .args = args.items } });
+            return try self.typeContext.newType(.{ .Fun = .{
+                .ret = ret,
+                .args = args.items,
+                .env = try self.typeContext.newEnv(null),
+            } });
         } else if (args.items.len == 1) { // just parens!
             return args.items[0];
         } else if (args.items.len == 0) {
@@ -572,20 +592,14 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
     return funPtr;
 }
 
-fn instantiateVar(self: *@This(), varTok: Token) !struct {
-    t: AST.Type,
-    v: union(enum) {
-        Var: AST.Var,
-        Fun: *AST.Function,
-    },
-} {
+fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
     const varName = varTok.literal(self.lexer.source);
     var lastVars = self.scope.scopes.iterateFromTop();
-    while (lastVars.next()) |cursc| {
+    while (lastVars.nextPtr()) |cursc| {
         if (cursc.vars.get(varName)) |vorf| {
-            return switch (vorf) {
+            const varInst: AST.VarInst = switch (vorf) {
                 .Var => |vt| .{ .v = .{ .Var = vt.v }, .t = vt.t },
-                .Fun => |fun| {
+                .Fun => |fun| b: {
                     const match = try self.instantiateScheme(fun.scheme);
 
                     // mk new, instantiated type
@@ -595,10 +609,26 @@ fn instantiateVar(self: *@This(), varTok: Token) !struct {
                     }
 
                     const ret = try self.mapType(&match, fun.ret);
-                    const funTy = try self.typeContext.newType(.{ .Fun = .{ .args = params.items, .ret = ret } });
-                    return .{ .v = .{ .Fun = fun }, .t = funTy };
+                    const funTy = try self.typeContext.newType(.{ .Fun = .{
+                        .args = params.items,
+                        .ret = ret,
+                        .env = try self.typeContext.newEnv(fun.env),
+                    } });
+                    break :b .{ .v = .{ .Fun = fun }, .t = funTy };
                 },
             };
+
+            // TODO: I should make a separate function, but I'm still not sure about the interface.
+            var lastScope = self.scope.scopes.iterateFromTop();
+            while (lastScope.nextPtr()) |sc| {
+                if (sc == cursc) break; // we are in the scope the var was defined in, so don't add it to its env.
+
+                if (sc.env) |env| {
+                    try env.append(varInst);
+                }
+            }
+
+            return varInst;
         }
     } else {
         const placeholderVar = AST.Var{
@@ -746,10 +776,16 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
                 for (con.tys) |ty| {
                     try args.append(try self.mapType(&dt.match, ty));
                 }
-                return .{ .con = con, .t = try self.typeContext.newType(.{ .Fun = .{
-                    .args = args.items,
-                    .ret = dt.t,
-                } }) };
+                return .{
+                    .con = con,
+                    .t = try self.typeContext.newType(.{
+                        .Fun = .{
+                            .args = args.items,
+                            .ret = dt.t,
+                            .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
+                        },
+                    }),
+                };
             }
         }
     } else {
@@ -896,6 +932,7 @@ pub fn mapType(self: *Self, match: *const AST.Match, ty: AST.Type) !AST.Type {
             break :b try self.typeContext.newType(.{ .Fun = .{
                 .args = args.items,
                 .ret = ret,
+                .env = fun.env,
             } });
         },
         .TVar => |tv| match.mapTVar(tv) orelse ty,
@@ -910,7 +947,7 @@ const Scope = struct {
     pub fn init(al: std.mem.Allocator) @This() {
         const Scopes = stack.Fixed(CurrentScope, Common.MaxIndent);
         var scopes = Scopes.init();
-        const defaultScope = CurrentScope.init(al);
+        const defaultScope = CurrentScope.init(al, null);
         scopes.push(defaultScope);
         return .{
             .al = al,
@@ -922,13 +959,29 @@ const Scope = struct {
         return self.scopes.topp();
     }
 
-    pub fn beginScope(self: *@This()) void {
-        self.scopes.push(CurrentScope.init(self.al));
+    pub fn beginScope(self: *@This(), env: ?*Env) void {
+        self.scopes.push(CurrentScope.init(self.al, env));
     }
 
     pub fn endScope(self: *@This()) void {
         _ = self.scopes.pop();
     }
+
+    // ENVS
+    // pub fn beginEnv(self: *@This()) []VarInst {
+    //     self.scopes.push(CurrentScope.init(self.al, CurrentScope.Env.init(self.al)));
+    // }
+
+    // pub fn endEnv(self: *@This()) void { // actually, return env.
+    //     const sc = self.scopes.pop();
+
+    //     if (sc.env) |env| {
+    //         return env.items;
+    //     } else {
+    //         // this should not happen. begin/end scope must be perfectly matched.
+    //         unreachable;
+    //     }
+    // }
 };
 
 const CurrentScope = struct {
@@ -936,20 +989,29 @@ const CurrentScope = struct {
         Var: struct { v: AST.Var, t: AST.Type },
         Fun: *AST.Function,
     };
+
     vars: std.StringHashMap(VarOrFun),
     types: std.StringHashMap(*AST.Data),
     cons: std.StringHashMap(*AST.Con),
     tvars: std.StringHashMap(AST.TVar),
 
-    fn init(al: std.mem.Allocator) @This() {
+    env: ?*Env,
+
+    fn init(al: std.mem.Allocator, env: ?*Env) @This() {
         return .{
             .vars = std.StringHashMap(VarOrFun).init(al),
             .types = std.StringHashMap(*AST.Data).init(al),
             .cons = std.StringHashMap(*AST.Con).init(al),
             .tvars = std.StringHashMap(AST.TVar).init(al),
+            .env = env,
         };
     }
+
+    // in the future - scopes are actually safe to deallocate.
+    fn deinit() void {}
 };
+
+const Env = std.ArrayList(AST.VarInst);
 
 // typechecking zone
 fn getReturnType(self: *Self) !AST.Type {
@@ -1000,6 +1062,7 @@ fn skip(self: *Self) void {
     self.currentToken = self.lexer.nextToken();
 }
 
+// NOTE: later, we don't have to specify a return value. Just always follow it with "return unreachable".
 fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
     std.debug.print(fmt ++ " at {}\n", args ++ .{self.currentToken});
     std.debug.print("{s}\n", .{self.lexer.source[self.currentToken.from -% 5 .. @min(self.lexer.source.len, self.currentToken.to +% 5)]});

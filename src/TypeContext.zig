@@ -15,7 +15,11 @@ const TyStoreElem = union(enum) {
 };
 const TyStore = std.ArrayList(TyStoreElem);
 
+const EnvRef = ast.EnvRef;
+const EnvStore = std.ArrayList(?ast.Env);
+
 context: TyStore,
+envContext: EnvStore,
 gen: UniqueGen,
 errors: *Errors, // pointer to the global error array (kinda bad design.)
 
@@ -25,6 +29,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
 
     return .{
         .context = context,
+        .envContext = EnvStore.init(al),
         .gen = UniqueGen.init(),
         .errors = errors,
     };
@@ -39,6 +44,12 @@ pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
     try self.context.append(.{ .Type = t });
     const tid = self.context.items.len - 1;
     return .{ .id = tid };
+}
+
+pub fn newEnv(self: *Self, e: ?ast.Env) !ast.EnvRef {
+    try self.envContext.append(e);
+    const envid = self.envContext.items.len - 1;
+    return .{ .id = envid };
 }
 
 pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
@@ -82,16 +93,51 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
         .Fun => |lfun| {
             switch (tt2) {
                 .Fun => |rfun| {
+                    try self.unifyEnv(lfun.env, rfun.env);
                     try self.unify(lfun.ret, rfun.ret);
                     try self.unifyParams(lfun.args, rfun.args);
                 },
                 else => try self.errMismatch(t1, t2),
             }
         },
-        .TVar => |tv| {
-            _ = tv;
-            unreachable;
+        .TVar => |ltv| {
+            switch (tt2) {
+                .TVar => |rtv| {
+                    if (!ltv.eq(rtv)) {
+                        return try self.errMismatch(t1, t2);
+                    }
+                },
+
+                else => try self.errMismatch(t1, t2),
+            }
         }, // TODO
+    }
+}
+
+fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef) !void {
+    // SLOW AND BAD! Structurally check if environments are the same (but it's BAD, because we are not deduplicating them!!)
+    // Later (after we implement classes) we will probably have an id associated with it.
+    // Then I can decide if I want structural equality.
+    if (lenvref.id == renvref.id) return;
+    const lenv = self.envContext.items[lenvref.id] orelse {
+        self.envContext.items[lenvref.id] = self.envContext.items[renvref.id];
+        return;
+    };
+    const renv = self.envContext.items[renvref.id] orelse {
+        self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
+        return;
+    };
+
+    if (lenv.len != renv.len) {
+        try self.envMismatch(lenv, renv);
+        return;
+    }
+
+    for (lenv, renv) |lv, rv| {
+        if (!std.meta.eql(lv, rv)) {
+            try self.envMismatch(lenv, renv);
+            return;
+        }
     }
 }
 
@@ -112,6 +158,10 @@ pub fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef) !void {
 
 fn errMismatch(self: *Self, lt: TyRef, rt: TyRef) !void {
     try self.errors.append(.{ .MismatchingTypes = .{ .lt = lt, .rt = rt } });
+}
+
+fn envMismatch(self: *Self, lenv: ast.Env, renv: ast.Env) !void {
+    try self.errors.append(.{ .MismatchingEnv = .{ .le = lenv, .re = renv } });
 }
 
 fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize) !void {

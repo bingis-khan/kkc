@@ -31,6 +31,11 @@ pub const Error = union(enum) {
         rt: ast.Type,
     },
 
+    MismatchingEnv: struct {
+        le: ast.Env,
+        re: ast.Env,
+    },
+
     MismatchingParamLen: struct {
         lpl: usize,
         rpl: usize,
@@ -58,6 +63,13 @@ pub const Error = union(enum) {
                 e.lt.print(c); // UGLY
                 c.s(" =/= ");
                 e.rt.print(c);
+                p("", .{}); // newline
+            },
+            .MismatchingEnv => |e| {
+                c.s("Mismatching envs: ");
+                c.encloseSepBy(e.le, ", ", "[", "]"); // UGLY
+                c.s(" =/= ");
+                c.encloseSepBy(e.re, ", ", "[", "]");
                 p("", .{}); // newline
             },
             .MismatchingParamLen => |e| p("Mismatching lengths: {} =/= {}", .{ e.lpl, e.rpl }),

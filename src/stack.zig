@@ -33,18 +33,26 @@ pub fn Fixed(comptime t: type, comptime sz: usize) type {
 
         // reversed iterators
         const ReverseIterator = struct {
-            og: *const Self,
+            og: *Self,
             cur: usize,
 
             pub fn next(self: *@This()) ?t {
+                if (self.nextPtr()) |p| {
+                    return p.*;
+                } else {
+                    return null;
+                }
+            }
+
+            pub fn nextPtr(self: *@This()) ?*t {
                 if (self.cur == 0) return null;
 
                 self.cur -= 1;
-                return self.og.mem[self.cur];
+                return &self.og.mem[self.cur];
             }
         };
 
-        pub fn iterateFromTop(s: *const Self) ReverseIterator {
+        pub fn iterateFromTop(s: *Self) ReverseIterator {
             return .{
                 .og = s,
                 .cur = s.current,
