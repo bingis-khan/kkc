@@ -42,6 +42,8 @@ pub const Error = union(enum) {
         actual: usize,
     },
 
+    TuplesNotYetSupported: struct {},
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -60,6 +62,7 @@ pub const Error = union(enum) {
             },
             .MismatchingParamLen => |e| p("Mismatching lengths: {} =/= {}", .{ e.lpl, e.rpl }),
             .MismatchingKind => |e| p("Mismatching kind for {s}: expect {}, but got {}", .{ e.data.name, e.expect, e.actual }),
+            .TuplesNotYetSupported => p("Tuples not yet supported!", .{}),
         }
     }
 };

@@ -7,6 +7,18 @@ pub const Location = struct {
     from: usize,
     to: usize,
     source: Str, // store this, because errors can come from diffent files.
+
+    const Self = @This();
+    pub fn between(l: *const Self, r: *const Self) Self {
+        if (l.source != r.source) {
+            unreachable;
+        }
+        return .{
+            .from = @min(l.from, r.from),
+            .to = @max(l.to, r.to),
+            .source = l.source,
+        };
+    }
 };
 
 pub const MaxIndent = 512;

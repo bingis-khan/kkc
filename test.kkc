@@ -9,15 +9,5 @@ Maybe a
 	Just a
 	None
 
-id (x)
-	return x
-
-get-map (x, fn)
-	return fn(x)
-
-
-what (x Maybe Int) -> Maybe Int
-	return x
-
-x = get-map(1, id)
-x = get-map(id, asdasd) + 1
+what (x Maybe Int -> Maybe Int -> Maybe Int -> ()) -> Maybe Int -> ()
+	return x(None)(Just(123))

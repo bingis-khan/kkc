@@ -506,7 +506,41 @@ fn sepTy(self: *Self) !AST.Type {
         }
 
         try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
-        return ty.t;
+
+        // there's a possibility it's a function!
+        if (self.check(.RIGHT_ARROW)) {
+            const args = try self.arena.alloc(AST.Type, 1);
+            args[0] = ty.t;
+            const ret = try self.sepTy();
+            return try self.typeContext.newType(.{ .Fun = .{
+                .args = args,
+                .ret = ret,
+            } });
+        } else {
+            return ty.t;
+        }
+    } else if (self.check(.LEFT_PAREN)) {
+        // try parse function (but it can also be an extra paren!)
+        var args = std.ArrayList(AST.Type).init(self.arena);
+        while (!self.check(.RIGHT_PAREN)) {
+            try args.append(try self.sepTy());
+            if (self.peek().type != .RIGHT_PAREN) {
+                try self.devour(.COMMA);
+            }
+        }
+
+        if (self.check(.RIGHT_ARROW)) {
+            const ret = try self.typ();
+            return try self.typeContext.newType(.{ .Fun = .{ .ret = ret, .args = args.items } });
+        } else if (args.items.len == 1) { // just parens!
+            return args.items[0];
+        } else if (args.items.len == 0) {
+            // only Unit tuple is supported.
+            return try self.defined(.Unit);
+        } else { // this LOOKS like a tuple, but we don't support tuples yet!
+            try self.errors.append(.{ .TuplesNotYetSupported = .{} });
+            return self.typeContext.fresh();
+        }
     } else {
         return try self.typ();
     }
