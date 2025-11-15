@@ -203,6 +203,7 @@ fn function(self: *Self, id: Token) !AST.Stmt {
         stmts[0] = try Common.allocOne(self.arena, AST.Stmt, .{
             .Return = expr,
         });
+        try self.typeContext.unify(ret, expr.t);
         break :b stmts;
     } else b: {
         // set return and parse body

@@ -15,6 +15,7 @@ stag (x)
 n = stag(1)
 n = stag(Unit)
 
+id (x): x
 
 n = Unit
 id (x)
