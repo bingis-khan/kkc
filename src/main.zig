@@ -17,7 +17,7 @@ pub fn main() !void {
     defer arena.deinit();
     const aa = arena.allocator();
 
-    const source = try std.fs.cwd().readFileAlloc(al, "prelude.kc", 1337420);
+    const source = try std.fs.cwd().readFileAlloc(al, "test.kkc", 1337420);
     defer al.free(source);
     const lexer = Lexer.init(source);
     var l = lexer;

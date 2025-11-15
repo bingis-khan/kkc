@@ -217,10 +217,9 @@ fn function(self: *Self, id: Token) !AST.Stmt {
     // after typechecking inside the function, create scheme.
     // TODO: unfinished, we don't care about the environment yet.
     const definedTVars = self.scope.currentScope().tvars;
-    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret);
+    self.scope.endScope(); // finish env.
 
-    // finish env.
-    self.scope.endScope();
+    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items);
 
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
@@ -260,8 +259,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 try self.expression()
             else bb: {
                 const t = try self.defined(.Unit);
-                // WARNING: funny casts
-                const con = &self.typeContext.getType(t).Con.type.cons[0];
+                const con = &self.typeContext.getType(t).Con.type.cons[0]; // WARNING: funny casts
                 break :bb try self.allocExpr(.{
                     .t = t,
                     .e = .{ .Con = con },
@@ -887,7 +885,7 @@ const FTVs = Set(FTV, struct {
     }
 });
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type) !AST.Scheme {
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env) !AST.Scheme {
     // Function local stuff.
     var funftvs = FTVs.init(self.arena);
     try self.ftvs(&funftvs, ret);
@@ -895,13 +893,20 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         try self.ftvs(&funftvs, p.pt);
     }
 
-    // TODO: environment stuff.
-    // Set.difference etc.
+    // environment stuff.
+    var envftvs = FTVs.init(self.arena);
+    for (env) |inst| {
+        try self.ftvs(&envftvs, inst.t);
+    }
+
+    // now, remove the tyvars from env here.
+    funftvs.difference(&envftvs);
 
     // make tvars out of them
     // TODO: assign pretty names ('a, 'b, etc.).
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
 
+    // add defined tvars in this function.
     var tvit = alreadyDefinedTVars.valueIterator();
     while (tvit.next()) |tvar| {
         try tvars.append(tvar.*);
@@ -968,8 +973,9 @@ pub fn mapType(self: *Self, match: *const AST.Match, ty: AST.Type) !AST.Type {
             } });
         },
         .Fun => |fun| b: {
-            var args = std.ArrayList(AST.Type).init(self.arena);
             var changed = false;
+
+            var args = std.ArrayList(AST.Type).init(self.arena);
             for (fun.args) |oldTy| {
                 const newTy = try self.mapType(match, oldTy);
                 changed = changed or !newTy.eq(oldTy);
@@ -979,6 +985,20 @@ pub fn mapType(self: *Self, match: *const AST.Match, ty: AST.Type) !AST.Type {
             const ret = try self.mapType(match, fun.ret);
             changed = changed or !ret.eq(fun.ret);
 
+            const env = if (self.typeContext.envContext.items[fun.env.id]) |env| bb: {
+                var envChanged = false;
+                var nuenv = std.ArrayList(AST.VarInst).init(self.arena);
+                for (env) |inst| {
+                    const newTy = try self.mapType(match, inst.t);
+                    envChanged = envChanged or !newTy.eq(inst.t);
+                    try nuenv.append(.{ .v = inst.v, .t = newTy });
+                }
+
+                changed = changed or envChanged;
+
+                break :bb if (envChanged) try self.typeContext.newEnv(nuenv.items) else fun.env;
+            } else try self.typeContext.newEnv(null); // IMPORTANT: must instantiate new env..
+
             if (!changed) {
                 args.deinit();
                 break :b ty;
@@ -987,7 +1007,7 @@ pub fn mapType(self: *Self, match: *const AST.Match, ty: AST.Type) !AST.Type {
             break :b try self.typeContext.newType(.{ .Fun = .{
                 .args = args.items,
                 .ret = ret,
-                .env = fun.env,
+                .env = env,
             } });
         },
         .TVar => |tv| match.mapTVar(tv) orelse ty,

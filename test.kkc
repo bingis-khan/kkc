@@ -3,24 +3,31 @@ Unit # kupa
 	Unit  # here
 			# miau
 Int # asdk
-#E aksjdkj
-# a
-Bool # askljdkl
-	# aksjd
+Bool
 	True #maiu
-# aksjdklj
 	False # kasjd
-# akjsdlk
+
+stag (x)
+	fn ()
+		return x
+	return fn
+
+n = stag(1)
+n = stag(Unit)
 
 
-apply (fn, x)  #aksjdjk
-	return fn(x)
-
-id (x a) -> a
+n = Unit
+id (x)
+	m = n
 	return x
 
-n = apply(id, 1)
-m = apply(id, True)
-m = apply(id, True)
-m = apply(id, True) #asdkajklajsdklasjdkasjdkl
-return 0
+n = True
+id2 (x)
+	m = n
+	return x
+
+app(fn, x)
+	return fn(x)
+
+r = app(id, 1)
+r = app(id2, True)

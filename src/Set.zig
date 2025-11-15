@@ -21,7 +21,7 @@ pub fn Set(comptime K: type, comptime Context: type) type {
         }
 
         pub fn delete(self: *Self, x: K) void {
-            self.hash.remove(x);
+            _ = self.hash.remove(x);
         }
 
         pub fn iterator(self: *const Self) Hash.KeyIterator {
@@ -31,7 +31,7 @@ pub fn Set(comptime K: type, comptime Context: type) type {
         pub fn difference(self: *Self, other: *const Self) void {
             var it = other.iterator();
             while (it.next()) |k| {
-                self.delete(k);
+                self.delete(k.*);
             }
         }
     };
