@@ -1,16 +1,26 @@
-Unit
-	Unit
-Int
-Bool
-	True
-	False
+# test asdjmlk asjdlkja slk
+Unit # kupa
+	Unit  # here
+			# miau
+Int # asdk
+#E aksjdkj
+# a
+Bool # askljdkl
+	# aksjd
+	True #maiu
+# aksjdklj
+	False # kasjd
+# akjsdlk
 
 
-apply (fn, x)
+apply (fn, x)  #aksjdjk
 	return fn(x)
 
-id (x)
+id (x a) -> a
 	return x
 
 n = apply(id, 1)
 m = apply(id, True)
+m = apply(id, True)
+m = apply(id, True) #asdkajklajsdklasjdkasjdkl
+return 0

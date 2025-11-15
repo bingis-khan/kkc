@@ -44,6 +44,11 @@ pub const Lexer = struct {
 
         const from = self.currentIndex;
         const tt: TokenType = switch (self.nextChar()) {
+            '#' => {
+                self.skipLine();
+                return self.nextToken();
+            },
+            ':' => .COLON,
             '\n' => .STMT_SEP,
             '(' => .LEFT_PAREN,
             ')' => .RIGHT_PAREN,
@@ -169,11 +174,23 @@ pub const Lexer = struct {
     }
 
     fn skipWhitespace(self: *Self) void {
-        while (!self.isAtEnd()) : (self.currentIndex += 1) {
+        while (!self.isAtEnd()) {
             switch (self.curChar()) {
-                ' ', '\t' => {},
+                ' ', '\t' => {
+                    self.currentIndex += 1;
+                },
+                '#' => {
+                    _ = self.nextChar();
+                    self.skipLine();
+                },
                 else => return,
             }
+        }
+    }
+
+    fn skipLine(self: *Self) void {
+        while (!self.isAtEnd() and self.curChar() != '\n') {
+            _ = self.nextChar();
         }
     }
 };

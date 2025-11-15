@@ -1,0 +1,101 @@
+
+
+# void type
+Unit
+	Unit
+
+# cstdinclude includes the module if the type is used. it will also enclose the name in "<" and ">" - that's because I might want to include custom c modules.
+#[ctype 'bool', cstdinclude 'stdbool.h']
+Bool
+	#[clit 'false']
+	False
+
+	#[clit 'true']
+	True
+
+# Temporary, as I will use 'U32', 'I32', etc. types in code and there will be no "default" Int
+#[ctype 'int']
+Int  # Make sure this is parsed as DataDefinition with zero constructors instead of ExprType in the compiler.
+
+#[ctype 'float']
+Float
+
+
+#[ctype 'const char*']
+ConstStr  # TODO: later, make a ptr + length struct string.
+
+# stolen from Str std module. used in string interpolation
+StrConcat l r
+	StrConcat l r
+
+# #[ctype 'uint8_t', cstdinclude 'stdint.h']
+# U8
+
+# #[ctype 'int8_t', cstdinclude 'stdint.h']
+# I8
+
+
+# should ideally be shorthanded to: Ptr a: Ptr a
+#[actual-pointer-type]
+Ptr a
+	Ptr a
+
+
+# temporarily commented out, because we removed recursive environments for now.
+# some test function
+#fib (x)
+#	if x == 0
+#		return 0
+#	elif x == 1
+#		return 1
+#	else
+#		return fib(x - 1) + fib(x - 2)
+
+
+# ayoooo
+
+Maybe a
+	Just a
+	None
+
+#or-just (mx, other-x)
+#	case mx
+#		Just(x)
+#			return x
+#		None
+#			return other-x
+#
+## test prelude function yo
+#or-else (mx, late-other-x)
+#	case mx
+#		Just(x)
+#			return Just(x)
+#
+#		None
+#			return late-other-x()
+
+
+Either e a
+	Left e
+	Right a
+
+
+Tuple a b
+	Tuple a b
+
+## while we still can't deconstruct tuples
+#uncurry (fn (a, b) -> c) -> (Tuple a b) -> c
+#	unc (Tuple(l, r)): fn(l, r)
+#	return unc
+
+void (x)
+	return
+
+id (x): x
+
+test-xxx = 420
+test-function-with-env-in-prelude ()
+	return test-xxx
+
+
+x = Left(123)

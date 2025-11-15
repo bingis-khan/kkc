@@ -14,6 +14,7 @@ pub const TokenType = enum {
     LEFT_PAREN,
     RIGHT_PAREN,
     COMMA,
+    COLON,
     RIGHT_ARROW,
 
     STMT_SEP,

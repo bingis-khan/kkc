@@ -82,6 +82,7 @@ pub fn parse(self: *Self) !ModuleResult {
     std.debug.print("in parser\n", .{});
 
     var decs = std.ArrayList(*AST.Stmt).init(self.arena);
+    self.consumeSeps();
     while (self.consume(.EOF) == null) {
         const dec = self.statement() catch |e| {
             std.debug.print("Err.\n", .{});
@@ -170,7 +171,7 @@ fn function(self: *Self, id: Token) !AST.Stmt {
             const v = try self.newVar(pnt);
             const nextTok = self.peek().type;
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
-                const pt = try self.sepTy();
+                const pt = try self.sepTyo(true);
                 try self.typeContext.unify(v.t, pt);
             }
             try params.append(.{
@@ -184,30 +185,42 @@ fn function(self: *Self, id: Token) !AST.Stmt {
         try self.devour(.RIGHT_PAREN);
     }
 
-    const ret = try self.typeContext.fresh();
-    if (self.check(.RIGHT_ARROW)) {
-        const retTy = try self.sepTy();
-        try self.typeContext.unify(ret, retTy);
-    }
-
-    // make type from function
+    // prepare params for a function type.
     const paramTs = try self.arena.alloc(AST.Type, params.items.len);
     for (params.items, 0..) |et, i| {
         paramTs[i] = et.pt;
     }
 
-    // set return and parse body
-    const oldReturnType = self.returnType;
-    self.returnType = ret;
-    const fnBody = try self.body();
-    self.returnType = oldReturnType;
+    const ret = try self.typeContext.fresh();
+    if (self.check(.RIGHT_ARROW)) {
+        const retTy = try self.sepTyo(true);
+        try self.typeContext.unify(ret, retTy);
+    }
 
-    // finish env.
-    self.scope.endScope();
+    const fnBody = if (self.check(.COLON)) b: {
+        const expr = try self.expression();
+        const stmts = try self.arena.alloc(*AST.Stmt, 1);
+        stmts[0] = try Common.allocOne(self.arena, AST.Stmt, .{
+            .Return = expr,
+        });
+        break :b stmts;
+    } else b: {
+        // set return and parse body
+        const oldReturnType = self.returnType;
+        self.returnType = ret;
+        const fnBody = try self.body();
+        self.returnType = oldReturnType;
+
+        break :b fnBody;
+    };
 
     // after typechecking inside the function, create scheme.
     // TODO: unfinished, we don't care about the environment yet.
-    const scheme = try self.mkSchemeforFunction(params.items, ret);
+    const definedTVars = self.scope.currentScope().tvars;
+    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret);
+
+    // finish env.
+    self.scope.endScope();
 
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
@@ -243,7 +256,18 @@ fn body(self: *Self) ![]*AST.Stmt {
 fn statement(self: *Self) ParserError!?*AST.Stmt {
     const stmtVal: ?AST.Stmt = b: {
         if (self.check(.RETURN)) {
-            const expr = try self.expression();
+            const expr = if (!self.isEndStmt())
+                try self.expression()
+            else bb: {
+                const t = try self.defined(.Unit);
+                // WARNING: funny casts
+                const con = &self.typeContext.getType(t).Con.type.cons[0];
+                break :bb try self.allocExpr(.{
+                    .t = t,
+                    .e = .{ .Con = con },
+                });
+            };
+
             try self.typeContext.unify(expr.t, try self.getReturnType());
 
             try self.endStmt();
@@ -322,6 +346,11 @@ fn endStmt(self: *Self) !void {
     if (self.peek().type != .DEDENT) {
         try self.devour(.STMT_SEP);
     }
+}
+
+fn isEndStmt(self: *const Self) bool {
+    const tt = self.peek().type;
+    return tt == .DEDENT or tt == .STMT_SEP;
 }
 
 fn consumeSeps(self: *Self) void {
@@ -488,6 +517,11 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 }
 
 fn typ(self: *Self) ParserError!AST.Type {
+    return self.typo(false);
+}
+
+// type-o
+fn typo(self: *Self, inDeclaration: bool) ParserError!AST.Type {
     // temp
     if (self.consume(.TYPE)) |ty| {
         const ity = try self.instantiateType(ty);
@@ -496,7 +530,7 @@ fn typ(self: *Self) ParserError!AST.Type {
         }
         return ity.t;
     } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
-        return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv) });
+        return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv, inDeclaration) });
     } else if (self.check(.LEFT_PAREN)) {
         const ty = try self.sepTy();
         try self.devour(.RIGHT_PAREN);
@@ -508,6 +542,9 @@ fn typ(self: *Self) ParserError!AST.Type {
 }
 
 fn sepTy(self: *Self) !AST.Type {
+    return self.sepTyo(false);
+}
+fn sepTyo(self: *Self, inDeclaration: bool) !AST.Type {
     if (self.consume(.TYPE)) |tyName| {
         const ty = try self.instantiateType(tyName);
         var tyArgs = std.ArrayList(AST.Type).init(self.arena);
@@ -517,7 +554,7 @@ fn sepTy(self: *Self) !AST.Type {
                 break;
             }
 
-            try tyArgs.append(try self.typ());
+            try tyArgs.append(try self.typo(inDeclaration));
         }
 
         try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
@@ -526,7 +563,7 @@ fn sepTy(self: *Self) !AST.Type {
         if (self.check(.RIGHT_ARROW)) {
             const args = try self.arena.alloc(AST.Type, 1);
             args[0] = ty.t;
-            const ret = try self.sepTy();
+            const ret = try self.sepTyo(inDeclaration);
             return try self.typeContext.newType(.{ .Fun = .{
                 .args = args,
                 .ret = ret,
@@ -539,14 +576,14 @@ fn sepTy(self: *Self) !AST.Type {
         // try parse function (but it can also be an extra paren!)
         var args = std.ArrayList(AST.Type).init(self.arena);
         while (!self.check(.RIGHT_PAREN)) {
-            try args.append(try self.sepTy());
+            try args.append(try self.sepTyo(inDeclaration));
             if (self.peek().type != .RIGHT_PAREN) {
                 try self.devour(.COMMA);
             }
         }
 
         if (self.check(.RIGHT_ARROW)) {
-            const ret = try self.typ();
+            const ret = try self.typo(inDeclaration);
             return try self.typeContext.newType(.{ .Fun = .{
                 .ret = ret,
                 .args = args.items,
@@ -562,7 +599,7 @@ fn sepTy(self: *Self) !AST.Type {
             return self.typeContext.fresh();
         }
     } else {
-        return try self.typ();
+        return try self.typo(inDeclaration);
     }
     unreachable;
 }
@@ -744,7 +781,8 @@ fn newTVar(self: *@This(), tvTok: Token) !AST.TVar {
     return tv;
 }
 
-fn lookupTVar(self: *Self, tvTok: Token) !AST.TVar {
+// basically, sometimes when we look up tvars in declarations, we want to define them. slightly hacky, but makes stuff easier.
+fn lookupTVar(self: *Self, tvTok: Token, inDeclaration: bool) !AST.TVar {
     const tvname = tvTok.literal(self.lexer.source);
     var lastScopes = self.scope.scopes.iterateFromTop();
     while (lastScopes.next()) |cursc| {
@@ -752,7 +790,18 @@ fn lookupTVar(self: *Self, tvTok: Token) !AST.TVar {
             return tv;
         }
     } else {
-        unreachable;
+        // create a new var then.
+        if (!inDeclaration) {
+            try self.errors.append(.{ .UndefinedTVar = .{
+                .tvname = tvname,
+                .loc = .{
+                    .from = tvTok.from,
+                    .to = tvTok.to,
+                    .source = self.lexer.source,
+                },
+            } });
+        }
+        return try self.newTVar(tvTok);
     }
 }
 
@@ -838,7 +887,7 @@ const FTVs = Set(FTV, struct {
     }
 });
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
-fn mkSchemeforFunction(self: *Self, params: []AST.Function.Param, ret: AST.Type) !AST.Scheme {
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type) !AST.Scheme {
     // Function local stuff.
     var funftvs = FTVs.init(self.arena);
     try self.ftvs(&funftvs, ret);
@@ -852,6 +901,12 @@ fn mkSchemeforFunction(self: *Self, params: []AST.Function.Param, ret: AST.Type)
     // make tvars out of them
     // TODO: assign pretty names ('a, 'b, etc.).
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
+
+    var tvit = alreadyDefinedTVars.valueIterator();
+    while (tvit.next()) |tvar| {
+        try tvars.append(tvar.*);
+    }
+
     var it = funftvs.iterator();
     while (it.next()) |e| {
         const name = try std.fmt.allocPrint(self.arena, "'{}", .{e.tyv});
