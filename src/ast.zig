@@ -166,6 +166,7 @@ pub const Stmt = union(enum) {
     },
     Return: *Expr,
     Function: *Function,
+    Instance: *Instance,
 
     const Rec = *@This();
     pub const Elif = struct { cond: *Expr, body: []Rec };
@@ -203,6 +204,9 @@ pub const Stmt = union(enum) {
             },
             .Function => |fun| {
                 fun.print(c);
+            },
+            .Instance => |inst| {
+                inst.print(c);
             },
         }
     }
@@ -350,7 +354,7 @@ pub fn TypeF(comptime a: ?type) type {
     return union(enum) {
         const Rec = a orelse *@This();
 
-        Con: struct { type: *Data, application: Match },
+        Con: struct { type: *Data, application: Match(Rec) },
         Fun: struct { args: []Rec, ret: Rec, env: EnvRef },
         TVar: TVar,
         TyVar: TyVar,
@@ -370,9 +374,7 @@ pub fn TypeF(comptime a: ?type) type {
                 },
 
                 .Fun => |fun| {
-                    c.s("(");
-                    c.sepBy(fun.args, ", ");
-                    c.s(")");
+                    c.encloseSepBy(fun.args, ", ", "(", ")");
                     fun.env.print(c);
                     c.s(" -> ");
                     fun.ret.print(c);
@@ -423,28 +425,30 @@ pub const Scheme = struct {
         return .{ .tvars = &.{} };
     }
 };
-pub const Match = struct {
-    scheme: Scheme,
-    tvars: []Type,
+pub fn Match(comptime T: type) type {
+    return struct {
+        scheme: Scheme,
+        tvars: []T,
 
-    pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
-        for (self.scheme.tvars, self.tvars) |tv, t| {
-            if (tv.eq(tvar)) {
-                return t;
+        pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
+            for (self.scheme.tvars, self.tvars) |tv, t| {
+                if (tv.eq(tvar)) {
+                    return t;
+                }
             }
+
+            return null;
         }
 
-        return null;
-    }
-
-    pub fn empty(scheme: Scheme) @This() {
-        // sanity check. right now only used for placeholders in case of errors.
-        if (scheme.tvars.len > 0) {
-            unreachable;
+        pub fn empty(scheme: Scheme) @This() {
+            // sanity check. right now only used for placeholders in case of errors.
+            if (scheme.tvars.len > 0) {
+                unreachable;
+            }
+            return .{ .scheme = scheme, .tvars = &.{} };
         }
-        return .{ .scheme = scheme, .tvars = &.{} };
-    }
-};
+    };
+}
 
 pub const Con = struct {
     uid: Unique,
@@ -457,6 +461,43 @@ pub const Con = struct {
         if (self.tys.len > 0) {
             c.s(" ");
             c.sepBy(self.tys, " ");
+        }
+    }
+};
+
+pub const Class = struct {
+    uid: Unique,
+    name: Str,
+    classFuns: []*ClassFun,
+    selfType: TVar,
+};
+
+pub const ClassFun = struct {
+    uid: Unique,
+    name: Var,
+    params: []Param,
+    ret: Type,
+
+    pub const Param = struct {
+        t: Type,
+    };
+};
+
+pub const Instance = struct {
+    uid: Unique,
+    class: *Class,
+    data: *Data,
+
+    instFuns: []*Function,
+
+    fn print(self: @This(), c: Ctx) void {
+        c.sp("inst {s} {s}", .{ self.class.name, self.data.name });
+        c.s("\n");
+
+        var ic = c;
+        ic.indent +%= 1;
+        for (self.instFuns) |instFun| {
+            instFun.print(ic);
         }
     }
 };

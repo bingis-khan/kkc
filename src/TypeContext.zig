@@ -141,7 +141,7 @@ fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef) !void {
     }
 }
 
-pub fn unifyMatch(self: *Self, lm: ast.Match, rm: ast.Match) !void {
+pub fn unifyMatch(self: *Self, lm: ast.Match(ast.Type), rm: ast.Match(ast.Type)) !void {
     try self.unifyParams(lm.tvars, rm.tvars);
 }
 

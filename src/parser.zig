@@ -32,22 +32,29 @@ lexer: Lexer,
 currentToken: Token,
 
 // resolver zone
-gen: struct {
-    vars: UniqueGen,
-    types: UniqueGen,
-    cons: UniqueGen,
-    tvars: UniqueGen,
-    // mems: UniqueGen,
-    // classes: UniqueGen,
-    // instances: UniqueGen,
-},
+gen: Gen,
 scope: Scope,
 
 // type zone
 typeContext: TypeContext,
 prelude: ?Prelude,
 returnType: ?AST.Type,
+selfType: ?AST.Type, // this is used in class and instance context. Whenever it's defined, the user is able to reference the instance type by '_'. In nested instances, obviously points to the innermost one.
 
+const Gen = struct {
+    vars: UniqueGen,
+    types: UniqueGen,
+    cons: UniqueGen,
+    tvars: UniqueGen,
+    // mems: UniqueGen,
+    classes: UniqueGen,
+    classFuns: UniqueGen,
+    instances: UniqueGen,
+
+    fn init() @This() {
+        return std.mem.zeroInit(@This(), .{});
+    }
+};
 const Self = @This();
 pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
     const context = try TypeContext.init(arena, errors);
@@ -61,16 +68,12 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
 
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
-        .gen = .{
-            .vars = UniqueGen.init(),
-            .types = UniqueGen.init(),
-            .cons = UniqueGen.init(),
-            .tvars = UniqueGen.init(),
-        },
+        .gen = Gen.init(),
 
         // typeshit
         .typeContext = context,
         .returnType = null,
+        .selfType = null,
         .prelude = null,
     };
 
@@ -110,13 +113,13 @@ fn dataDef(self: *Self, typename: Token) !void {
     // tvars
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
     while (self.consume(.IDENTIFIER)) |tvname| {
-        const tv = try self.newTVar(tvname);
+        const tv = try self.newTVar(tvname.literal(self.lexer.source));
         try tvars.append(tv);
     }
 
     if (!self.check(.INDENT)) {
         // Add type without any constructors
-        try self.newData(try Common.allocOne(self.arena, AST.Data, .{
+        try self.newData(try Common.allocOne(self.arena, AST.Data{
             .uid = self.gen.types.newUnique(),
             .name = typename.literal(self.lexer.source),
             .cons = &.{},
@@ -157,7 +160,7 @@ fn dataDef(self: *Self, typename: Token) !void {
     try self.newData(data);
 }
 
-fn function(self: *Self, id: Token) !AST.Stmt {
+fn function(self: *Self, id: Token) !*AST.Function {
     const fun = try self.newFunction(id);
 
     // already begin env
@@ -171,7 +174,7 @@ fn function(self: *Self, id: Token) !AST.Stmt {
             const v = try self.newVar(pnt);
             const nextTok = self.peek().type;
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
-                const pt = try self.sepTyo(true);
+                const pt = try Type(.Decl).sepTyo(self);
                 try self.typeContext.unify(v.t, pt);
             }
             try params.append(.{
@@ -193,14 +196,14 @@ fn function(self: *Self, id: Token) !AST.Stmt {
 
     const ret = try self.typeContext.fresh();
     if (self.check(.RIGHT_ARROW)) {
-        const retTy = try self.sepTyo(true);
+        const retTy = try Type(.Decl).sepTyo(self);
         try self.typeContext.unify(ret, retTy);
     }
 
     const fnBody = if (self.check(.COLON)) b: {
         const expr = try self.expression();
         const stmts = try self.arena.alloc(*AST.Stmt, 1);
-        stmts[0] = try Common.allocOne(self.arena, AST.Stmt, .{
+        stmts[0] = try Common.allocOne(self.arena, AST.Stmt{
             .Return = expr,
         });
         try self.typeContext.unify(ret, expr.t);
@@ -232,9 +235,7 @@ fn function(self: *Self, id: Token) !AST.Stmt {
         .env = env.items,
     };
 
-    const fndec = AST.Stmt{ .Function = fun };
-
-    return fndec;
+    return fun;
 }
 
 fn body(self: *Self) ![]*AST.Stmt {
@@ -271,7 +272,8 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
             try self.endStmt();
             break :b .{ .Return = expr };
-        } else if (self.consume(.IDENTIFIER)) |v| {
+        } // return
+        else if (self.consume(.IDENTIFIER)) |v| {
             // here, choose between identifier and call
             if (self.check(.EQUALS)) {
                 const expr = try self.expression();
@@ -288,14 +290,18 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 // parse call
                 // SIKE
                 // right now, parse function
-                break :b try self.function(v);
+                const fun = try self.function(v);
+                const fndec = AST.Stmt{ .Function = fun };
+                break :b fndec;
             } else {
                 return self.err(*AST.Stmt, "Expect statement.", .{});
             }
-        } else if (self.consume(.TYPE)) |typename| {
+        } // var or function
+        else if (self.consume(.TYPE)) |typename| {
             try self.dataDef(typename);
             break :b null;
-        } else if (self.check(.IF)) {
+        } // type
+        else if (self.check(.IF)) {
             const cond = try self.expression();
             try self.typeContext.unify(cond.t, try self.defined(.Bool));
             const bTrue = try self.body();
@@ -320,7 +326,88 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 .bOthers = elifs.items,
                 .bElse = elseBody,
             } };
-        } else {
+        } // if
+        else if (self.check(.CLASS)) {
+            const className = try self.expect(.TYPE);
+
+            const oldSelf = self.selfType;
+            const selfVar = try self.newTVar("_");
+            const selfType = try self.typeContext.newType(.{
+                .TVar = selfVar,
+            });
+            self.selfType = selfType;
+
+            var classFuns = std.ArrayList(*AST.ClassFun).init(self.arena);
+            try self.devour(.INDENT);
+            while (!self.check(.DEDENT)) {
+                const classFun = try self.classFunction();
+                self.consumeSeps();
+                try classFuns.append(classFun);
+            }
+
+            self.selfType = oldSelf;
+
+            const class = try Common.allocOne(self.arena, AST.Class{
+                .uid = self.gen.types.newUnique(),
+                .name = className.literal(self.lexer.source),
+                .classFuns = classFuns.items,
+                .selfType = selfVar,
+            });
+
+            try self.newClass(class);
+
+            return null;
+        } // class
+        else if (self.check(.INST)) {
+            const className = try self.expect(.TYPE);
+            const class = (self.maybeLookupType(className.literal(self.lexer.source)) orelse unreachable).Class;
+            const typeName = try self.expect(.TYPE);
+            const data = (self.maybeLookupType(typeName.literal(self.lexer.source)) orelse unreachable).Data;
+
+            const oldSelf = self.selfType;
+            const instantiatedSelfType = try self.typeContext.newType(.{
+                .Con = .{
+                    .type = data,
+                    .application = try self.instantiateScheme(data.scheme),
+                },
+            });
+            self.selfType = instantiatedSelfType;
+            defer self.selfType = oldSelf;
+
+            var instFuns = std.ArrayList(*AST.Function).init(self.arena);
+            try self.devour(.INDENT);
+            while (true) { // while1
+                const funName = try self.expect(.IDENTIFIER);
+                try self.devour(.LEFT_PAREN);
+                const fun = try self.function(funName);
+
+                // now, "associate it" with a class function
+                for (class.classFuns) |classFun| {
+                    if (!Common.streq(classFun.name.name, fun.name.name)) continue;
+
+                    // class function found. unify types.
+                    // todo
+
+                    break;
+                } else {
+                    // error that instance function is not found.
+                    unreachable;
+                }
+
+                try instFuns.append(fun);
+                if (self.check(.DEDENT)) break;
+            }
+
+            break :b .{
+                .Instance = try Common.allocOne(self.arena, AST.Instance{
+                    .uid = self.gen.instances.newUnique(),
+                    .class = class,
+                    .data = data,
+                    .instFuns = instFuns.items,
+                }),
+            };
+        } // inst
+        else {
             return self.err(*AST.Stmt, "Expect statement.", .{});
         }
 
@@ -354,6 +441,39 @@ fn isEndStmt(self: *const Self) bool {
 
 fn consumeSeps(self: *Self) void {
     while (self.check(.STMT_SEP)) {}
+}
+
+fn classFunction(self: *Self) !*AST.ClassFun {
+    const funName = try self.expect(.IDENTIFIER);
+
+    var params = std.ArrayList(AST.ClassFun.Param).init(self.arena);
+    try self.devour(.LEFT_PAREN);
+    while (true) {
+        // consume identifier if possible.
+        if (self.check(.IDENTIFIER)) {}
+
+        try params.append(.{ .t = try Type(.Class).sepTyo(self) });
+
+        if (self.check(.RIGHT_PAREN)) {
+            break;
+        }
+
+        try self.devour(.COMMA);
+    }
+
+    // another new eye candy - default Unit
+    const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).typo(self) else try self.defined(.Unit);
+    try self.endStmt();
+
+    return try Common.allocOne(self.arena, AST.ClassFun{
+        .uid = self.gen.classFuns.newUnique(),
+        .name = .{
+            .name = funName.literal(self.lexer.source),
+            .uid = self.gen.vars.newUnique(),
+        },
+        .params = params.items,
+        .ret = ret,
+    });
 }
 
 // jon blow my c0c :3
@@ -516,91 +636,107 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 }
 
 fn typ(self: *Self) ParserError!AST.Type {
-    return self.typo(false);
+    return try Type(.Type).typo(self);
 }
 
-// type-o
-fn typo(self: *Self, inDeclaration: bool) ParserError!AST.Type {
-    // temp
-    if (self.consume(.TYPE)) |ty| {
-        const ity = try self.instantiateType(ty);
-        if (ity.tyArgs.len != 0) {
-            try self.errors.append(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
+fn Type(comptime tyty: enum { Type, Decl, Class }) type {
+    const inDeclaration = tyty == .Decl or tyty == .Class;
+    const Ty = AST.Type;
+    return struct {
+        // type-o
+        fn typo(self: *Self) ParserError!Ty {
+            // temp
+            if (self.consume(.TYPE)) |ty| {
+                const ity = try self.instantiateType(ty);
+                if (ity.tyArgs.len != 0) {
+                    try self.errors.append(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
+                }
+                return ity.t;
+            } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
+                return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv, inDeclaration) });
+            } else if (self.check(.LEFT_PAREN)) {
+                const ty = try sepTyo(self);
+                try self.devour(.RIGHT_PAREN);
+                return ty;
+            } else if (self.check(.UNDERSCORE)) {
+                if (self.selfType) |t| {
+                    return t;
+                } else {
+                    // TODO: signal error
+                    unreachable;
+                }
+            } else {
+                return try self.err(AST.Type, "Expect type", .{});
+            }
+            unreachable;
         }
-        return ity.t;
-    } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
-        return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv, inDeclaration) });
-    } else if (self.check(.LEFT_PAREN)) {
-        const ty = try self.sepTy();
-        try self.devour(.RIGHT_PAREN);
-        return ty;
-    } else {
-        return try self.err(AST.Type, "Expect type", .{});
-    }
-    unreachable;
+
+        fn sepTyo(self: *Self) !Ty {
+            if (self.consume(.TYPE)) |tyName| {
+                var tyArgs = std.ArrayList(Ty).init(self.arena);
+                while (true) {
+                    const tokType = self.peek().type;
+                    if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER)) { // bad bad works
+                        break;
+                    }
+
+                    try tyArgs.append(try typo(self));
+                }
+
+                const ty = try self.instantiateType(tyName);
+
+                // simply check arity.
+                try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
+
+                // there's a possibility it's a function!
+                if (self.check(.RIGHT_ARROW)) {
+                    const args = try self.arena.alloc(AST.Type, 1);
+                    args[0] = ty.t;
+                    const ret = try sepTyo(self);
+                    return try self.typeContext.newType(.{ .Fun = .{
+                        .args = args,
+                        .ret = ret,
+                        .env = try self.typeContext.newEnv(null),
+                    } });
+                } else {
+                    return ty.t;
+                }
+            } else if (self.check(.LEFT_PAREN)) {
+                // try parse function (but it can also be an extra paren!)
+                var args = std.ArrayList(Ty).init(self.arena);
+                while (!self.check(.RIGHT_PAREN)) {
+                    try args.append(try sepTyo(self));
+                    if (self.peek().type != .RIGHT_PAREN) {
+                        try self.devour(.COMMA);
+                    }
+                }
+
+                if (self.check(.RIGHT_ARROW)) {
+                    const ret = try typo(self);
+                    return try self.typeContext.newType(.{ .Fun = .{
+                        .ret = ret,
+                        .args = args.items,
+                        .env = try self.typeContext.newEnv(null),
+                    } });
+                } else if (args.items.len == 1) { // just parens!
+                    return args.items[0];
+                } else if (args.items.len == 0) {
+                    // only Unit tuple is supported.
+                    return try self.defined(.Unit);
+                } else { // this LOOKS like a tuple, but we don't support tuples yet!
+                    try self.errors.append(.{ .TuplesNotYetSupported = .{} });
+                    return self.typeContext.fresh();
+                }
+            } else {
+                return try typo(self);
+            }
+            unreachable;
+        }
+    };
 }
 
 fn sepTy(self: *Self) !AST.Type {
     return self.sepTyo(false);
-}
-fn sepTyo(self: *Self, inDeclaration: bool) !AST.Type {
-    if (self.consume(.TYPE)) |tyName| {
-        const ty = try self.instantiateType(tyName);
-        var tyArgs = std.ArrayList(AST.Type).init(self.arena);
-        while (true) {
-            const tokType = self.peek().type;
-            if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER)) { // bad bad works
-                break;
-            }
-
-            try tyArgs.append(try self.typo(inDeclaration));
-        }
-
-        try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
-
-        // there's a possibility it's a function!
-        if (self.check(.RIGHT_ARROW)) {
-            const args = try self.arena.alloc(AST.Type, 1);
-            args[0] = ty.t;
-            const ret = try self.sepTyo(inDeclaration);
-            return try self.typeContext.newType(.{ .Fun = .{
-                .args = args,
-                .ret = ret,
-                .env = try self.typeContext.newEnv(null),
-            } });
-        } else {
-            return ty.t;
-        }
-    } else if (self.check(.LEFT_PAREN)) {
-        // try parse function (but it can also be an extra paren!)
-        var args = std.ArrayList(AST.Type).init(self.arena);
-        while (!self.check(.RIGHT_PAREN)) {
-            try args.append(try self.sepTyo(inDeclaration));
-            if (self.peek().type != .RIGHT_PAREN) {
-                try self.devour(.COMMA);
-            }
-        }
-
-        if (self.check(.RIGHT_ARROW)) {
-            const ret = try self.typo(inDeclaration);
-            return try self.typeContext.newType(.{ .Fun = .{
-                .ret = ret,
-                .args = args.items,
-                .env = try self.typeContext.newEnv(null),
-            } });
-        } else if (args.items.len == 1) { // just parens!
-            return args.items[0];
-        } else if (args.items.len == 0) {
-            // only Unit tuple is supported.
-            return try self.defined(.Unit);
-        } else { // this LOOKS like a tuple, but we don't support tuples yet!
-            try self.errors.append(.{ .TuplesNotYetSupported = .{} });
-            return self.typeContext.fresh();
-        }
-    } else {
-        return try self.typo(inDeclaration);
-    }
-    unreachable;
 }
 
 // resolver zone
@@ -652,6 +788,8 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
                     } });
                     break :b .{ .v = .{ .Fun = fun }, .t = funTy };
                 },
+
+                .ClassFun => unreachable,
             };
 
             // TODO: I should make a separate function, but I'm still not sure about the interface.
@@ -689,7 +827,7 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
 // (requires US to generate a new unique.)
 fn newData(self: *@This(), data: *AST.Data) !void {
     // add type
-    try self.scope.currentScope().types.put(data.name, data);
+    try self.scope.currentScope().types.put(data.name, .{ .Data = data });
 
     // add constructors
     for (data.cons) |*con| {
@@ -697,10 +835,20 @@ fn newData(self: *@This(), data: *AST.Data) !void {
     }
 }
 
+fn newClass(self: *Self, class: *AST.Class) !void {
+    try self.scope.currentScope().types.put(
+        class.name,
+        .{ .Class = class },
+    );
+
+    for (class.classFuns) |classFun| {
+        try self.scope.currentScope().vars.put(classFun.name.name, .{ .ClassFun = classFun });
+    }
+}
 fn instantiateData(self: *Self, data: *AST.Data) !struct {
     t: AST.Type,
     tyArgs: []AST.Type,
-    match: AST.Match,
+    match: AST.Match(AST.Type),
 } {
     const match = try self.instantiateScheme(data.scheme);
 
@@ -714,51 +862,61 @@ fn instantiateData(self: *Self, data: *AST.Data) !struct {
     };
 }
 
-fn instantiateType(self: *Self, tyTok: Token) !struct {
-    data: *AST.Data,
-    t: AST.Type,
-    tyArgs: []AST.Type,
-    match: AST.Match,
-} {
+fn instantiateType(self: *Self, tyTok: Token) !DataShit {
     const typename = tyTok.literal(self.lexer.source);
-    if (self.maybeLookupType(typename)) |data| {
-        const dt = try self.instantiateData(data);
-        return .{
-            .data = data,
-            .t = dt.t,
-            .tyArgs = dt.tyArgs,
-            .match = dt.match,
-        };
+    if (self.maybeLookupType(typename)) |dataOrClass| {
+        switch (dataOrClass) {
+            .Data => |data| {
+                const dt = try self.instantiateData(data);
+                return .{
+                    .data = data,
+                    .t = dt.t,
+                    .tyArgs = dt.tyArgs,
+                    .match = dt.match,
+                };
+            },
+
+            .Class => unreachable,
+        }
     } else {
-        const placeholderType = try Common.allocOne(self.arena, AST.Data, .{
-            .name = typename,
-            .uid = self.gen.vars.newUnique(),
-            .cons = &.{},
-            .scheme = .{ .tvars = &.{} },
-        });
-        const location = Common.Location{
+        return try self.newPlaceholderType(typename, .{
             .from = tyTok.from,
             .to = tyTok.to,
             .source = self.lexer.source,
-        };
-        try self.errors.append(.{
-            .UndefinedType = .{ .typename = typename, .loc = location },
         });
-
-        const match = AST.Match.empty(placeholderType.scheme);
-        return .{
-            .data = placeholderType,
-            .t = try self.typeContext.newType(.{ .Con = .{
-                .type = placeholderType,
-                .application = match,
-            } }),
-            .tyArgs = &.{},
-            .match = match,
-        };
     }
 }
 
-fn maybeLookupType(self: *Self, typename: Str) ?*AST.Data {
+const DataShit = struct {
+    data: *AST.Data,
+    t: AST.Type,
+    tyArgs: []AST.Type,
+    match: AST.Match(AST.Type),
+};
+fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !DataShit {
+    const placeholderType = try Common.allocOne(self.arena, AST.Data{
+        .name = typename,
+        .uid = self.gen.vars.newUnique(),
+        .cons = &.{},
+        .scheme = .{ .tvars = &.{} },
+    });
+    try self.errors.append(.{
+        .UndefinedType = .{ .typename = typename, .loc = location },
+    });
+
+    const match = AST.Match(AST.Type).empty(placeholderType.scheme);
+    return .{
+        .data = placeholderType,
+        .t = try self.typeContext.newType(.{ .Con = .{
+            .type = placeholderType,
+            .application = match,
+        } }),
+        .tyArgs = &.{},
+        .match = match,
+    };
+}
+
+fn maybeLookupType(self: *Self, typename: Str) ?CurrentScope.DataOrClass {
     var lastScopes = self.scope.scopes.iterateFromTop();
     while (lastScopes.next()) |cursc| {
         if (cursc.types.get(typename)) |t| {
@@ -770,8 +928,7 @@ fn maybeLookupType(self: *Self, typename: Str) ?*AST.Data {
 }
 
 // TVar
-fn newTVar(self: *@This(), tvTok: Token) !AST.TVar {
-    const tvname = tvTok.literal(self.lexer.source);
+fn newTVar(self: *@This(), tvname: Str) !AST.TVar {
     const tv: AST.TVar = .{
         .uid = self.gen.tvars.newUnique(),
         .name = tvname,
@@ -800,11 +957,11 @@ fn lookupTVar(self: *Self, tvTok: Token, inDeclaration: bool) !AST.TVar {
                 },
             } });
         }
-        return try self.newTVar(tvTok);
+        return try self.newTVar(tvTok.literal(self.lexer.source));
     }
 }
 
-// CONS
+// CNS
 fn newCon(self: *@This(), con: *AST.Con) !void {
     try self.scope.currentScope().cons.put(con.name, con);
 }
@@ -862,14 +1019,14 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
 }
 
 // SCHEMES
-fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match {
-    var tvars = std.ArrayList(AST.Type).init(self.arena);
-    for (scheme.tvars) |_| {
-        try tvars.append(try self.typeContext.fresh());
+fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match(AST.Type) {
+    const tvars = try self.arena.alloc(AST.Type, scheme.tvars.len);
+    for (scheme.tvars, 0..) |_, i| {
+        tvars[i] = try self.typeContext.fresh();
     }
     return .{
         .scheme = scheme,
-        .tvars = tvars.items,
+        .tvars = tvars,
     };
 }
 
@@ -904,7 +1061,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     funftvs.difference(&envftvs);
 
     // make tvars out of them
-    // TODO: assign pretty names ('a, 'b, etc.).
+    // TDO: assign pretty names ('a, 'b, etc.).
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
 
     // add defined tvars in this function.
@@ -948,7 +1105,7 @@ fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
     }
 }
 
-pub fn mapType(self: *Self, match: *const AST.Match, ty: AST.Type) !AST.Type {
+pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AST.Type {
     const t = self.typeContext.getType(ty);
     return switch (t) {
         .Con => |con| b: {
@@ -1064,10 +1221,16 @@ const CurrentScope = struct {
     const VarOrFun = union(enum) {
         Var: struct { v: AST.Var, t: AST.Type },
         Fun: *AST.Function,
+        ClassFun: *AST.ClassFun,
+    };
+
+    const DataOrClass = union(enum) {
+        Data: *AST.Data,
+        Class: *AST.Class,
     };
 
     vars: std.StringHashMap(VarOrFun),
-    types: std.StringHashMap(*AST.Data),
+    types: std.StringHashMap(DataOrClass),
     cons: std.StringHashMap(*AST.Con),
     tvars: std.StringHashMap(AST.TVar),
 
@@ -1076,7 +1239,7 @@ const CurrentScope = struct {
     fn init(al: std.mem.Allocator, env: ?*Env) @This() {
         return .{
             .vars = std.StringHashMap(VarOrFun).init(al),
-            .types = std.StringHashMap(*AST.Data).init(al),
+            .types = std.StringHashMap(DataOrClass).init(al),
             .cons = std.StringHashMap(*AST.Con).init(al),
             .tvars = std.StringHashMap(AST.TVar).init(al),
             .env = env,
@@ -1098,11 +1261,14 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
     return if (self.prelude) |prelude|
         prelude.defined(predefinedType)
     else b: {
-        const data = self.maybeLookupType(Prelude.PremadeTypeName.get(predefinedType)) orelse break :b error.PreludeError;
+        const data = switch (self.maybeLookupType(Prelude.PremadeTypeName.get(predefinedType)) orelse break :b error.PreludeError) {
+            .Data => |data| data,
+            .Class => |_| break :b error.PreludeError,
+        };
         // too much work. We should create a TypeRef and then cache it.
         break :b try self.typeContext.newType(.{ .Con = .{
             .type = data,
-            .application = AST.Match.empty(data.scheme),
+            .application = AST.Match(AST.Type).empty(data.scheme),
         } });
     };
 }

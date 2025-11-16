@@ -23,8 +23,8 @@ pub const Location = struct {
 
 pub const MaxIndent = 512;
 
-pub fn allocOne(al: std.mem.Allocator, comptime T: type, e: T) !*T {
-    const ptr = try al.create(T);
+pub fn allocOne(al: std.mem.Allocator, e: anytype) !*@TypeOf(e) {
+    const ptr = try al.create(@TypeOf(e));
     ptr.* = e;
     return ptr;
 }

@@ -7,28 +7,20 @@ Bool
 	True #maiu
 	False # kasjd
 
-stag (x)
-	fn ()
-		return x
-	return fn
+class ToInt
+	to-int (self _) -> Int
 
-n = stag(1)
-n = stag(Unit)
+inst ToInt Int
+	to-int (self _) -> Int
+		return self
 
-id (x): x
+x = 1
 
-n = Unit
-id (x)
-	m = n
-	return x
-
-n = True
-id2 (x)
-	m = n
-	return x
-
-app(fn, x)
-	return fn(x)
-
-r = app(id, 1)
-r = app(id2, True)
+true = 1
+false = 0
+inst ToInt Bool
+	to-int (self _) -> Int
+		if self
+			return true
+		else
+			return false

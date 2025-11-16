@@ -12,7 +12,7 @@ pub const Lexer = struct {
 
     // number when no token on a line has been generated.
     // nil when it's already done something.
-    lineBeginOffset: ?usize,
+    lineBeginOffset: usize,
 
     const IndentStack = stack.Fixed(usize, Common.MaxIndent);
     const Self = @This();
@@ -36,10 +36,20 @@ pub const Lexer = struct {
             // remember to match dedents at the end.
             if (self.indentStack.top() > 0) {
                 _ = self.indentStack.pop();
-                return Token{ .type = .DEDENT, .from = self.lineBeginOffset orelse self.currentIndex, .to = self.currentIndex };
+                return Token{ .type = .DEDENT, .from = self.lineBeginOffset, .to = self.currentIndex };
             }
 
             return Token{ .type = .EOF, .from = self.currentIndex, .to = self.currentIndex };
+        }
+
+        // MID QUICK COPYPASTA
+        {
+            const off = self.currentIndex - self.lineBeginOffset;
+            const currentIndent = self.indentStack.top();
+            if (off < currentIndent) {
+                _ = self.indentStack.pop();
+                return Token{ .type = .DEDENT, .from = self.lineBeginOffset, .to = self.currentIndex };
+            }
         }
 
         const from = self.currentIndex;
@@ -80,6 +90,8 @@ pub const Lexer = struct {
                     @"if",
                     elif,
                     @"else",
+                    class,
+                    inst,
                 };
                 const keyword = std.meta.stringToEnum(Keyword, self.scanned(from)) orelse {
                     break :b .IDENTIFIER;
@@ -90,6 +102,8 @@ pub const Lexer = struct {
                     .@"if" => .IF,
                     .elif => .ELIF,
                     .@"else" => .ELSE,
+                    .class => .CLASS,
+                    .inst => .INST,
                 };
             },
 
@@ -102,6 +116,8 @@ pub const Lexer = struct {
                 self.integer();
                 break :b .INTEGER;
             },
+
+            '_' => .UNDERSCORE,
             else => .EOF,
         };
         const to = self.currentIndex;
@@ -110,14 +126,14 @@ pub const Lexer = struct {
 
         if (tt == .STMT_SEP) {
             // continually skip whitespace and newlines until we get another non STMT_SEP. we have to update the line beginning.
-            var beginLine = to;
+            self.lineBeginOffset = to;
             while (!self.isAtEnd() and self.curChar() == '\n') {
                 _ = self.nextChar();
-                beginLine = self.currentIndex;
+                self.lineBeginOffset = self.currentIndex;
                 self.skipWhitespace();
             }
 
-            const off = self.currentIndex - beginLine;
+            const off = self.currentIndex - self.lineBeginOffset;
             const currentIndent = self.indentStack.top();
             if (off > currentIndent) {
                 self.indentStack.push(off);
