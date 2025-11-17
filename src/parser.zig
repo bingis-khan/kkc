@@ -160,8 +160,7 @@ fn dataDef(self: *Self, typename: Token) !void {
     try self.newData(data);
 }
 
-fn function(self: *Self, id: Token) !*AST.Function {
-    const fun = try self.newFunction(id);
+fn function(self: *Self, fun: *AST.Function) !*AST.Function {
 
     // already begin env
     var env = Env.init(self.arena);
@@ -290,7 +289,8 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 // parse call
                 // SIKE
                 // right now, parse function
-                const fun = try self.function(v);
+                const funptr = try self.newFunction(v);
+                const fun = try self.function(funptr);
                 const fndec = AST.Stmt{ .Function = fun };
                 break :b fndec;
             } else {
@@ -340,7 +340,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             var classFuns = std.ArrayList(*AST.ClassFun).init(self.arena);
             try self.devour(.INDENT);
             while (!self.check(.DEDENT)) {
-                const classFun = try self.classFunction();
+                const classFun = try self.classFunction(selfVar);
                 self.consumeSeps();
                 try classFuns.append(classFun);
             }
@@ -379,7 +379,12 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             while (true) { // while1
                 const funName = try self.expect(.IDENTIFIER);
                 try self.devour(.LEFT_PAREN);
-                const fun = try self.function(funName);
+                const funptr = try self.arena.create(AST.Function);
+                funptr.name = AST.Var{
+                    .name = funName.literal(self.lexer.source),
+                    .uid = self.gen.vars.newUnique(),
+                };
+                const fun = try self.function(funptr);
 
                 // now, "associate it" with a class function
                 for (class.classFuns) |classFun| {
@@ -443,9 +448,10 @@ fn consumeSeps(self: *Self) void {
     while (self.check(.STMT_SEP)) {}
 }
 
-fn classFunction(self: *Self) !*AST.ClassFun {
+fn classFunction(self: *Self, selfTVar: AST.TVar) !*AST.ClassFun {
     const funName = try self.expect(.IDENTIFIER);
 
+    self.scope.beginScope(null); // let's capture all tvars.
     var params = std.ArrayList(AST.ClassFun.Param).init(self.arena);
     try self.devour(.LEFT_PAREN);
     while (true) {
@@ -464,6 +470,18 @@ fn classFunction(self: *Self) !*AST.ClassFun {
     // another new eye candy - default Unit
     const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).typo(self) else try self.defined(.Unit);
     try self.endStmt();
+    const tvarsMap = self.scope.currentScope().tvars;
+    self.scope.endScope();
+
+    // make a scheme from deze vars yo.
+    var tvars = std.ArrayList(AST.TVar).init(self.arena);
+    try tvars.append(selfTVar);
+    var tvit = tvarsMap.valueIterator();
+    while (tvit.next()) |tvar| {
+        try tvars.append(tvar.*);
+    }
+
+    const scheme = AST.Scheme{ .tvars = tvars.items };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
         .uid = self.gen.classFuns.newUnique(),
@@ -473,6 +491,7 @@ fn classFunction(self: *Self) !*AST.ClassFun {
         },
         .params = params.items,
         .ret = ret,
+        .scheme = scheme,
     });
 }
 
@@ -583,6 +602,7 @@ fn term(self: *Self) !*AST.Expr {
             .e = switch (dv.v) {
                 .Var => |vv| .{ .Var = vv },
                 .Fun => |fun| .{ .Fun = fun },
+                .ClassFun => |cfun| .{ .ClassFun = cfun },
             },
         });
     } else if (self.consume(.TYPE)) |con| {
@@ -789,7 +809,26 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
                     break :b .{ .v = .{ .Fun = fun }, .t = funTy };
                 },
 
-                .ClassFun => unreachable,
+                .ClassFun => |cfun| b: {
+                    const match = try self.instantiateScheme(cfun.scheme);
+
+                    // mk new, instantiated type
+                    var params = std.ArrayList(AST.Type).init(self.arena);
+                    for (cfun.params) |p| {
+                        try params.append(try self.mapType(&match, p.t));
+                    }
+
+                    const ret = try self.mapType(&match, cfun.ret);
+                    const funTy = try self.typeContext.newType(.{ .Fun = .{
+                        .args = params.items,
+                        .ret = ret,
+                        .env = try self.typeContext.newEnv(null),
+                    } });
+                    break :b .{
+                        .v = .{ .ClassFun = cfun },
+                        .t = funTy,
+                    };
+                },
             };
 
             // TODO: I should make a separate function, but I'm still not sure about the interface.

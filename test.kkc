@@ -24,3 +24,6 @@ inst ToInt Bool
 			return true
 		else
 			return false
+
+
+x = to-int(True)

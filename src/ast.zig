@@ -124,6 +124,7 @@ pub const Env = []VarInst;
 pub const VarInst = struct {
     v: union(enum) {
         Fun: *Function,
+        ClassFun: *ClassFun,
         Var: Var,
     },
     t: Type,
@@ -133,6 +134,11 @@ pub const VarInst = struct {
             .Fun => |fun| {
                 c.s("@"); // tag that it's a function instantiation.
                 fun.name.print(c);
+            },
+
+            .ClassFun => |cfun| {
+                c.s("$");
+                cfun.name.print(c);
             },
 
             .Var => |v| {
@@ -221,6 +227,7 @@ pub const Expr = struct {
         Call: struct { callee: Rec, args: []Rec },
         Var: Var,
         Fun: *Function,
+        ClassFun: *ClassFun,
         Con: *Con,
         Int: i64, // obv temporary.
     },
@@ -235,6 +242,9 @@ pub const Expr = struct {
             },
             .Fun => |fun| {
                 fun.name.print(c);
+            },
+            .ClassFun => |cfun| {
+                cfun.name.print(c);
             },
             .Con => |con| {
                 con.print(c);
@@ -477,6 +487,7 @@ pub const ClassFun = struct {
     name: Var,
     params: []Param,
     ret: Type,
+    scheme: Scheme,
 
     pub const Param = struct {
         t: Type,
