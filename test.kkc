@@ -27,4 +27,8 @@ inst ToInt Bool
 			return to-int(false)
 
 
-n = to-int(to-int(True))
+inter (x)
+	return to-int(to-int(x))
+
+m = inter(123)
+n = inter(True)

@@ -117,24 +117,25 @@ pub fn parse(self: *Self) !ModuleResult {
 }
 
 fn dataDef(self: *Self, typename: Token) !void {
+    const uid = self.gen.types.newUnique();
     self.scope.beginScope(null);
 
     // tvars
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
     while (self.consume(.IDENTIFIER)) |tvname| {
-        const tv = try self.newTVar(tvname.literal(self.lexer.source));
+        const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
         try tvars.append(tv);
     }
 
     if (!self.check(.INDENT)) {
         // Add type without any constructors
         try self.newData(try Common.allocOne(self.arena, AST.Data{
-            .uid = self.gen.types.newUnique(),
+            .uid = uid,
             .name = typename.literal(self.lexer.source),
             .cons = &.{},
             .scheme = .{
                 .tvars = tvars.items,
-                .associations = undefined,
+                .associations = &.{}, // TODO: when I add fake class names as types, this will  be non-empty.
             },
         }));
         return;
@@ -143,7 +144,7 @@ fn dataDef(self: *Self, typename: Token) !void {
     const data = try self.arena.create(AST.Data);
     data.uid = self.gen.types.newUnique();
     data.name = typename.literal(self.lexer.source);
-    data.scheme = .{ .tvars = tvars.items, .associations = undefined }; // TODO: check for repeating tvars and such.
+    data.scheme = .{ .tvars = tvars.items, .associations = &.{} }; // TODO: check for repeating tvars and such.
 
     var cons = std.ArrayList(AST.Con).init(self.arena);
     while (!self.check(.DEDENT)) {
@@ -234,7 +235,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
     const definedTVars = self.scope.currentScope().tvars;
     self.scope.endScope(); // finish env.
 
-    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items);
+    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items, fun.name.uid);
 
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
@@ -341,9 +342,10 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         } // if
         else if (self.check(.CLASS)) {
             const className = try self.expect(.TYPE);
+            const uid = self.gen.types.newUnique();
 
             const oldSelf = self.selfType;
-            const selfVar = try self.newTVar("_");
+            const selfVar = try self.newTVar("_", .{ .ClassFunction = uid });
             const selfType = try self.typeContext.newType(.{
                 .TVar = selfVar,
             });
@@ -362,7 +364,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             self.selfType = oldSelf;
 
             class.* = AST.Class{
-                .uid = self.gen.types.newUnique(),
+                .uid = uid,
                 .name = className.literal(self.lexer.source),
                 .classFuns = classFuns.items,
                 .selfType = selfVar,
@@ -498,7 +500,10 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         try tvars.append(tvar.*);
     }
 
-    const scheme = AST.Scheme{ .tvars = tvars.items, .associations = undefined };
+    const scheme = AST.Scheme{
+        .tvars = tvars.items,
+        .associations = &.{}, // NOTE: this will change when class constraints are allowed on functions.
+    };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
         .uid = self.gen.classFuns.newUnique(),
@@ -1067,10 +1072,11 @@ fn maybeLookupType(self: *Self, typename: Str) ?CurrentScope.DataOrClass {
 }
 
 // TVar
-fn newTVar(self: *@This(), tvname: Str) !AST.TVar {
+fn newTVar(self: *@This(), tvname: Str, binding: ?AST.TVar.Binding) !AST.TVar {
     const tv: AST.TVar = .{
         .uid = self.gen.tvars.newUnique(),
         .name = tvname,
+        .binding = binding,
     };
     try self.scope.currentScope().tvars.put(tvname, tv);
     return tv;
@@ -1096,7 +1102,7 @@ fn lookupTVar(self: *Self, tvTok: Token, inDeclaration: bool) !AST.TVar {
                 },
             } });
         }
-        return try self.newTVar(tvTok.literal(self.lexer.source));
+        return try self.newTVar(tvTok.literal(self.lexer.source), null);
     }
 }
 
@@ -1182,7 +1188,11 @@ const FTVs = Set(FTV, struct {
     }
 });
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env) !AST.Scheme {
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env, functionId: Unique) !AST.Scheme {
+    const expectedBinding = AST.TVar.Binding{
+        .Function = functionId,
+    };
+
     // Function local stuff.
     var funftvs = FTVs.init(self.arena);
     try self.ftvs(&funftvs, ret);
@@ -1233,13 +1243,64 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         const tv = AST.TVar{
             .name = name,
             .uid = self.gen.tvars.newUnique(),
+            .binding = expectedBinding,
         };
         try tvars.append(tv);
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
         try self.typeContext.unify(e.t, tvt);
     }
 
-    return .{ .tvars = tvars.items, .associations = undefined };
+    // also, make sure to gather assocs
+    var assocs = std.ArrayList(AST.Association).init(self.arena);
+    var assocsChanged = true;
+    while (assocsChanged) {
+        assocsChanged = false;
+        const currentAssocs = try self.arena.alloc(Association, self.associations.items.len);
+        defer self.arena.free(currentAssocs); // noop with arena. but reminds me of currentAssocs's lifetime.
+        @memcpy(currentAssocs, self.associations.items);
+        var i: usize = 0;
+        for (currentAssocs) |assoc| {
+            defer i +%= 1;
+            switch (self.typeContext.getType(assoc.from)) {
+                .TVar => |assocTV| { // TODO: associate tvars with places they are declared. this can be a tvar of an outside function.
+                    if (!std.meta.eql(assocTV.binding, expectedBinding)) continue;
+                    // mkae sure to check it's actually bound to a function.
+                    var assocFTVs = FTVs.init(self.arena); // TODO: this is kinda fugly. I should reuse the general ftvs.
+                    defer assocFTVs.deinit();
+                    try self.ftvs(&assocFTVs, assoc.to);
+
+                    var assocFTVIt = assocFTVs.iterator();
+                    while (assocFTVIt.next()) |tyv| {
+                        const name = try std.fmt.allocPrint(self.arena, "'{}", .{tyv.tyv.uid});
+                        const tv = AST.TVar{
+                            .name = name,
+                            .uid = self.gen.tvars.newUnique(),
+                            .binding = .{ .Function = unreachable },
+                        };
+                        try tvars.append(tv);
+                        const tvt = try self.typeContext.newType(.{ .TVar = tv });
+                        try self.typeContext.unify(tyv.t, tvt);
+                    }
+
+                    try assocs.append(.{
+                        .depends = assocTV,
+                        .to = assoc.to,
+                        .classFunId = assoc.classFunId,
+                    });
+
+                    // also, make sure to later add tvars to them
+                    _ = self.associations.orderedRemove(i);
+                    i -%= 1;
+                    assocsChanged = true;
+                },
+                .TyVar => {},
+                .Con => unreachable, // should be handled earlier
+                .Fun => unreachable, // -//-
+            }
+        }
+    }
+
+    return .{ .tvars = tvars.items, .associations = assocs.items };
 }
 
 fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {

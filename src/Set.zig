@@ -34,5 +34,9 @@ pub fn Set(comptime K: type, comptime Context: type) type {
                 self.delete(k.*);
             }
         }
+
+        pub fn deinit(self: *Self) void {
+            self.hash.deinit();
+        }
     };
 }

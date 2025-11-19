@@ -114,6 +114,8 @@ pub const Function = struct {
         c.sepBy(self.env, ", ");
         c.s("] -> ");
         self.ret.print(c);
+        c.s(" ");
+        self.scheme.print(c);
         c.s("\n");
 
         printBody(self.body, c);
@@ -358,6 +360,13 @@ pub const TyVar = struct {
 pub const TVar = struct {
     uid: Unique,
     name: Str,
+    binding: ?Binding, // null value for placeholder values.
+
+    pub const Binding = union(enum) {
+        Data: Unique,
+        Function: Unique,
+        ClassFunction: Unique,
+    };
 
     pub fn eq(l: @This(), r: @This()) bool {
         return l.uid == r.uid;
@@ -442,6 +451,14 @@ pub const Scheme = struct {
     pub fn empty() @This() {
         return .{ .tvars = &.{}, .associations = &.{} };
     }
+
+    fn print(self: @This(), c: Ctx) void {
+        c.s("{");
+        c.sepBy(self.tvars, ", ");
+        c.s("|");
+        c.sepBy(self.associations, ", ");
+        c.s("}");
+    }
 };
 
 // Explanation: since we don't have unions, do we still need to do associations?
@@ -449,8 +466,17 @@ pub const Scheme = struct {
 // Also, I'm not planning to do real associated types YET, they will work the same as in kc.
 pub const Association = struct {
     depends: TVar,
-    class: *Class,
-    instFun: *Function,
+    to: Type,
+    classFunId: Unique,
+
+    fn print(self: @This(), c: Ctx) void {
+        c.s("(");
+        self.depends.print(c);
+        c.s(" => ");
+        self.to.print(c);
+        c.sp(" :${}", .{self.classFunId});
+        c.s(")");
+    }
 };
 pub fn Match(comptime T: type) type {
     return struct {
