@@ -347,7 +347,14 @@ pub const EnvRef = struct {
         }
     }
 };
-pub const TyVar = Unique;
+pub const TyVar = struct {
+    uid: Unique,
+    classes: std.ArrayList(*Class),
+
+    pub fn print(self: @This(), c: Ctx) void {
+        c.sp("#{}", .{self.uid});
+    }
+};
 pub const TVar = struct {
     uid: Unique,
     name: Str,
@@ -391,7 +398,7 @@ pub fn TypeF(comptime a: ?type) type {
                 },
 
                 .TyVar => |tyv| {
-                    c.sp("#{}", .{tyv});
+                    tyv.print(c);
                 },
 
                 .TVar => |tv| {
@@ -430,10 +437,20 @@ pub const Data = struct {
 
 pub const Scheme = struct {
     tvars: []TVar,
+    associations: []Association,
 
     pub fn empty() @This() {
-        return .{ .tvars = &.{} };
+        return .{ .tvars = &.{}, .associations = &.{} };
     }
+};
+
+// Explanation: since we don't have unions, do we still need to do associations?
+// Kind of. Because unifying environments can fail (the class function has NO ENVS), we must check the whole function type, so something like this is actually easier gegeg.
+// Also, I'm not planning to do real associated types YET, they will work the same as in kc.
+pub const Association = struct {
+    depends: TVar,
+    class: *Class,
+    instFun: *Function,
 };
 pub fn Match(comptime T: type) type {
     return struct {
@@ -488,6 +505,8 @@ pub const ClassFun = struct {
     params: []Param,
     ret: Type,
     scheme: Scheme,
+    self: Type, // or TVar?
+    class: *Class,
 
     pub const Param = struct {
         t: Type,
@@ -499,7 +518,11 @@ pub const Instance = struct {
     class: *Class,
     data: *Data,
 
-    instFuns: []*Function,
+    instFuns: []InstFun,
+    pub const InstFun = struct {
+        fun: *Function,
+        classFunId: Unique,
+    };
 
     fn print(self: @This(), c: Ctx) void {
         c.sp("inst {s} {s}", .{ self.class.name, self.data.name });
@@ -508,7 +531,9 @@ pub const Instance = struct {
         var ic = c;
         ic.indent +%= 1;
         for (self.instFuns) |instFun| {
-            instFun.print(ic);
+            ic.sp("# class fun uid: {}", .{instFun.classFunId});
+            ic.s("\n");
+            instFun.fun.print(ic);
         }
     }
 };

@@ -37,7 +37,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
 
 pub fn fresh(self: *Self) !ast.Type {
     const tid = self.gen.newUnique();
-    return self.newType(.{ .TyVar = tid });
+    return self.newType(.{ .TyVar = .{ .uid = tid, .classes = undefined } });
 }
 
 pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {

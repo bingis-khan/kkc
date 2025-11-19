@@ -40,6 +40,7 @@ typeContext: TypeContext,
 prelude: ?Prelude,
 returnType: ?AST.Type,
 selfType: ?AST.Type, // this is used in class and instance context. Whenever it's defined, the user is able to reference the instance type by '_'. In nested instances, obviously points to the innermost one.
+associations: std.ArrayList(Association),
 
 const Gen = struct {
     vars: UniqueGen,
@@ -75,6 +76,8 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
         .returnType = null,
         .selfType = null,
         .prelude = null,
+
+        .associations = std.ArrayList(Association).init(arena),
     };
 
     parser.currentToken = parser.lexer.nextToken();
@@ -97,6 +100,12 @@ pub fn parse(self: *Self) !ModuleResult {
         self.consumeSeps();
 
         if (dec != null) try decs.append(dec.?);
+    }
+
+    try self.solveAvailableConstraints();
+
+    if (self.associations.items.len > 0) {
+        std.debug.print("ERROR! constraints left: {}", .{self.associations.items.len});
     }
 
     std.debug.print("parsing success\n", .{});
@@ -125,6 +134,7 @@ fn dataDef(self: *Self, typename: Token) !void {
             .cons = &.{},
             .scheme = .{
                 .tvars = tvars.items,
+                .associations = undefined,
             },
         }));
         return;
@@ -133,7 +143,7 @@ fn dataDef(self: *Self, typename: Token) !void {
     const data = try self.arena.create(AST.Data);
     data.uid = self.gen.types.newUnique();
     data.name = typename.literal(self.lexer.source);
-    data.scheme = .{ .tvars = tvars.items }; // TODO: check for repeating tvars and such.
+    data.scheme = .{ .tvars = tvars.items, .associations = undefined }; // TODO: check for repeating tvars and such.
 
     var cons = std.ArrayList(AST.Con).init(self.arena);
     while (!self.check(.DEDENT)) {
@@ -216,6 +226,8 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
 
         break :b fnBody;
     };
+
+    try self.solveAvailableConstraints();
 
     // after typechecking inside the function, create scheme.
     // TODO: unfinished, we don't care about the environment yet.
@@ -337,22 +349,24 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             });
             self.selfType = selfType;
 
+            const class = try self.arena.create(AST.Class);
+
             var classFuns = std.ArrayList(*AST.ClassFun).init(self.arena);
             try self.devour(.INDENT);
             while (!self.check(.DEDENT)) {
-                const classFun = try self.classFunction(selfVar);
+                const classFun = try self.classFunction(.{ .tvar = selfVar, .t = selfType }, class);
                 self.consumeSeps();
                 try classFuns.append(classFun);
             }
 
             self.selfType = oldSelf;
 
-            const class = try Common.allocOne(self.arena, AST.Class{
+            class.* = AST.Class{
                 .uid = self.gen.types.newUnique(),
                 .name = className.literal(self.lexer.source),
                 .classFuns = classFuns.items,
                 .selfType = selfVar,
-            });
+            };
 
             try self.newClass(class);
 
@@ -374,7 +388,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             self.selfType = instantiatedSelfType;
             defer self.selfType = oldSelf;
 
-            var instFuns = std.ArrayList(*AST.Function).init(self.arena);
+            var instFuns = std.ArrayList(AST.Instance.InstFun).init(self.arena);
             try self.devour(.INDENT);
             while (true) { // while1
                 const funName = try self.expect(.IDENTIFIER);
@@ -392,26 +406,29 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
                     // class function found. unify types.
                     // todo
-
+                    try instFuns.append(.{ .fun = fun, .classFunId = classFun.uid });
                     break;
                 } else {
                     // error that instance function is not found.
                     unreachable;
                 }
 
-                try instFuns.append(fun);
                 if (self.check(.DEDENT)) break;
             }
 
+            const instance = try Common.allocOne(self.arena, AST.Instance{
+                .uid = self.gen.instances.newUnique(),
+                .class = class,
+                .data = data,
+                .instFuns = instFuns.items,
+            });
+
+            try self.addInstance(instance);
+
             break :b .{
-                .Instance = try Common.allocOne(self.arena, AST.Instance{
-                    .uid = self.gen.instances.newUnique(),
-                    .class = class,
-                    .data = data,
-                    .instFuns = instFuns.items,
-                }),
+                .Instance = instance,
             };
-        } // inst
+        } // instance
         else {
             return self.err(*AST.Stmt, "Expect statement.", .{});
         }
@@ -448,7 +465,7 @@ fn consumeSeps(self: *Self) void {
     while (self.check(.STMT_SEP)) {}
 }
 
-fn classFunction(self: *Self, selfTVar: AST.TVar) !*AST.ClassFun {
+fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type }, class: *AST.Class) !*AST.ClassFun {
     const funName = try self.expect(.IDENTIFIER);
 
     self.scope.beginScope(null); // let's capture all tvars.
@@ -475,13 +492,13 @@ fn classFunction(self: *Self, selfTVar: AST.TVar) !*AST.ClassFun {
 
     // make a scheme from deze vars yo.
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
-    try tvars.append(selfTVar);
+    try tvars.append(classSelf.tvar);
     var tvit = tvarsMap.valueIterator();
     while (tvit.next()) |tvar| {
         try tvars.append(tvar.*);
     }
 
-    const scheme = AST.Scheme{ .tvars = tvars.items };
+    const scheme = AST.Scheme{ .tvars = tvars.items, .associations = undefined };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
         .uid = self.gen.classFuns.newUnique(),
@@ -492,6 +509,8 @@ fn classFunction(self: *Self, selfTVar: AST.TVar) !*AST.ClassFun {
         .params = params.items,
         .ret = ret,
         .scheme = scheme,
+        .self = classSelf.t,
+        .class = class,
     });
 }
 
@@ -792,20 +811,7 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
             const varInst: AST.VarInst = switch (vorf) {
                 .Var => |vt| .{ .v = .{ .Var = vt.v }, .t = vt.t },
                 .Fun => |fun| b: {
-                    const match = try self.instantiateScheme(fun.scheme);
-
-                    // mk new, instantiated type
-                    var params = std.ArrayList(AST.Type).init(self.arena);
-                    for (fun.params) |p| {
-                        try params.append(try self.mapType(&match, p.pt));
-                    }
-
-                    const ret = try self.mapType(&match, fun.ret);
-                    const funTy = try self.typeContext.newType(.{ .Fun = .{
-                        .args = params.items,
-                        .ret = ret,
-                        .env = try self.typeContext.newEnv(fun.env),
-                    } });
+                    const funTy = try self.instantiateFunction(fun);
                     break :b .{ .v = .{ .Fun = fun }, .t = funTy };
                 },
 
@@ -824,6 +830,17 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
                         .ret = ret,
                         .env = try self.typeContext.newEnv(null),
                     } });
+
+                    const classSelf = try self.mapType(&match, cfun.self);
+
+                    const instances = try self.getInstancesForClass(cfun.class);
+
+                    try self.associations.append(.{
+                        .from = classSelf,
+                        .to = funTy,
+                        .classFunId = cfun.uid,
+                        .instances = instances,
+                    });
                     break :b .{
                         .v = .{ .ClassFun = cfun },
                         .t = funTy,
@@ -859,6 +876,89 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
 
         // return placeholder var after an error.
         return .{ .v = .{ .Var = placeholderVar }, .t = t };
+    }
+}
+
+fn instantiateFunction(self: *Self, fun: *AST.Function) !AST.Type {
+    const match = try self.instantiateScheme(fun.scheme);
+
+    // mk new, instantiated type
+    var params = std.ArrayList(AST.Type).init(self.arena);
+    for (fun.params) |p| {
+        try params.append(try self.mapType(&match, p.pt));
+    }
+
+    const ret = try self.mapType(&match, fun.ret);
+    const funTy = try self.typeContext.newType(.{ .Fun = .{
+        .args = params.items,
+        .ret = ret,
+        .env = try self.typeContext.newEnv(fun.env),
+    } });
+    return funTy;
+}
+
+// CURRENTLY VERY SLOW!
+fn getInstancesForClass(self: *Self, class: *AST.Class) !DataInstance {
+    // OPTIMIZATION POSSIBILITY: Instance declarations happen often in sequence, then are used. Right now, the list is copied each time. Instead, we can make instances copied on demand.
+    //  1. lots of instance declarations, then class:
+    //      copy hashmap and insert into associations and assign to function class
+    //  2. lots of function class calls, then instance
+    //      copy hashmap and then insert into associations and add instance
+    // basically, when unchanged, pass the current one and create a copy when it needs to be changed.
+    var foundInsts = DataInstance.init(self.arena);
+    var scopeIt = self.scope.scopes.iterateFromTop();
+    while (scopeIt.nextPtr()) |sc| {
+        if (sc.instances.getPtr(class)) |insts| {
+            var instIt = insts.iterator();
+            while (instIt.next()) |inst| {
+                try foundInsts.put(inst.key_ptr.*, inst.value_ptr.*);
+            }
+        }
+    }
+
+    return foundInsts;
+}
+
+fn solveAvailableConstraints(self: *Self) !void {
+    var hadChanges = true; // true, because we need to enter the loop at least once.
+    while (hadChanges) {
+        hadChanges = false;
+
+        // copy array, so that modifications won't affect it.
+        const currentAssocs = try self.arena.alloc(Association, self.associations.items.len);
+        defer self.arena.free(currentAssocs); // noop with arena. but reminds me of currentAssocs's lifetime.
+        @memcpy(currentAssocs, self.associations.items);
+
+        var i: usize = 0; // for future me: we are modifying i inside the loop, so we can't make a for(,) zip thing.
+        for (currentAssocs) |assoc| {
+            defer i +%= 1;
+            switch (self.typeContext.getType(assoc.from)) {
+                .Con => |con| {
+                    if (assoc.instances.get(con.type)) |inst| {
+                        // NOTE: modifying self.associations while iterating assocs.
+                        const fun: *AST.Function = b: {
+                            for (inst.instFuns) |instFun| {
+                                if (instFun.classFunId == assoc.classFunId) {
+                                    const fun = instFun.fun;
+                                    break :b fun;
+                                }
+                            }
+
+                            unreachable;
+                        };
+                        const funTy = try self.instantiateFunction(fun);
+                        try self.typeContext.unify(assoc.to, funTy);
+
+                        _ = self.associations.orderedRemove(i); // TODO: not very efficient with normal ArrayList.
+                        i -%= 1; // make sure to adjust index.
+                    }
+                    hadChanges = true;
+                },
+                .Fun => unreachable, // error!
+                .TVar => {}, // right now, ignore. should probably merge it with getting constraints for tvars for perf. also, it would decrease iterations.
+                .TyVar => {},
+            }
+        }
     }
 }
 
@@ -937,7 +1037,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         .name = typename,
         .uid = self.gen.vars.newUnique(),
         .cons = &.{},
-        .scheme = .{ .tvars = &.{} },
+        .scheme = AST.Scheme.empty(),
     });
     try self.errors.append(.{
         .UndefinedType = .{ .typename = typename, .loc = location },
@@ -1072,13 +1172,13 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match(AST.Type) {
 const FTVs = Set(FTV, struct {
     pub fn eql(ctx: @This(), a: FTV, b: FTV) bool {
         _ = ctx;
-        return a.tyv == b.tyv;
+        return a.tyv.uid == b.tyv.uid;
     }
 
     pub fn hash(ctx: @This(), k: FTV) u64 {
         _ = ctx;
         // return @truncate(k.tyv);
-        return k.tyv;
+        return k.tyv.uid;
     }
 });
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
@@ -1093,7 +1193,25 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     // environment stuff.
     var envftvs = FTVs.init(self.arena);
     for (env) |inst| {
-        try self.ftvs(&envftvs, inst.t);
+        // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
+        switch (inst.v) {
+            .Var => try self.ftvs(&envftvs, inst.t),
+            .Fun => |fun| {
+                for (fun.params) |p| {
+                    try self.ftvs(&envftvs, p.pt);
+                }
+
+                try self.ftvs(&envftvs, fun.ret);
+            },
+
+            .ClassFun => |cfun| {
+                for (cfun.params) |p| {
+                    try self.ftvs(&envftvs, p.t);
+                }
+
+                try self.ftvs(&envftvs, cfun.ret);
+            },
+        }
     }
 
     // now, remove the tyvars from env here.
@@ -1111,7 +1229,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 
     var it = funftvs.iterator();
     while (it.next()) |e| {
-        const name = try std.fmt.allocPrint(self.arena, "'{}", .{e.tyv});
+        const name = try std.fmt.allocPrint(self.arena, "'{}", .{e.tyv.uid});
         const tv = AST.TVar{
             .name = name,
             .uid = self.gen.tvars.newUnique(),
@@ -1121,7 +1239,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         try self.typeContext.unify(e.t, tvt);
     }
 
-    return .{ .tvars = tvars.items };
+    return .{ .tvars = tvars.items, .associations = undefined };
 }
 
 fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
@@ -1212,6 +1330,32 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
     };
 }
 
+// ASSOCIATION
+const Association = struct {
+    from: AST.Type,
+    to: AST.Type,
+
+    classFunId: Unique,
+
+    instances: DataInstance,
+};
+
+const DataInstance = std.AutoArrayHashMap(*AST.Data, *AST.Instance);
+
+fn addAssociation(self: *Self, assoc: Association) !void {
+    try self.associations.append(assoc);
+}
+
+fn addInstance(self: *Self, instance: *AST.Instance) !void {
+    const getOrPutResult = try self.scope.currentScope().instances.getOrPut(instance.class);
+    if (!getOrPutResult.found_existing) {
+        getOrPutResult.value_ptr.* = DataInstance.init(self.arena);
+    }
+
+    const dataInsts = getOrPutResult.value_ptr;
+    try dataInsts.put(instance.data, instance);
+}
+
 const Scope = struct {
     al: std.mem.Allocator,
     scopes: stack.Fixed(CurrentScope, Common.MaxIndent),
@@ -1272,6 +1416,7 @@ const CurrentScope = struct {
     types: std.StringHashMap(DataOrClass),
     cons: std.StringHashMap(*AST.Con),
     tvars: std.StringHashMap(AST.TVar),
+    instances: std.AutoHashMap(*AST.Class, DataInstance),
 
     env: ?*Env,
 
@@ -1281,6 +1426,7 @@ const CurrentScope = struct {
             .types = std.StringHashMap(DataOrClass).init(al),
             .cons = std.StringHashMap(*AST.Con).init(al),
             .tvars = std.StringHashMap(AST.TVar).init(al),
+            .instances = std.AutoHashMap(*AST.Class, DataInstance).init(al),
             .env = env,
         };
     }

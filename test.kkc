@@ -10,9 +10,10 @@ Bool
 class ToInt
 	to-int (self _) -> Int
 
+n = 123
 inst ToInt Int
 	to-int (self _) -> Int
-		return self
+		return self + n
 
 x = 1
 
@@ -21,9 +22,9 @@ false = 0
 inst ToInt Bool
 	to-int (self _) -> Int
 		if self
-			return true
+			return to-int(true)
 		else
-			return false
+			return to-int(false)
 
 
-x = to-int(True)
+n = to-int(to-int(True))
