@@ -31,4 +31,4 @@ inter (x)
 	return to-int(to-int(x))
 
 m = inter(123)
-n = inter(True)
+n = inter(True) # note, that  the environment here is wrong. it's because of the wrong env unification I already knew about. this will be the next thing to fix.

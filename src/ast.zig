@@ -342,7 +342,7 @@ pub const EnvRef = struct {
     id: usize,
 
     pub fn print(eid: @This(), c: Ctx) void {
-        if (c.typeContext.envContext.items[eid.id]) |env| {
+        if (c.typeContext.getEnv(eid).env) |env| {
             c.encloseSepBy(env, ", ", "[", "]");
         } else {
             c.s("[X]");
@@ -446,10 +446,15 @@ pub const Data = struct {
 
 pub const Scheme = struct {
     tvars: []TVar,
+    envVars: []EnvRef, // like unions. same environments can appear in different places, and they need to be the same thing.
     associations: []Association,
 
     pub fn empty() @This() {
-        return .{ .tvars = &.{}, .associations = &.{} };
+        return .{
+            .tvars = &.{},
+            .envVars = &.{},
+            .associations = &.{},
+        };
     }
 
     fn print(self: @This(), c: Ctx) void {
@@ -467,20 +472,22 @@ pub const Scheme = struct {
 pub const Association = struct {
     depends: TVar,
     to: Type,
-    classFunId: Unique,
+    classFun: *ClassFun,
 
     fn print(self: @This(), c: Ctx) void {
         c.s("(");
         self.depends.print(c);
         c.s(" => ");
         self.to.print(c);
-        c.sp(" :${}", .{self.classFunId});
+        c.sp(" :${}", .{self.classFun.uid});
         c.s(")");
     }
 };
+// TODO: pointless T.
 pub fn Match(comptime T: type) type {
     return struct {
         scheme: Scheme,
+        envVars: []EnvRef,
         tvars: []T,
 
         pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
@@ -493,12 +500,26 @@ pub fn Match(comptime T: type) type {
             return null;
         }
 
+        pub fn mapEnv(self: *const @This(), base: EnvRef) ?EnvRef {
+            for (self.scheme.envVars, self.envVars) |s, m| {
+                if (base.id == s.id) {
+                    return m;
+                }
+            }
+
+            return null;
+        }
+
         pub fn empty(scheme: Scheme) @This() {
             // sanity check. right now only used for placeholders in case of errors.
             if (scheme.tvars.len > 0) {
                 unreachable;
             }
-            return .{ .scheme = scheme, .tvars = &.{} };
+            return .{
+                .scheme = scheme,
+                .tvars = &.{},
+                .envVars = &.{},
+            };
         }
     };
 }

@@ -16,7 +16,10 @@ const TyStoreElem = union(enum) {
 const TyStore = std.ArrayList(TyStoreElem);
 
 const EnvRef = ast.EnvRef;
-const EnvStore = std.ArrayList(?ast.Env);
+const EnvStore = std.ArrayList(union(enum) {
+    Ref: EnvRef,
+    Env: ?ast.Env,
+});
 
 context: TyStore,
 envContext: EnvStore,
@@ -47,7 +50,7 @@ pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
 }
 
 pub fn newEnv(self: *Self, e: ?ast.Env) !ast.EnvRef {
-    try self.envContext.append(e);
+    try self.envContext.append(.{ .Env = e });
     const envid = self.envContext.items.len - 1;
     return .{ .id = envid };
 }
@@ -119,12 +122,14 @@ fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef) !void {
     // Later (after we implement classes) we will probably have an id associated with it.
     // Then I can decide if I want structural equality.
     if (lenvref.id == renvref.id) return;
-    const lenv = self.envContext.items[lenvref.id] orelse {
-        self.envContext.items[lenvref.id] = self.envContext.items[renvref.id];
+    const lenv = self.getEnv(lenvref).env orelse {
+        // self.envContext.items[lenvref.id] = self.envContext.items[renvref.id];
+        self.setEnvRef(lenvref, renvref);
         return;
     };
-    const renv = self.envContext.items[renvref.id] orelse {
-        self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
+    const renv = self.getEnv(renvref).env orelse {
+        // self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
+        self.setEnvRef(renvref, lenvref);
         return;
     };
 
@@ -137,6 +142,38 @@ fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef) !void {
         if (!std.meta.eql(lv, rv)) {
             try self.envMismatch(lenv, renv);
             return;
+        }
+    }
+
+    // both are equal here!
+    // self.setEnvRef(lenvref, renvref); // hope it's correct! not necessary, but should speed up comparisions?
+    // // TODO: we should also do something like this with types, because this might decrease unification times in the future.
+}
+
+pub fn getEnv(self: *const Self, envref: EnvRef) struct {
+    env: ?ast.Env,
+    base: EnvRef,
+} {
+    var curref = envref;
+    while (true) {
+        switch (self.envContext.items[curref.id]) {
+            .Env => |env| return .{
+                .base = curref,
+                .env = env,
+            },
+            .Ref => |ref| curref = ref,
+        }
+    }
+}
+
+fn setEnvRef(self: *Self, src: EnvRef, dest: EnvRef) void {
+    var curref = src;
+    while (true) {
+        const next = self.envContext.items[curref.id];
+        self.envContext.items[curref.id] = .{ .Ref = dest };
+        switch (next) {
+            .Ref => |ref| curref = ref,
+            .Env => return, // already mutated, so we just return
         }
     }
 }

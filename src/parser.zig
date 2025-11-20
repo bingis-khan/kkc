@@ -135,6 +135,7 @@ fn dataDef(self: *Self, typename: Token) !void {
             .cons = &.{},
             .scheme = .{
                 .tvars = tvars.items,
+                .envVars = &.{},
                 .associations = &.{}, // TODO: when I add fake class names as types, this will  be non-empty.
             },
         }));
@@ -144,7 +145,11 @@ fn dataDef(self: *Self, typename: Token) !void {
     const data = try self.arena.create(AST.Data);
     data.uid = self.gen.types.newUnique();
     data.name = typename.literal(self.lexer.source);
-    data.scheme = .{ .tvars = tvars.items, .associations = &.{} }; // TODO: check for repeating tvars and such.
+    data.scheme = .{
+        .tvars = tvars.items,
+        .envVars = &.{}, // TEMP
+        .associations = &.{},
+    }; // TODO: check for repeating tvars and such.
 
     var cons = std.ArrayList(AST.Con).init(self.arena);
     while (!self.check(.DEDENT)) {
@@ -502,6 +507,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
 
     const scheme = AST.Scheme{
         .tvars = tvars.items,
+        .envVars = &.{}, // TEMP
         .associations = &.{}, // NOTE: this will change when class constraints are allowed on functions.
     };
 
@@ -840,10 +846,10 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
 
                     const instances = try self.getInstancesForClass(cfun.class);
 
-                    try self.associations.append(.{
+                    try self.addAssociation(.{
                         .from = classSelf,
                         .to = funTy,
-                        .classFunId = cfun.uid,
+                        .classFun = cfun,
                         .instances = instances,
                     });
                     break :b .{
@@ -887,19 +893,20 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
 fn instantiateFunction(self: *Self, fun: *AST.Function) !AST.Type {
     const match = try self.instantiateScheme(fun.scheme);
 
-    // mk new, instantiated type
+    // mk normal, uninstantiated type.
     var params = std.ArrayList(AST.Type).init(self.arena);
     for (fun.params) |p| {
-        try params.append(try self.mapType(&match, p.pt));
+        try params.append(p.pt);
     }
 
-    const ret = try self.mapType(&match, fun.ret);
-    const funTy = try self.typeContext.newType(.{ .Fun = .{
-        .args = params.items,
-        .ret = ret,
-        .env = try self.typeContext.newEnv(fun.env),
-    } });
-    return funTy;
+    const funTy = try self.typeContext.newType(.{
+        .Fun = .{
+            .args = params.items,
+            .ret = fun.ret,
+            .env = try self.typeContext.newEnv(fun.env), // this is sussy. maybe we should also keep the "newEnv" still.
+        },
+    });
+    return try self.mapType(&match, funTy);
 }
 
 // CURRENTLY VERY SLOW!
@@ -943,7 +950,7 @@ fn solveAvailableConstraints(self: *Self) !void {
                         // NOTE: modifying self.associations while iterating assocs.
                         const fun: *AST.Function = b: {
                             for (inst.instFuns) |instFun| {
-                                if (instFun.classFunId == assoc.classFunId) {
+                                if (instFun.classFunId == assoc.classFun.uid) {
                                     const fun = instFun.fun;
                                     break :b fun;
                                 }
@@ -1169,24 +1176,79 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match(AST.Type) {
     for (scheme.tvars, 0..) |_, i| {
         tvars[i] = try self.typeContext.fresh();
     }
-    return .{
-        .scheme = scheme,
+
+    const envVars = try self.arena.alloc(AST.EnvRef, scheme.envVars.len);
+    for (scheme.envVars, 0..) |_, i| {
+        envVars[i] = try self.typeContext.newEnv(null);
+    }
+
+    const tvarMatch = AST.Match(AST.Type){
         .tvars = tvars,
+        .envVars = envVars,
+        .scheme = scheme,
     };
+
+    // should prolly add assocs to "Match", but we don't need em yet.
+    for (scheme.associations) |assoc| {
+        try self.addAssociation(.{
+            .classFun = assoc.classFun,
+            .from = try self.mapType(&tvarMatch, try self.typeContext.newType(
+                .{ .TVar = assoc.depends },
+            )),
+            .to = try self.mapType(&tvarMatch, assoc.to),
+            .instances = try self.getInstancesForClass(assoc.classFun.class),
+        });
+    }
+
+    return tvarMatch;
 }
 
-const FTVs = Set(FTV, struct {
-    pub fn eql(ctx: @This(), a: FTV, b: FTV) bool {
-        _ = ctx;
-        return a.tyv.uid == b.tyv.uid;
+const FTVs = struct {
+    const TyVars = Set(FTV, struct {
+        pub fn eql(ctx: @This(), a: FTV, b: FTV) bool {
+            _ = ctx;
+            return a.tyv.uid == b.tyv.uid;
+        }
+
+        pub fn hash(ctx: @This(), k: FTV) u64 {
+            _ = ctx;
+            // return @truncate(k.tyv);
+            return k.tyv.uid;
+        }
+    });
+    const Envs = Set(AST.EnvRef, struct {
+        pub fn eql(ctx: @This(), a: AST.EnvRef, b: AST.EnvRef) bool {
+            _ = ctx;
+            return a.id == b.id;
+        }
+
+        pub fn hash(ctx: @This(), k: AST.EnvRef) u64 {
+            _ = ctx;
+            // return @truncate(k.tyv);
+            return k.id;
+        }
+    });
+    tyvars: TyVars,
+
+    envs: Envs,
+
+    fn init(al: std.mem.Allocator) @This() {
+        return .{
+            .tyvars = TyVars.init(al),
+            .envs = Envs.init(al),
+        };
     }
 
-    pub fn hash(ctx: @This(), k: FTV) u64 {
-        _ = ctx;
-        // return @truncate(k.tyv);
-        return k.tyv.uid;
+    fn difference(self: *@This(), diff: *const @This()) void {
+        self.tyvars.difference(&diff.tyvars);
+        self.envs.difference(&diff.envs);
     }
-});
+
+    fn deinit(self: *@This()) void {
+        self.tyvars.deinit();
+        self.envs.deinit();
+    }
+};
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
 fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env, functionId: Unique) !AST.Scheme {
     const expectedBinding = AST.TVar.Binding{
@@ -1237,7 +1299,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         try tvars.append(tvar.*);
     }
 
-    var it = funftvs.iterator();
+    var it = funftvs.tyvars.iterator();
     while (it.next()) |e| {
         const name = try std.fmt.allocPrint(self.arena, "'{}", .{e.tyv.uid});
         const tv = AST.TVar{
@@ -1248,6 +1310,12 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         try tvars.append(tv);
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
         try self.typeContext.unify(e.t, tvt);
+    }
+
+    var envs = std.ArrayList(AST.EnvRef).init(self.arena);
+    var envIt = funftvs.envs.iterator();
+    while (envIt.next()) |e| {
+        try envs.append(e.*);
     }
 
     // also, make sure to gather assocs
@@ -1269,7 +1337,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                     defer assocFTVs.deinit();
                     try self.ftvs(&assocFTVs, assoc.to);
 
-                    var assocFTVIt = assocFTVs.iterator();
+                    var assocFTVIt = assocFTVs.tyvars.iterator();
                     while (assocFTVIt.next()) |tyv| {
                         const name = try std.fmt.allocPrint(self.arena, "'{}", .{tyv.tyv.uid});
                         const tv = AST.TVar{
@@ -1282,10 +1350,15 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         try self.typeContext.unify(tyv.t, tvt);
                     }
 
+                    var assocEnvIt = assocFTVs.envs.iterator();
+                    while (assocEnvIt.next()) |e| {
+                        try envs.append(e.*);
+                    }
+
                     try assocs.append(.{
                         .depends = assocTV,
                         .to = assoc.to,
-                        .classFunId = assoc.classFunId,
+                        .classFun = assoc.classFun,
                     });
 
                     // also, make sure to later add tvars to them
@@ -1300,13 +1373,17 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         }
     }
 
-    return .{ .tvars = tvars.items, .associations = assocs.items };
+    return .{
+        .tvars = tvars.items,
+        .envVars = envs.items,
+        .associations = assocs.items,
+    };
 }
 
 fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
     const t = self.typeContext.getType(tref);
     switch (t) {
-        .TyVar => |tyv| try store.insert(.{ .tyv = tyv, .t = tref }),
+        .TyVar => |tyv| try store.tyvars.insert(.{ .tyv = tyv, .t = tref }),
         .Con => |con| {
             for (con.application.tvars) |mt| {
                 try self.ftvs(store, mt);
@@ -1315,6 +1392,11 @@ fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
         .Fun => |fun| {
             for (fun.args) |arg| {
                 try self.ftvs(store, arg);
+            }
+
+            const env = self.typeContext.getEnv(fun.env);
+            if (env.env == null) {
+                try store.envs.insert(env.base);
             }
 
             try self.ftvs(store, fun.ret);
@@ -1327,25 +1409,13 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
     const t = self.typeContext.getType(ty);
     return switch (t) {
         .Con => |con| b: {
-            var tvars = std.ArrayList(AST.Type).init(self.arena);
-            var changed = false;
-            for (con.application.tvars) |oldTy| {
-                const newTy = try self.mapType(match, oldTy);
-                changed = changed or !newTy.eq(oldTy);
-                try tvars.append(newTy);
-            }
-
-            if (!changed) {
-                tvars.deinit();
+            const conMatch = try self.mapMatch(match, &con.application) orelse {
                 break :b ty;
-            }
+            };
 
             break :b try self.typeContext.newType(.{ .Con = .{
                 .type = con.type,
-                .application = .{
-                    .scheme = con.application.scheme,
-                    .tvars = tvars.items,
-                },
+                .application = conMatch,
             } });
         },
         .Fun => |fun| b: {
@@ -1361,19 +1431,10 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
             const ret = try self.mapType(match, fun.ret);
             changed = changed or !ret.eq(fun.ret);
 
-            const env = if (self.typeContext.envContext.items[fun.env.id]) |env| bb: {
-                var envChanged = false;
-                var nuenv = std.ArrayList(AST.VarInst).init(self.arena);
-                for (env) |inst| {
-                    const newTy = try self.mapType(match, inst.t);
-                    envChanged = envChanged or !newTy.eq(inst.t);
-                    try nuenv.append(.{ .v = inst.v, .t = newTy });
-                }
-
-                changed = changed or envChanged;
-
-                break :bb if (envChanged) try self.typeContext.newEnv(nuenv.items) else fun.env;
-            } else try self.typeContext.newEnv(null); // IMPORTANT: must instantiate new env..
+            // this obv. won't be necessary with Match
+            //   (I meant the recursively applying env part!)
+            const env = try self.mapEnv(match, fun.env);
+            changed = changed or env.id != fun.env.id;
 
             if (!changed) {
                 args.deinit();
@@ -1391,12 +1452,67 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
     };
 }
 
+// null when match did not change (so we can keep the same data structure)
+fn mapMatch(self: *Self, match: *const AST.Match(AST.Type), mm: *const AST.Match(AST.Type)) ParserError!?AST.Match(AST.Type) {
+    var changed = false;
+
+    var tvars = std.ArrayList(AST.Type).init(self.arena);
+    for (mm.tvars) |oldTy| {
+        const newTy = try self.mapType(match, oldTy);
+        changed = changed or !newTy.eq(oldTy);
+        try tvars.append(newTy);
+    }
+
+    var envs = std.ArrayList(AST.EnvRef).init(self.arena);
+    for (mm.envVars) |oldEnv| {
+        const newEnv = try self.mapEnv(match, oldEnv);
+        changed = changed or oldEnv.id != newEnv.id;
+        try envs.append(newEnv);
+    }
+
+    if (!changed) {
+        tvars.deinit();
+        envs.deinit();
+        return null;
+    }
+
+    return .{
+        .scheme = mm.scheme,
+        .tvars = tvars.items,
+        .envVars = envs.items,
+    };
+}
+
+fn mapEnv(self: *Self, match: *const AST.Match(AST.Type), envref: AST.EnvRef) ParserError!AST.EnvRef {
+    const envAndBase = self.typeContext.getEnv(envref);
+    return if (envAndBase.env) |env| bb: {
+        var envChanged = false;
+        var nuenv = std.ArrayList(AST.VarInst).init(self.arena);
+        for (env) |inst| {
+            const newTy = try self.mapType(match, inst.t);
+            envChanged = envChanged or !newTy.eq(inst.t);
+            try nuenv.append(.{ .v = inst.v, .t = newTy });
+        }
+
+        break :bb if (envChanged) try self.typeContext.newEnv(nuenv.items) else envref;
+    } else bb: {
+        if (match.mapEnv(envAndBase.base)) |nue| {
+            break :bb nue;
+        }
+
+        // i guess we just return the normal one? random choice.
+        break :bb envref;
+
+        // try self.typeContext.newEnv(null); // IMPORTANT: must instantiate new env..
+    };
+}
+
 // ASSOCIATION
 const Association = struct {
     from: AST.Type,
     to: AST.Type,
 
-    classFunId: Unique,
+    classFun: *AST.ClassFun,
 
     instances: DataInstance,
 };
