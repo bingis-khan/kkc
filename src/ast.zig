@@ -230,6 +230,7 @@ pub const Expr = struct {
         Var: VarType,
         Con: *Con,
         Int: i64, // obv temporary.
+        Str: StrLiteral,
     },
 
     pub const VarType = union(enum) {
@@ -267,6 +268,7 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
+            .Str => |s| c.sp("'{s}'", .{s.s}),
             .BinOp => |bop| {
                 c.s("(");
                 bop.l.print(c);
@@ -606,4 +608,15 @@ pub const ExternalFunction = struct {
     ret: Type,
 
     scheme: Scheme,
+
+    anns: []Annotation,
+};
+
+pub const Annotation = struct {
+    name: Str,
+    params: []Str,
+};
+
+pub const StrLiteral = struct {
+    s: Str, // temp, because string interpolation.
 };

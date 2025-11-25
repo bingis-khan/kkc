@@ -26,6 +26,7 @@ pub const TokenType = enum {
     IDENTIFIER,
     TYPE,
     INTEGER,
+    STRING,
 
     EQUALS,
     EQEQ,
@@ -50,6 +51,10 @@ pub const TokenType = enum {
 
     // other
     EXTERNAL,
+
+    BEGIN_ANNOTATION,
+    LEFT_SQBR,
+    RIGHT_SQBR,
 
     EOF,
 };

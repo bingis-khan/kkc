@@ -2,7 +2,13 @@ Int
 Bool
 	True
 	False
-Unit
+
+#[ctype 'const char*']
+ConstStr
+
+#[ctype 'void']
 Void
 
-external printf(x) -> Void
+external printf(format ConstStr, x a) -> Void
+
+x = printf('%d\n', 123)

@@ -272,6 +272,36 @@ fn body(self: *Self) ![]*AST.Stmt {
 }
 
 fn statement(self: *Self) ParserError!?*AST.Stmt {
+    // try parse annotations.
+    // It's possible to divide annotations in multiple lines:
+    //  #[linkname 'printf']
+    //  #[dylib 'libc.so']
+    //  external printf(fmt Ptr Char, x a) -> Void
+    // TODO: check if statements make sense in context.
+    var annotations = std.ArrayList(AST.Annotation).init(self.arena); // nothing is allocated when there are no annotations.
+    while (self.check(.BEGIN_ANNOTATION)) {
+        if (!self.check(.RIGHT_SQBR)) while (true) {
+            const annName = try self.expect(.IDENTIFIER);
+
+            var annParams = std.ArrayList(Str).init(self.arena);
+            while (self.stringLiteral()) |param| { // NOTE: DON'T RESTRUCTURE! Expected short circuit.
+                // imagine a check for parameters.
+                try annParams.append(param.s);
+            }
+
+            try annotations.append(.{
+                .name = annName.literal(self.lexer.source),
+                .params = annParams.items,
+            });
+
+            if (self.check(.RIGHT_SQBR)) break;
+            try self.devour(.COMMA);
+        };
+
+        try self.endStmt();
+        self.consumeSeps();
+    }
+
     const stmtVal: ?AST.Stmt = b: {
         if (self.check(.RETURN)) {
             const expr = if (!self.isEndStmt())
@@ -483,6 +513,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 .params = params.items,
                 .ret = ret,
                 .scheme = scheme,
+                .anns = annotations.items,
             });
 
             try self.scope.currentScope().vars.put(name, .{ .Extern = extfun });
@@ -684,27 +715,45 @@ fn term(self: *Self) !*AST.Expr {
             .t = dv.t,
             .e = .{ .Var = dv.v },
         });
-    } else if (self.consume(.TYPE)) |con| {
+    } // var
+    else if (self.consume(.TYPE)) |con| {
         const ct = try self.instantiateCon(con);
         return self.allocExpr(.{
             .e = .{ .Con = ct.con },
             .t = ct.t,
         });
-    } else if (self.consume(.INTEGER)) |i| {
+    } // con
+    else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
             .t = try self.defined(.Int),
             .e = .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable },
         });
-    } else if (self.check(.LEFT_PAREN)) {
+    } // var
+    else if (self.stringLiteral()) |s| {
+        return self.allocExpr(.{
+            .t = try self.defined(.ConstStr),
+            .e = .{ .Str = s },
+        });
+    } // string
+    else if (self.check(.LEFT_PAREN)) {
         const expr = try self.expression();
         try self.devour(.RIGHT_PAREN);
         return expr;
-    } else {
+    } // grouping
+    else {
         return self.err(*AST.Expr, "Unexpected term", .{});
     }
 }
 
-fn allocExpr(self: Self, ev: AST.Expr) error{OutOfMemory}!*AST.Expr {
+fn stringLiteral(self: *Self) ?AST.StrLiteral {
+    if (self.consume(.STRING)) |s| {
+        const lit = s.literal(self.lexer.source);
+        return .{ .s = lit[1 .. lit.len - 1] };
+    }
+    return null;
+}
+
+fn allocExpr(self: *const Self, ev: AST.Expr) error{OutOfMemory}!*AST.Expr {
     const e = try self.arena.create(AST.Expr);
     e.* = ev;
     return e;

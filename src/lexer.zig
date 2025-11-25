@@ -53,15 +53,37 @@ pub const Lexer = struct {
         }
 
         const from = self.currentIndex;
+
+        // NOTE: currently, possible EOFs are unhadled. Fix dat.
         const tt: TokenType = switch (self.nextChar()) {
-            '#' => {
+            '#' => b: {
+                // annotation shit.
+                // I wonder if it would be easier to parse annotations in LEXER? Might be a bit faster.
+                if (self.curChar() == '[') {
+                    _ = self.nextChar();
+                    break :b .BEGIN_ANNOTATION;
+                }
                 self.skipLine();
                 return self.nextToken();
             },
             ':' => .COLON,
+            '\'' => b: {
+                while (self.curChar() != '\'') {
+                    if (self.curChar() == '\n') {
+                        // TODO: ERROR.
+                        unreachable;
+                    }
+                    _ = self.nextChar();
+                }
+
+                _ = self.nextChar(); // skip over last '
+                break :b .STRING;
+            },
             '\n' => .STMT_SEP,
             '(' => .LEFT_PAREN,
             ')' => .RIGHT_PAREN,
+            '[' => .LEFT_SQBR,
+            ']' => .RIGHT_SQBR,
             ',' => .COMMA,
             '=' => b: {
                 if (self.curChar() == '=') {
@@ -120,7 +142,7 @@ pub const Lexer = struct {
             },
 
             '_' => .UNDERSCORE,
-            else => .EOF,
+            else => unreachable, // TODO: ERROR.
         };
         const to = self.currentIndex;
 
