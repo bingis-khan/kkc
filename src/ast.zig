@@ -227,13 +227,34 @@ pub const Expr = struct {
         UnOp: struct { e: Rec, op: UnOp },
         Access: struct { e: Rec, acc: Str },
         Call: struct { callee: Rec, args: []Rec },
-        Var: Var,
-        Fun: *Function,
-        ClassFun: *ClassFun,
+        Var: VarType,
         Con: *Con,
         Int: i64, // obv temporary.
     },
 
+    pub const VarType = union(enum) {
+        Fun: *Function,
+        ClassFun: *ClassFun,
+        Var: Var,
+        ExternalFun: *ExternalFunction,
+
+        fn print(self: @This(), c: Ctx) void {
+            switch (self) {
+                .Var => |v| {
+                    v.print(c);
+                },
+                .Fun => |fun| {
+                    fun.name.print(c);
+                },
+                .ClassFun => |cfun| {
+                    cfun.name.print(c);
+                },
+                .ExternalFun => |extfun| {
+                    extfun.name.print(c);
+                },
+            }
+        }
+    };
     const Rec = *@This();
 
     fn print(self: @This(), c: Ctx) void {
@@ -241,12 +262,6 @@ pub const Expr = struct {
         switch (self.e) {
             .Var => |v| {
                 v.print(c);
-            },
-            .Fun => |fun| {
-                fun.name.print(c);
-            },
-            .ClassFun => |cfun| {
-                cfun.name.print(c);
             },
             .Con => |con| {
                 con.print(c);
@@ -583,4 +598,12 @@ pub const Instance = struct {
             instFun.fun.print(ic);
         }
     }
+};
+
+pub const ExternalFunction = struct {
+    name: Var,
+    params: []Function.Param, // kinda cringe, but whatever. I assume tvars won't come through.
+    ret: Type,
+
+    scheme: Scheme,
 };

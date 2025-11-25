@@ -1,0 +1,22 @@
+# test asdjmlk asjdlkja slk
+Unit # kupa
+	Unit  # here
+			# miau
+Int # asdk
+Bool
+	True #maiu
+	False # kasjd
+
+
+n = 123
+
+class ToInt
+		to-int (self _) -> Int
+f ()
+	inst ToInt Int
+		to-int (self _) -> Int
+			return self + n
+
+	x = to-int(1)
+
+

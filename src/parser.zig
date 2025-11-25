@@ -436,6 +436,59 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 .Instance = instance,
             };
         } // instance
+        else if (self.check(.EXTERNAL)) {
+            const nameTok = try self.expect(.IDENTIFIER);
+            const name = nameTok.literal(self.lexer.source);
+            var env = Env.init(self.arena);
+            self.scope.beginScope(&env);
+
+            try self.devour(.LEFT_PAREN);
+
+            var params = std.ArrayList(AST.Function.Param).init(self.arena);
+            if (!self.check(.RIGHT_PAREN)) {
+                while (true) {
+                    const pname = try self.expect(.IDENTIFIER);
+                    const v = try self.newVar(pname); // pointless fresh.
+                    const t = try Type(.Ext).sepTyo(self);
+                    try params.append(.{ .pn = v.v, .pt = t });
+
+                    if (self.check(.RIGHT_PAREN)) {
+                        break;
+                    }
+                    try self.devour(.COMMA);
+                }
+            }
+
+            try self.devour(.RIGHT_ARROW);
+            const ret = try Type(.Ext).sepTyo(self);
+
+            var definedTVars = std.ArrayList(AST.TVar).init(self.arena);
+            var it = self.scope.currentScope().tvars.valueIterator();
+            while (it.next()) |tvar| {
+                try definedTVars.append(tvar.*);
+            }
+            self.scope.endScope();
+
+            const scheme = AST.Scheme{
+                .tvars = definedTVars.items,
+                .associations = &.{},
+                .envVars = &.{},
+            };
+
+            const extfun = try Common.allocOne(self.arena, AST.ExternalFunction{
+                .name = .{
+                    .name = name,
+                    .uid = self.gen.vars.newUnique(),
+                },
+                .params = params.items,
+                .ret = ret,
+                .scheme = scheme,
+            });
+
+            try self.scope.currentScope().vars.put(name, .{ .Extern = extfun });
+
+            break :b null;
+        } // external function
         else {
             return self.err(*AST.Stmt, "Expect statement.", .{});
         }
@@ -492,7 +545,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     }
 
     // another new eye candy - default Unit
-    const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).typo(self) else try self.defined(.Unit);
+    const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).sepTyo(self) else try self.defined(.Unit);
     try self.endStmt();
     const tvarsMap = self.scope.currentScope().tvars;
     self.scope.endScope();
@@ -629,11 +682,7 @@ fn term(self: *Self) !*AST.Expr {
         const dv = try self.instantiateVar(v);
         return self.allocExpr(.{
             .t = dv.t,
-            .e = switch (dv.v) {
-                .Var => |vv| .{ .Var = vv },
-                .Fun => |fun| .{ .Fun = fun },
-                .ClassFun => |cfun| .{ .ClassFun = cfun },
-            },
+            .e = .{ .Var = dv.v },
         });
     } else if (self.consume(.TYPE)) |con| {
         const ct = try self.instantiateCon(con);
@@ -689,8 +738,8 @@ fn typ(self: *Self) ParserError!AST.Type {
     return try Type(.Type).typo(self);
 }
 
-fn Type(comptime tyty: enum { Type, Decl, Class }) type {
-    const inDeclaration = tyty == .Decl or tyty == .Class;
+fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
+    const inDeclaration = tyty == .Decl or tyty == .Class or tyty == .Ext;
     const Ty = AST.Type;
     return struct {
         // type-o
@@ -726,7 +775,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class }) type {
                 var tyArgs = std.ArrayList(Ty).init(self.arena);
                 while (true) {
                     const tokType = self.peek().type;
-                    if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER)) { // bad bad works
+                    if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE)) { // bad bad works
                         break;
                     }
 
@@ -743,11 +792,18 @@ fn Type(comptime tyty: enum { Type, Decl, Class }) type {
                     const args = try self.arena.alloc(AST.Type, 1);
                     args[0] = ty.t;
                     const ret = try sepTyo(self);
-                    return try self.typeContext.newType(.{ .Fun = .{
-                        .args = args,
-                        .ret = ret,
-                        .env = try self.typeContext.newEnv(null),
-                    } });
+                    return try self.typeContext.newType(.{
+                        .Fun = .{
+                            .args = args,
+                            .ret = ret,
+                            .env = if (tyty != .Ext)
+                                // in general case
+                                try self.typeContext.newEnv(null)
+                            else
+                                // in external functions, assume no environment.
+                                try self.typeContext.newEnv(&.{}),
+                        },
+                    });
                 } else {
                     return ty.t;
                 }
@@ -777,16 +833,28 @@ fn Type(comptime tyty: enum { Type, Decl, Class }) type {
                     try self.errors.append(.{ .TuplesNotYetSupported = .{} });
                     return self.typeContext.fresh();
                 }
+            } else if (self.consume(.IDENTIFIER)) |tv| {
+                const tvt = try self.typeContext.newType(.{
+                    .TVar = try self.lookupTVar(tv, inDeclaration),
+                });
+                if (self.check(.RIGHT_ARROW)) {
+                    const args = try self.arena.alloc(AST.Type, 1);
+                    args[0] = tvt;
+                    const ret = try sepTyo(self);
+                    return self.typeContext.newType(.{ .Fun = .{
+                        .args = args,
+                        .ret = ret,
+                        .env = try self.typeContext.newEnv(null),
+                    } });
+                } else {
+                    return tvt;
+                }
             } else {
                 return try typo(self);
             }
             unreachable;
         }
     };
-}
-
-fn sepTy(self: *Self) !AST.Type {
-    return self.sepTyo(false);
 }
 
 // resolver zone
@@ -814,7 +882,10 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
     return funPtr;
 }
 
-fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
+fn instantiateVar(self: *@This(), varTok: Token) !struct {
+    v: AST.Expr.VarType,
+    t: AST.Type,
+} {
     const varName = varTok.literal(self.lexer.source);
     var lastVars = self.scope.scopes.iterateFromTop();
     while (lastVars.nextPtr()) |cursc| {
@@ -857,6 +928,32 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
                         .t = funTy,
                     };
                 },
+
+                .Extern => |extfun| {
+                    const match = try self.instantiateScheme(extfun.scheme);
+
+                    var params = std.ArrayList(AST.Type).init(self.arena);
+                    for (extfun.params) |p| {
+                        try params.append(try self.mapType(&match, p.pt));
+                    }
+
+                    const ret = try self.mapType(&match, extfun.ret);
+                    const funTy = try self.typeContext.newType(.{
+                        .Fun = .{
+                            .args = params.items,
+                            .ret = ret,
+                            .env = try self.typeContext.newEnv(&.{}),
+                        },
+                    });
+
+                    // NOTE: we just return. External functions are not added to the environment.
+                    return .{
+                        .v = .{
+                            .ExternalFun = extfun,
+                        },
+                        .t = funTy,
+                    };
+                },
             };
 
             // TODO: I should make a separate function, but I'm still not sure about the interface.
@@ -868,8 +965,14 @@ fn instantiateVar(self: *@This(), varTok: Token) !AST.VarInst {
                     try env.append(varInst);
                 }
             }
-
-            return varInst;
+            return .{
+                .v = switch (varInst.v) {
+                    .Var => |vv| .{ .Var = vv },
+                    .Fun => |fun| .{ .Fun = fun },
+                    .ClassFun => |cfun| .{ .ClassFun = cfun },
+                },
+                .t = varInst.t,
+            };
         }
     } else {
         const placeholderVar = AST.Var{
@@ -1582,6 +1685,7 @@ const CurrentScope = struct {
         Var: struct { v: AST.Var, t: AST.Type },
         Fun: *AST.Function,
         ClassFun: *AST.ClassFun,
+        Extern: *AST.ExternalFunction,
     };
 
     const DataOrClass = union(enum) {

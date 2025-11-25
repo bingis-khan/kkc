@@ -1,34 +1,8 @@
-# test asdjmlk asjdlkja slk
-Unit # kupa
-	Unit  # here
-			# miau
-Int # asdk
+Int
 Bool
-	True #maiu
-	False # kasjd
+	True
+	False
+Unit
+Void
 
-class ToInt
-	to-int (self _) -> Int
-
-n = 123
-inst ToInt Int
-	to-int (self _) -> Int
-		return self + n
-
-x = 1
-
-true = 1
-false = 0
-inst ToInt Bool
-	to-int (self _) -> Int
-		if self
-			return to-int(true)
-		else
-			return to-int(false)
-
-
-inter (x)
-	return to-int(to-int(x))
-
-m = inter(123)
-n = inter(True) # note, that  the environment here is wrong. it's because of the wrong env unification I already knew about. this will be the next thing to fix.
+external printf(x) -> Void

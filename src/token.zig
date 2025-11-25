@@ -48,5 +48,8 @@ pub const TokenType = enum {
     CLASS,
     INST,
 
+    // other
+    EXTERNAL,
+
     EOF,
 };

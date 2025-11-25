@@ -92,6 +92,7 @@ pub const Lexer = struct {
                     @"else",
                     class,
                     inst,
+                    external,
                 };
                 const keyword = std.meta.stringToEnum(Keyword, self.scanned(from)) orelse {
                     break :b .IDENTIFIER;
@@ -104,6 +105,7 @@ pub const Lexer = struct {
                     .@"else" => .ELSE,
                     .class => .CLASS,
                     .inst => .INST,
+                    .external => .EXTERNAL,
                 };
             },
 
