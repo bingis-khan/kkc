@@ -1,17 +1,12 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const Scope = ast.Scope;
 const common = @import("common.zig");
 const Str = common.Str;
 
-predefinedTypes: [NumPredefinedTypes]ast.Type,
+predefinedTypes: [NumPredefinedTypes]*ast.Data,
 
 const Self = @This();
-
-pub fn init() Self {
-    return .{
-        .predefinedTypes = .{null} ** NumPredefinedTypes,
-    };
-}
 
 pub const PremadeType = enum {
     Unit,
@@ -24,7 +19,9 @@ pub const NumPredefinedTypes = @typeInfo(PremadeType).Enum.fields.len;
 // later should be defined in prelude?
 pub fn defined(self: *const Self, premade: PremadeType) ast.Type {
     _ = self;
-    return .{ .id = @intCast(@intFromEnum(premade)) };
+    _ = premade;
+    // return .{ .id = @intCast(@intFromEnum(premade)) };
+    unreachable;
 }
 
 // I don't know how to easily extract field names from an enum value.

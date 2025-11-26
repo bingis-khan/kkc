@@ -3,12 +3,19 @@ Bool
 	True
 	False
 
+Unit
+	Unit
+
 #[ctype 'const char*']
 ConstStr
 
 #[ctype 'void']
 Void
 
+#[dylib 'libc.so']
 external printf(format ConstStr, x a) -> Void
 
-x = printf('%d\n', 123)
+s = 'dupsko'
+x = printf('asdasd %d\n', 123)
+ret = 1 + 2
+return ret

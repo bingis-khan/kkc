@@ -22,6 +22,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // needed if I want libc shit to work.
+    // If the library is not initialized, external libc functions wont work.
+    // I need to find a better way - I want static executables.
+    exe.linkLibC();
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).

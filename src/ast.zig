@@ -2,6 +2,7 @@ const Str = @import("common.zig").Str;
 const std = @import("std");
 const Unique = @import("UniqueGen.zig").Unique;
 const TypeContext = @import("TypeContext.zig");
+const common = @import("common.zig");
 
 toplevel: []*Stmt, // top level
 
@@ -230,7 +231,7 @@ pub const Expr = struct {
         Var: VarType,
         Con: *Con,
         Int: i64, // obv temporary.
-        Str: StrLiteral,
+        Str: Str,
     },
 
     pub const VarType = union(enum) {
@@ -238,6 +239,14 @@ pub const Expr = struct {
         ClassFun: *ClassFun,
         Var: Var,
         ExternalFun: *ExternalFunction,
+
+        // pub fn getVar(self: @This()) Var {
+        //     return switch (self) {
+        //         .Var => |v| v,
+        //         .Fun => |fun| fun.name,
+        //         else => undefined,
+        //     };
+        // }
 
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
@@ -268,7 +277,7 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
-            .Str => |s| c.sp("'{s}'", .{s.s}),
+            .Str => |s| c.sp("'{s}'", .{s}),
             .BinOp => |bop| {
                 c.s("(");
                 bop.l.print(c);
@@ -615,8 +624,14 @@ pub const ExternalFunction = struct {
 pub const Annotation = struct {
     name: Str,
     params: []Str,
-};
 
-pub const StrLiteral = struct {
-    s: Str, // temp, because string interpolation.
+    pub fn find(anns: []Annotation, name: Str) ?Annotation {
+        for (anns) |ann| {
+            if (common.streq(ann.name, name)) {
+                return ann;
+            }
+        }
+
+        return null;
+    }
 };

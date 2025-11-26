@@ -3,6 +3,8 @@ const Parser = @import("parser.zig");
 const Lexer = @import("lexer.zig").Lexer;
 const ast = @import("ast.zig");
 const Errors = @import("error.zig").Errors;
+const Interpreter = @import("Interpreter.zig");
+const Prelude = @import("Prelude.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -38,5 +40,14 @@ pub fn main() !void {
     fakeNewline = false; // SIKE (but obv. temporary)
     for (errors.items) |err| {
         err.print(fakeHackCtx);
+    }
+
+    // temp: make prelude here.
+    const prelude = try parser.mkPrelude();
+
+    // go and interpret
+    if (errors.items.len == 0) {
+        const ret = try Interpreter.run(module.ast, prelude, aa);
+        std.debug.print("=== return value: {} ===\n", .{ret});
     }
 }

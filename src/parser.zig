@@ -84,6 +84,26 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
     return parser;
 }
 
+// should be const, but stack.Fixed's iterator can return pointers. This can be fixed by using two different types.
+pub fn mkPrelude(self: *Self) !Prelude {
+    var enums: [Prelude.NumPredefinedTypes]*AST.Data = .{undefined} ** Prelude.NumPredefinedTypes;
+    var copy = Prelude.PremadeTypeName;
+    var it = copy.iterator();
+    while (it.next()) |kv| {
+        if (self.maybeLookupType(kv.value.*)) |dc| {
+            switch (dc) {
+                .Data => |d| enums[@intCast(@intFromEnum(kv.key))] = d,
+                .Class => return error.PreludeError,
+            }
+        } else {
+            return error.PreludeError;
+        }
+    }
+    return .{
+        .predefinedTypes = enums,
+    };
+}
+
 pub fn parse(self: *Self) !ModuleResult {
     std.debug.print("in parser\n", .{});
 
@@ -157,7 +177,7 @@ fn dataDef(self: *Self, typename: Token) !void {
         var tys = std.ArrayList(AST.Type).init(self.arena);
         while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
             // TODO: for now, no complicated types!
-            const ty = try self.typ();
+            const ty = try Type(.Type).typ(self);
             try tys.append(ty);
         }
         self.consumeSeps();
@@ -284,9 +304,10 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             const annName = try self.expect(.IDENTIFIER);
 
             var annParams = std.ArrayList(Str).init(self.arena);
-            while (self.stringLiteral()) |param| { // NOTE: DON'T RESTRUCTURE! Expected short circuit.
-                // imagine a check for parameters.
-                try annParams.append(param.s);
+            while (self.consume(.STRING)) |param| {
+                const litWithQuotes = param.literal(self.lexer.source);
+                const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
+                try annParams.append(lit);
             }
 
             try annotations.append(.{
@@ -729,11 +750,8 @@ fn term(self: *Self) !*AST.Expr {
             .e = .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable },
         });
     } // var
-    else if (self.stringLiteral()) |s| {
-        return self.allocExpr(.{
-            .t = try self.defined(.ConstStr),
-            .e = .{ .Str = s },
-        });
+    else if (self.consume(.STRING)) |s| {
+        return try self.stringLiteral(s);
     } // string
     else if (self.check(.LEFT_PAREN)) {
         const expr = try self.expression();
@@ -745,12 +763,12 @@ fn term(self: *Self) !*AST.Expr {
     }
 }
 
-fn stringLiteral(self: *Self) ?AST.StrLiteral {
-    if (self.consume(.STRING)) |s| {
-        const lit = s.literal(self.lexer.source);
-        return .{ .s = lit[1 .. lit.len - 1] };
-    }
-    return null;
+fn stringLiteral(self: *Self, s: Token) !*AST.Expr {
+    const lit = s.literal(self.lexer.source);
+    return self.allocExpr(.{
+        .t = try self.defined(.ConstStr),
+        .e = .{ .Str = lit[1 .. lit.len - 1] },
+    });
 }
 
 fn allocExpr(self: *const Self, ev: AST.Expr) error{OutOfMemory}!*AST.Expr {
@@ -783,16 +801,12 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
     };
 }
 
-fn typ(self: *Self) ParserError!AST.Type {
-    return try Type(.Type).typo(self);
-}
-
 fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
     const inDeclaration = tyty == .Decl or tyty == .Class or tyty == .Ext;
     const Ty = AST.Type;
     return struct {
         // type-o
-        fn typo(self: *Self) ParserError!Ty {
+        fn typ(self: *Self) ParserError!Ty {
             // temp
             if (self.consume(.TYPE)) |ty| {
                 const ity = try self.instantiateType(ty);
@@ -828,7 +842,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
                         break;
                     }
 
-                    try tyArgs.append(try typo(self));
+                    try tyArgs.append(try Type(.Type).typ(self));
                 }
 
                 const ty = try self.instantiateType(tyName);
@@ -867,7 +881,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
                 }
 
                 if (self.check(.RIGHT_ARROW)) {
-                    const ret = try typo(self);
+                    const ret = try typ(self);
                     return try self.typeContext.newType(.{ .Fun = .{
                         .ret = ret,
                         .args = args.items,
@@ -899,7 +913,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
                     return tvt;
                 }
             } else {
-                return try typo(self);
+                return try typ(self);
             }
             unreachable;
         }

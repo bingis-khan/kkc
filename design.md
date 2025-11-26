@@ -9,6 +9,13 @@ This is to maybe unclog my mind (because I'm kinda stuck yo, especially on stuff
 
 ---
 
+# dylibbing and linkLibC()
+
+I had to link libc to be able to call dynamically loaded libc functions. That's crap and I hate it. I wonder if it's possible to avoid it.
+
+I assume the problem is that libc has some shit in the process reserved, so I would have to run all libc calls in a different process? And copy data between them.
+
+
 # Local external functions
 
 external functions can also be polymorphic (easier handling of varargs functions for now.)
