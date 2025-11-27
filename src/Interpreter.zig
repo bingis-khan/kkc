@@ -4,6 +4,7 @@ const Prelude = @import("Prelude.zig");
 const common = @import("common.zig");
 const Str = common.Str;
 const endianness = @import("builtin").target.cpu.arch.endian();
+const TypeContext = @import("TypeContext.zig");
 
 const Self = @This();
 
@@ -11,6 +12,7 @@ arena: std.mem.Allocator,
 returnValue: *Value = undefined, // default value is returned at the end of run()
 scope: Scope,
 funLoader: DyLibLoader,
+typeContext: *const TypeContext,
 
 const Scope = std.HashMap(ast.Var, *Value, struct {
     pub fn eql(ctx: @This(), a: ast.Var, b: ast.Var) bool {
@@ -25,11 +27,12 @@ const Scope = std.HashMap(ast.Var, *Value, struct {
 }, std.hash_map.default_max_load_percentage);
 
 // right now a very simple interpreter where we don't free.
-pub fn run(module: ast, prelude: Prelude, al: std.mem.Allocator) !i64 {
+pub fn run(module: ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
     _ = prelude;
     const scope = Scope.init(al);
     var self: Self = .{
         .scope = scope,
+        .typeContext = typeContext,
         .arena = al,
         .funLoader = DyLibLoader.init(al),
     };
@@ -71,15 +74,13 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             }
 
             try self.scope.put(fun.name, try self.initValue(.{
-                .size = @sizeOf(*Value.Type.Fun),
-                .alignment = @sizeOf(*Value.Type.Fun),
                 .data = .{
                     .fun = try common.allocOne(self.arena, Value.Type.Fun{
                         .fun = fun,
                         .env = envSnapshot, // TODO
                     }),
                 },
-                .functionType = .LocalFunction,
+                .header = .{ .functionType = .LocalFunction },
             }));
         },
         .If => |ifs| {
@@ -98,9 +99,67 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                 }
             }
         },
+        .Switch => |sw| {
+            const switchOn = try self.expr(sw.switchOn);
+
+            for (sw.cases) |case| {
+                if (try self.tryDeconstruct(case.decon, switchOn.toTypePtr())) {
+                    try self.stmts(case.body);
+                    break;
+                }
+            } else {
+                return error.CaseNotMatched;
+            }
+        },
         else => {
             unreachable;
         },
+    }
+}
+
+// note that we are getting deep into structs. we must not convert that Value.Type pointer into *Value, because it might not have that header.
+fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool {
+    switch (decon.d) {
+        .Var => |vn| {
+            try self.scope.put(vn, try self.copyValue(v, decon.t));
+            return true;
+        },
+        .Con => |con| {
+            switch (con.con.data.structureType()) {
+                .EnumLike => return v.enoom == con.con.tagValue,
+                .RecordLike => {
+                    var off: usize = 0;
+                    for (con.decons) |d| {
+                        const sz = self.sizeOf(d.t);
+                        off += calculatePadding(off, sz.alignment);
+                        if (!try self.tryDeconstruct(d, v.offset(off))) {
+                            return false;
+                        }
+
+                        off += sz.size;
+                    }
+
+                    return true;
+                },
+                .ADT => {
+                    if (v.adt.tag != con.con.tagValue) return false;
+
+                    var off: usize = @sizeOf(Value.Tag);
+                    for (con.decons) |d| {
+                        const sz = self.sizeOf(d.t);
+                        off += calculatePadding(off, sz.alignment);
+                        if (!try self.tryDeconstruct(d, v.offset(off))) {
+                            return false;
+                        }
+
+                        off += sz.size;
+                    }
+
+                    return true;
+                },
+            }
+        },
+        // else => unreachable,
     }
 }
 
@@ -155,10 +214,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
                     const fun = try self.funLoader.loadFunction(libName, funName);
                     return try self.initValue(.{
-                        .size = @sizeOf(@TypeOf(fun)),
-                        .alignment = @alignOf(@TypeOf(fun)),
                         .data = .{ .ptr = fun },
-                        .functionType = .ExternalFunction,
+                        .header = .{ .functionType = .ExternalFunction },
                     });
                 },
 
@@ -170,64 +227,54 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
         .Str => |slit| {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit.lit));
             return try self.initValue(Value{
-                .alignment = @alignOf(@TypeOf(s)),
-                .size = @sizeOf(@TypeOf(s)),
                 .data = .{ .ptr = s },
-                .functionType = null,
+                .header = .{ .functionType = .None },
             });
         },
         .Call => |c| {
             const fun = try self.expr(c.callee);
 
-            if (fun.functionType) |ft| {
-                switch (ft) {
-                    .ExternalFunction => {
-                        const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(fun.data.ptr);
+            switch (fun.header.functionType) {
+                .ExternalFunction => {
+                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(fun.data.ptr);
 
-                        const MaxExtArgs = 5;
-                        var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
-                        inline for (0..MaxExtArgs) |i| {
-                            if (i < c.args.len) {
-                                const av = try self.expr(c.args[i]);
-                                interopArgs[i] = @as(*i64, @constCast(@ptrCast(&av.data))).*;
-                            }
+                    const MaxExtArgs = 5;
+                    var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
+                    inline for (0..MaxExtArgs) |i| {
+                        if (i < c.args.len) {
+                            const av = try self.expr(c.args[i]);
+                            interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(&av.data)))).*;
                         }
+                    }
 
-                        const ret = @call(.auto, castFun, interopArgs);
+                    const ret = @call(.auto, castFun, interopArgs);
 
-                        return try self.intValue(ret);
-                    },
+                    return try self.intValue(ret);
+                },
 
-                    .LocalFunction => {
-                        const args = try self.exprs(c.args);
-                        return self.function(fun.data.fun, args);
-                    },
+                .LocalFunction => {
+                    const args = try self.exprs(c.args);
+                    return self.function(fun.data.fun, args);
+                },
 
-                    .ConstructorFunction => {
-                        const args = try self.exprs(c.args);
-                        return self.initRecord(fun.data.confun, args);
-                    },
-                }
+                .ConstructorFunction => {
+                    return self.initRecord(fun.data.confun, c.args);
+                },
+
+                else => unreachable,
             }
         },
         .Con => |con| {
-            switch (con.data.structureType()) {
-                .EnumLike => {
-                    return try self.initValue(.{
-                        .size = @sizeOf(u32),
-                        .alignment = @alignOf(u32),
-                        .functionType = null,
-                        .data = .{ .enoom = con.tagValue },
-                    });
-                },
-                else => {
-                    return try self.initValue(.{
-                        .size = @sizeOf(*ast.Con),
-                        .alignment = @alignOf(*ast.Con),
-                        .functionType = .ConstructorFunction,
-                        .data = .{ .confun = con },
-                    });
-                },
+            if (con.tys.len == 0) {
+                return try self.initValue(.{
+                    .header = .{ .functionType = .None },
+                    .data = .{ .enoom = con.tagValue },
+                });
+            } else {
+                return try self.initValue(.{
+                    .header = .{ .functionType = .ConstructorFunction },
+                    .data = .{ .confun = con },
+                });
             }
         },
         else => unreachable,
@@ -264,20 +311,12 @@ fn evaluateString(self: *const Self, s: Str) ![:0]u8 {
 
 // values n shit
 // note, that we must preserve the inner representation for compatibility with external functions.
-const Value = struct {
-    // Interpreter shit.
-    functionType: ?enum { // optional value parameter, which distinguishes local functions and external (which need to be called differently.)
-        ExternalFunction,
-        LocalFunction,
-        ConstructorFunction,
-    },
-
-    size: usize, // TODO: this should be known from analyzing the assigned type, but it's easier for now. It greatly increases the size of a value!!
-    alignment: usize,
+const Value = extern struct {
+    header: Header align(1), // TEMP align(1)
 
     // This is where we store actual data. This must be compatible with C shit.
-    data: Type,
-    const Type = extern union { // NOTE: I might change it so that `data` only contains stuff that should be accessible by C.
+    data: Type align(1),
+    const Type = extern union { // NTE: I might change it so that `data` only contains stuff that should be accessible by C.
         int: i64,
         ptr: *anyopaque,
         fun: *Fun,
@@ -299,13 +338,23 @@ const Value = struct {
         fn toValuePtr(self: *@This()) *Value {
             return @fieldParentPtr("data", self);
         }
+
+        fn offset(self: *align(1) @This(), off: usize) *align(1) Value.Type {
+            const p: [*]u8 = @ptrCast(self);
+            const offp = p[off..];
+            return @alignCast(@ptrCast(offp));
+        }
     };
 
-    fn dataSlice(self: *@This()) []u8 {
+    fn dataSlice(self: *@This(), sz: usize) []u8 {
         var slice: []u8 = undefined;
-        slice.len = self.size;
+        slice.len = sz;
         slice.ptr = @ptrCast(&self.data);
         return slice;
+    }
+
+    fn toTypePtr(self: *@This()) *align(1) Type {
+        return &self.data;
     }
 
     fn headerSize() comptime_int {
@@ -313,13 +362,41 @@ const Value = struct {
     }
 
     const Flexible = *anyopaque;
+    const Tag = u32;
 };
+
+const Header = extern struct {
+    // Interpreter shit.
+    functionType: enum(u64) { // optional value parameter, which distinguishes local functions and external (which need to be called differently.)
+        ExternalFunction,
+        LocalFunction,
+        ConstructorFunction,
+        None,
+    },
+};
+
+fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
+    // TODO: how do we retrieve functionType??
+    //  that points to a deeper problem of storing functions in datatypes... bruh.
+    //   1. Ignore for now. Just set it to null and just don't put functions in datatypes.
+    //   1.5. Ignore for now. Just store extra data in the packed union on second field. Incorrect offsets for C code tho, so you may not pass structs with external functions.
+    //   2. it's possible to solve this by packing shit into pointer's high bits. nan boxing. Now we can pass structs with functions in C. Obviously, C code trying to call our function will fail, because it's interpreted.
+    //   3. complete and utter possibility. instead of differentiating pointers, save the interpreter context SOMEWHERE, then this function would somehow retrieve it and run.
+    //      Problem 1: How to access context? We may not be able to provide it (eg. atexit) So, the interpreter state must be at some known location.
+    //      Problem 2: How to know which function it should execute? We might use global state if we solve Problem 1, but maybe there is a better way? Like, I need to differentiate the calls somehow. Slightly different pointer?
+
+    // currently at 1!
+    const sz = self.sizeOf(t);
+    const memptr: []u8 = try self.arena.alloc(u8, Value.headerSize() + sz.size);
+    @memcpy(memptr[Value.headerSize() .. Value.headerSize() + sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
+    const vptr: *Value = @alignCast(@ptrCast(memptr.ptr));
+    vptr.header.functionType = .None;
+    return vptr;
+}
 
 fn intValue(self: *const Self, i: i64) !*Value {
     return try self.initValue(.{
-        .functionType = null,
-        .size = @sizeOf(i64),
-        .alignment = @alignOf(i64),
+        .header = .{ .functionType = .None },
         .data = .{ .int = i },
     });
 }
@@ -328,7 +405,7 @@ fn initValue(self: *const Self, v: Value) !*Value {
     return try common.allocOne(self.arena, v);
 }
 
-fn initRecord(self: *const Self, c: *ast.Con, args: []*Value) !*Value {
+fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr) !*Value {
     // alignment:
     // https://youtu.be/E0QhZ6tNoR  <= "alignment" is actually a place where values can live.
     // I get it, but why (in the video example) the trailing padding is aligned to 8? because of last member?
@@ -339,8 +416,8 @@ fn initRecord(self: *const Self, c: *ast.Con, args: []*Value) !*Value {
     var w = buf.writer();
 
     // preallocate stuff for Value and align to 8 to make sure the payload will be correctly aligned.
-    try w.writeByteNTimes(undefined, Value.headerSize());
-    try pad(w, @alignOf(*anyopaque));
+    try w.writeByteNTimes(undefined, @sizeOf(Header));
+    try pad(w, @alignOf(Header));
 
     var maxAlignment: usize = 1;
 
@@ -351,37 +428,106 @@ fn initRecord(self: *const Self, c: *ast.Con, args: []*Value) !*Value {
 
     // remember: check bytes written with `w.context.items.len`
     for (args) |a| {
-        try pad(w, a.alignment);
-        try w.writeAll(a.dataSlice());
+        const ty = a.t;
+        const v = try self.expr(a);
+        const sz = self.sizeOf(ty);
+        try pad(w, sz.alignment);
+        try w.writeAll(v.dataSlice(sz.size));
 
-        maxAlignment = @max(maxAlignment, a.alignment);
+        maxAlignment = @max(maxAlignment, sz.alignment);
     }
 
     // write ending padding (from experiments it's based on max padding.)
     try pad(w, maxAlignment);
 
-    const recordSize = w.context.items.len;
     const vptr: *Value = @alignCast(@ptrCast(w.context.items.ptr));
-    vptr.size = Value.headerSize() + recordSize;
-    vptr.alignment = maxAlignment;
-    vptr.functionType = null;
+    vptr.header.functionType = .None;
 
     return vptr;
 }
 
 fn pad(w: std.ArrayList(u8).Writer, alignment: usize) !void {
     const i = w.context.items.len;
-    const padding = alignment - (i % alignment);
-    if (padding != alignment) { // no padding needed when padding == alignment
+    const padding = calculatePadding(i, alignment);
+    if (padding != 0) { // no padding needed when padding == alignment
         try w.writeByteNTimes(undefined, padding);
     }
 }
 
+fn calculatePadding(cur: usize, alignment: usize) usize {
+    const padding = alignment - (cur % alignment);
+    if (padding == alignment) return 0;
+    return padding;
+}
+
 // calculates total size of the record (including tag)
 //  size includes alignment!
-fn sizeOf(c: *ast.Con) struct { size: usize, alignment: usize } {
-    _ = c;
-    unreachable;
+//  VERY SLOW, BECAUSE IT RECALCULATES ALIGNMENT EACH TIME.
+const Sizes = struct { size: usize, alignment: usize };
+fn sizeOf(self: *const Self, t: ast.Type) Sizes {
+    switch (self.typeContext.getType(t)) {
+        .Con => |c| {
+            switch (c.type.structureType()) {
+                // ERROR: this is not correct for ints, so watch out.
+                //  I should be able to specify expected datatype size.
+                .EnumLike => {
+                    return .{
+                        .size = @sizeOf(Value.Tag),
+                        .alignment = @alignOf(Value.Tag),
+                    };
+                },
+                .RecordLike => {
+                    return self.sizeOfCon(&c.type.cons[0], 0);
+                },
+                .ADT => {
+                    var max: ?Sizes = null;
+                    for (c.type.cons) |*con| {
+                        const sz = self.sizeOfCon(con, @sizeOf(Value.Tag));
+                        if (max) |*m| {
+                            if (sz.size > m.size) {
+                                m.size = sz.size;
+                            }
+
+                            // with unions, both are split. imagine union of 13 chars and one long.
+                            // it'll be aligned to 8, so size 16
+                            // (i tested it, it works like that)
+                            if (sz.alignment > m.alignment) {
+                                m.alignment = sz.alignment;
+                            }
+                        } else {
+                            max = sz;
+                        }
+                    }
+
+                    var m = max orelse unreachable;
+                    m.size += calculatePadding(m.size, m.alignment);
+                    return m;
+                },
+            }
+        },
+        .TVar => unreachable, // TODO
+
+        .Fun => unreachable, // TODO
+        .TyVar => unreachable,
+    }
+}
+
+fn sizeOfCon(self: *const Self, con: *const ast.Con, beginOff: usize) Sizes {
+    var off = beginOff;
+    // SMELL: duplicate logic with initRecord
+    var maxAlignment: usize = 1;
+    for (con.tys) |ty| {
+        const sz = self.sizeOf(ty);
+        const padding = calculatePadding(off, sz.alignment);
+        off += padding + sz.size;
+        maxAlignment = @max(maxAlignment, sz.alignment);
+    }
+
+    off += calculatePadding(off, maxAlignment);
+    return .{
+        .size = off,
+        .alignment = maxAlignment,
+    };
 }
 
 const DyLibLoader = struct {
@@ -431,6 +577,8 @@ const Err = RealErr || Runtime;
 const RealErr = error{
     ExpectDyLibAnnotation,
     FailedToFindExternalFunction,
+
+    CaseNotMatched,
 
     OutOfMemory,
 } || std.DynLib.Error;

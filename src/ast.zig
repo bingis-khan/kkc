@@ -80,6 +80,12 @@ pub const Ctx = struct {
         self.sepBy(args, sep);
         self.s(r);
     }
+
+    // not sure I'll keep the :: (and instead opt for something shorter), so I will use this function from now on.
+    fn typed(self: Self, t: Type) void {
+        self.s(" :: ");
+        t.print(self);
+    }
 };
 
 // NOTE: right now, use debug statements
@@ -181,6 +187,10 @@ pub const Stmt = union(enum) {
         bOthers: []Elif,
         bElse: ?[]Rec,
     },
+    Switch: struct {
+        switchOn: *Expr,
+        cases: []Case,
+    },
     Return: *Expr,
     Function: *Function,
     Instance: *Instance,
@@ -214,6 +224,18 @@ pub const Stmt = union(enum) {
                     printBody(els, c);
                 }
             },
+            .Switch => |sw| {
+                c.s("case ");
+                sw.switchOn.print(c);
+                c.s("\n");
+
+                var ic = c;
+                ic.indent +%= 1;
+
+                for (sw.cases) |case| {
+                    case.print(ic);
+                }
+            },
             .Return => |expr| {
                 c.s("return ");
                 expr.print(c);
@@ -226,6 +248,42 @@ pub const Stmt = union(enum) {
                 inst.print(c);
             },
         }
+    }
+};
+
+pub const Case = struct {
+    decon: *Decon,
+    body: []*Stmt,
+
+    fn print(self: *const @This(), c: Ctx) void {
+        self.decon.print(c);
+        c.s("\n");
+        printBody(self.body, c);
+    }
+};
+
+pub const Decon = struct {
+    t: Type,
+    d: union(enum) {
+        Var: Var,
+        Con: struct {
+            con: *Con,
+            decons: []*Decon,
+        },
+    },
+
+    fn print(self: *const @This(), c: Ctx) void {
+        switch (self.d) {
+            .Var => |v| v.print(c),
+            .Con => |con| {
+                con.con.print(c);
+                if (con.decons.len > 0) {
+                    c.encloseSepBy(con.decons, ", ", "(", ")");
+                }
+            },
+        }
+
+        c.typed(self.t);
     }
 };
 
@@ -586,10 +644,10 @@ pub const Con = struct {
 
     fn print(self: *const @This(), c: Ctx) void {
         c.s(self.name);
-        if (self.tys.len > 0) {
-            c.s(" ");
-            c.sepBy(self.tys, " ");
-        }
+        // if (self.tys.len > 0) {
+        //     c.s(" ");
+        //     c.sepBy(self.tys, " ");
+        // }
     }
 };
 

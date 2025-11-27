@@ -400,6 +400,27 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 .bElse = elseBody,
             } };
         } // if
+        else if (self.check(.CASE)) {
+            const switchOn = try self.expression();
+
+            var cases = std.ArrayList(AST.Case).init(self.arena);
+            try self.devour(.INDENT);
+            self.scope.beginScope(null);
+            while (!self.check(.DEDENT)) {
+                const decon = try self.deconstruction();
+                try self.typeContext.unify(switchOn.t, decon.t);
+                const stmts = try self.body();
+                try cases.append(.{ .decon = decon, .body = stmts });
+            }
+            self.scope.endScope();
+
+            break :b .{
+                .Switch = .{
+                    .switchOn = switchOn,
+                    .cases = cases.items,
+                },
+            };
+        } // case
         else if (self.check(.CLASS)) {
             const className = try self.expect(.TYPE);
             const uid = self.gen.types.newUnique();
@@ -634,6 +655,53 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     });
 }
 
+fn deconstruction(self: *Self) !*AST.Decon {
+    const decon: AST.Decon = if (self.consume(.IDENTIFIER)) |vn| b: {
+        const v = try self.newVar(vn);
+        break :b .{
+            .t = v.t,
+            .d = .{ .Var = v.v },
+        };
+    } // var
+    else if (self.consume(.TYPE)) |cn| b: {
+        const con = try self.instantiateCon(cn);
+        var decons: []*AST.Decon = &.{};
+        var args: []AST.Type = &.{};
+        if (self.check(.LEFT_PAREN)) {
+            var ds = std.ArrayList(*AST.Decon).init(self.arena);
+            var tys = std.ArrayList(AST.Type).init(self.arena);
+
+            while (true) { // while1
+                const d = try self.deconstruction();
+                try ds.append(d);
+                try tys.append(d.t);
+
+                if (self.check(.RIGHT_PAREN)) break;
+
+                try self.devour(.COMMA);
+            }
+
+            decons = ds.items;
+            args = tys.items;
+        }
+
+        try self.typeContext.unifyParams(con.tys, args);
+        break :b .{
+            .t = con.t,
+            .d = .{
+                .Con = .{
+                    .con = con.con,
+                    .decons = decons,
+                },
+            },
+        };
+    } else {
+        return self.err(*AST.Decon, "Expect decon", .{});
+    };
+
+    return try Common.allocOne(self.arena, decon);
+}
+
 // jon blow my c0c :3
 fn expression(self: *Self) !*AST.Expr {
     return self.precedenceExpression(0);
@@ -743,9 +811,16 @@ fn term(self: *Self) !*AST.Expr {
     } // var
     else if (self.consume(.TYPE)) |con| {
         const ct = try self.instantiateCon(con);
+        const t = if (ct.tys.len == 0) ct.t else try self.typeContext.newType(.{
+            .Fun = .{
+                .args = ct.tys,
+                .ret = ct.t,
+                .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
+            },
+        });
         return self.allocExpr(.{
             .e = .{ .Con = ct.con },
-            .t = ct.t,
+            .t = t,
         });
     } // con
     else if (self.consume(.INTEGER)) |i| {
@@ -1303,7 +1378,11 @@ fn newCon(self: *@This(), con: *AST.Con) !void {
     try self.scope.currentScope().cons.put(con.name, con);
 }
 
-fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST.Type } {
+fn instantiateCon(self: *@This(), conTok: Token) !struct {
+    con: *AST.Con,
+    t: AST.Type,
+    tys: []AST.Type,
+} {
     const conName = conTok.literal(self.lexer.source);
     var lastVars = self.scope.scopes.iterateFromTop();
     while (lastVars.next()) |cursc| {
@@ -1312,21 +1391,17 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
 
             // found con. now we instantiate it.
             if (con.tys.len == 0) {
-                return .{ .con = con, .t = dt.t };
+                return .{ .con = con, .t = dt.t, .tys = &.{} };
             } else {
+                // NOTE: function type making moved to .Con case in expression()
                 var args = std.ArrayList(AST.Type).init(self.arena);
                 for (con.tys) |ty| {
                     try args.append(try self.mapType(&dt.match, ty));
                 }
                 return .{
                     .con = con,
-                    .t = try self.typeContext.newType(.{
-                        .Fun = .{
-                            .args = args.items,
-                            .ret = dt.t,
-                            .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
-                        },
-                    }),
+                    .t = dt.t,
+                    .tys = args.items,
                 };
             }
         }
@@ -1352,7 +1427,7 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
         });
 
         // return placeholder var after an error.
-        return .{ .con = &data.cons[0], .t = try self.typeContext.fresh() };
+        return .{ .con = &data.cons[0], .t = try self.typeContext.fresh(), .tys = &.{} };
     }
 }
 

@@ -12,23 +12,20 @@ ConstStr
 #[ctype 'void']
 Void
 
-#[dylib 'libc.so']
-external printf(format ConstStr, x a) -> Void
+#[cfunname 'printf', dylib 'libc.so']
+external printf0(format ConstStr) -> Void
 
-#[dylib 'libc.so']
-external rand() -> Int
+#[cfunname 'printf', dylib 'libc.so']
+external printf1(format ConstStr, x a) -> Void
 
-#[dylib 'libc.so']
-external srand(seed Int) -> Void
+#[cfunname 'printf', dylib 'libc.so']
+external printf3(format ConstStr, x a, y b, z c) -> Void
 
-#[dylib 'libc.so']
-external time(ptr Int) -> Int
+StrConcat l r
+	StrConcat l r
 
-
-Cock
-	Cock Int Int Bool Unit
-	Miau
-
-t = time(0)
-x = srand(t)
-x = printf('%d\n', rand())
+sc = StrConcat(1, StrConcat(StrConcat(1337, 420), Unit))
+case sc
+	StrConcat(l, StrConcat(StrConcat(ll, r), u))
+		x = printf1('left: %d\n', l)
+		x = printf1('right: %d\n', r)

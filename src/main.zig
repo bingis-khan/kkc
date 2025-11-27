@@ -47,7 +47,7 @@ pub fn main() !void {
 
     // go and interpret
     if (errors.items.len == 0) {
-        const ret = try Interpreter.run(module.ast, prelude, aa);
+        const ret = try Interpreter.run(module.ast, prelude, &parser.typeContext, aa);
         std.debug.print("=== return value: {} ===\n", .{ret});
     }
 }

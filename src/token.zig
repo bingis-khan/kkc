@@ -45,6 +45,8 @@ pub const TokenType = enum {
     ELIF,
     ELSE,
 
+    CASE,
+
     // class
     CLASS,
     INST,
