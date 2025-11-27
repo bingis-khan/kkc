@@ -59,7 +59,6 @@ pub const Lexer = struct {
             '#' => b: {
                 // annotation shit.
                 // I wonder if it would be easier to parse annotations in LEXER? Might be a bit faster.
-                std.debug.print("cock {}\n", .{self.curChar()});
                 if (self.curChar() == '[') {
                     _ = self.nextChar();
                     break :b .BEGIN_ANNOTATION;

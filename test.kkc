@@ -1,7 +1,7 @@
 Int
 Bool
-	True
-	False
+	False  # will get assigned 0
+	True   # then 1
 
 Unit
 	Unit
@@ -15,7 +15,20 @@ Void
 #[dylib 'libc.so']
 external printf(format ConstStr, x a) -> Void
 
-s = 'dupsko'
-x = printf('asdasd %d\n', 123)
-ret = 1 + 2
-return ret
+#[dylib 'libc.so']
+external rand() -> Int
+
+#[dylib 'libc.so']
+external srand(seed Int) -> Void
+
+#[dylib 'libc.so']
+external time(ptr Int) -> Int
+
+
+Cock
+	Cock Int Int Bool Unit
+	Miau
+
+t = time(0)
+x = srand(t)
+x = printf('%d\n', rand())

@@ -172,6 +172,7 @@ fn dataDef(self: *Self, typename: Token) !void {
     }; // TODO: check for repeating tvars and such.
 
     var cons = std.ArrayList(AST.Con).init(self.arena);
+    var tag: u32 = 0;
     while (!self.check(.DEDENT)) {
         const conName = try self.expect(.TYPE);
         var tys = std.ArrayList(AST.Type).init(self.arena);
@@ -187,7 +188,10 @@ fn dataDef(self: *Self, typename: Token) !void {
             .name = conName.literal(self.lexer.source),
             .tys = tys.items,
             .data = data,
+            .tagValue = tag,
         });
+
+        tag += 1;
     }
 
     data.cons = cons.items;
@@ -764,10 +768,25 @@ fn term(self: *Self) !*AST.Expr {
 }
 
 fn stringLiteral(self: *Self, s: Token) !*AST.Expr {
-    const lit = s.literal(self.lexer.source);
+    const og = s.literal(self.lexer.source); // this includes single quotes
+    const lit = b: {
+
+        // funny hack which uses Zig's literal parsing.
+        const qs = try self.arena.dupe(u8, og);
+        qs[0] = '"';
+        qs[qs.len - 1] = '"';
+
+        const ss = std.zig.string_literal.parseAlloc(self.arena, qs) catch |er| switch (er) {
+            error.InvalidLiteral => unreachable,
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+
+        break :b ss;
+    };
+
     return self.allocExpr(.{
         .t = try self.defined(.ConstStr),
-        .e = .{ .Str = lit[1 .. lit.len - 1] },
+        .e = .{ .Str = .{ .lit = lit, .og = og[1 .. og.len - 1] } },
     });
 }
 
@@ -1321,6 +1340,7 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct { con: *AST.Con, t: AST
             .name = conName,
             .tys = &.{},
             .data = data,
+            .tagValue = 0,
         };
         data.scheme = AST.Scheme.empty();
         try self.errors.append(.{

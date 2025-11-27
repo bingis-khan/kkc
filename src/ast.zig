@@ -132,6 +132,14 @@ pub const VarInst = struct {
     },
     t: Type,
 
+    pub fn getVar(self: @This()) Var {
+        return switch (self.v) {
+            .Fun => |fun| fun.name,
+            .ClassFun => |cfun| cfun.name,
+            .Var => |v| v,
+        };
+    }
+
     fn print(self: @This(), c: Ctx) void {
         switch (self.v) {
             .Fun => |fun| {
@@ -231,7 +239,7 @@ pub const Expr = struct {
         Var: VarType,
         Con: *Con,
         Int: i64, // obv temporary.
-        Str: Str,
+        Str: struct { lit: Str, og: Str },
     },
 
     pub const VarType = union(enum) {
@@ -277,7 +285,7 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
-            .Str => |s| c.sp("'{s}'", .{s}),
+            .Str => |s| c.sp("'{s}'", .{s.og}),
             .BinOp => |bop| {
                 c.s("(");
                 bop.l.print(c);
@@ -468,6 +476,25 @@ pub const Data = struct {
     fn print(self: *const @This(), c: Ctx) void {
         c.sp("{s}@{}", .{ self.name, self.uid });
     }
+
+    pub fn structureType(self: *const @This()) enum {
+        EnumLike,
+        RecordLike,
+        ADT,
+    } {
+        var noTys = true;
+        for (self.cons) |c| {
+            noTys = noTys and c.tys.len == 0;
+        }
+
+        if (noTys) {
+            return .EnumLike;
+        } else if (self.cons.len == 1) {
+            return .RecordLike;
+        } else {
+            return .ADT;
+        }
+    }
 };
 
 pub const Scheme = struct {
@@ -555,6 +582,7 @@ pub const Con = struct {
     name: Str,
     tys: []Type,
     data: *Data,
+    tagValue: u32,
 
     fn print(self: *const @This(), c: Ctx) void {
         c.s(self.name);

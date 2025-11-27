@@ -26,3 +26,10 @@ id (x a) -> a
   return cprintf(x)
 
 Right now, I'll only do 1.
+
+
+# extern structs?
+
+right now, all structs are ABI compatible with C, since I need it for external functions. I don't actually want it for structs that do not interact with external stuff, because I can rearrange struct members for best alignment and reduce redundant nested enums.
+
+This is obviously incorrect when it comes to functions with environments.
