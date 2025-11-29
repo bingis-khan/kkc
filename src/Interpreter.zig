@@ -137,6 +137,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool
         },
         .Con => |con| {
             switch (con.con.data.structureType()) {
+                .Opaque => unreachable,
                 .EnumLike => return v.enoom == con.con.tagValue,
                 .RecordLike => {
                     var off: usize = 0;
@@ -541,6 +542,12 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
             defer self.tymap = oldTyMap;
 
             switch (c.type.structureType()) {
+                // NOTE: not sure if it's correct, but assume pointer size, because that's what opaque types mostly are. I guess I should also use some annotations to check size.
+                //  I wonder if I should make sizes in annotations OR will the compiler just *know* about inbuilt types?
+                .Opaque => return .{
+                    .size = @sizeOf(*anyopaque),
+                    .alignment = @alignOf(*anyopaque),
+                },
                 // ERROR: this is not correct for ints, so watch out.
                 //  I should be able to specify expected datatype size.
                 .EnumLike => {

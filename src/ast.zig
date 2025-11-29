@@ -551,10 +551,13 @@ pub const Data = struct {
     }
 
     pub fn structureType(self: *const @This()) enum {
+        Opaque,
         EnumLike,
         RecordLike,
         ADT,
     } {
+        if (self.cons.len == 0) return .Opaque;
+
         var noTys = true;
         for (self.cons) |c| {
             noTys = noTys and c.tys.len == 0;
