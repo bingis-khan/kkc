@@ -6,6 +6,13 @@ Bool
 Unit
 	Unit
 
+Maybe a
+	None
+	Just a
+
+Ptr a
+	Ptr a
+
 #[ctype 'const char*']
 ConstStr
 
@@ -21,28 +28,9 @@ external printf1(format ConstStr, x a) -> Void
 #[cfunname 'printf', dylib 'libc.so']
 external printf3(format ConstStr, x a, y b, z c) -> Void
 
-class Str
-	print-str (self _) -> Unit
+x = 11328
+xp = &&&&&x
+int = xp&&&&&
+x = printf1('asd %d\n', int)
 
-StrConcat l r
-	StrConcat l r
 
-inst Str ConstStr
-	print-str (self _)
-		x = printf1('%s', self)
-		return Unit
-
-inst Str Int
-	print-str (self _)
-		x = printf1('%d', self)
-		return Unit
-
-inst Str StrConcat
-	print-str (self _)
-		case self
-			StrConcat(l, r)
-				x = print-str(l)
-				x = print-str(r)
-				return Unit
-
-x = print-str(StrConcat('asd', 123))

@@ -230,7 +230,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
                     const fun = try self.funLoader.loadFunction(libName, funName);
                     return try self.initValue(.{
-                        .data = .{ .ptr = fun },
+                        .data = .{ .extptr = fun },
                         .header = .{
                             .functionType = .ExternalFunction,
                             .match = v.match,
@@ -242,7 +242,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
         .Str => |slit| {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit.lit));
             return try self.initValue(Value{
-                .data = .{ .ptr = s },
+                .data = .{ .extptr = s },
                 .header = .{ .functionType = .None, .match = undefined },
             });
         },
@@ -257,7 +257,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     //   We can have a function type for each case, then beat it for it to make sense for our types.
                     //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
                     //   Nah, I should just use inline assembly in this case.
-                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(fun.data.ptr);
+                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(fun.data.extptr);
 
                     const MaxExtArgs = 8;
                     if (c.args.len > MaxExtArgs) unreachable;
@@ -300,6 +300,21 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                 });
             }
         },
+
+        .UnOp => |uop| {
+            const v = try self.expr(uop.e);
+            return switch (uop.op) {
+                .Deref => v.data.ptr.toValuePtr(),
+                .Ref => try self.initValue(.{
+                    .data = .{ .ptr = @alignCast(&v.data) },
+                    .header = .{
+                        .functionType = .None,
+                        .match = undefined,
+                    },
+                }),
+            };
+        },
+
         else => unreachable,
     }
 
@@ -378,7 +393,8 @@ const Value = extern struct {
     data: Type align(1),
     const Type = extern union { // NTE: I might change it so that `data` only contains stuff that should be accessible by C.
         int: i64,
-        ptr: *anyopaque,
+        extptr: *anyopaque,
+        ptr: *Type,
         fun: *Fun,
         confun: *ast.Con,
         enoom: u32, // for enum-like data structures

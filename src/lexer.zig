@@ -84,6 +84,7 @@ pub const Lexer = struct {
             ')' => .RIGHT_PAREN,
             '[' => .LEFT_SQBR,
             ']' => .RIGHT_SQBR,
+            '&' => .REF,
             ',' => .COMMA,
             '=' => b: {
                 if (self.curChar() == '=') {

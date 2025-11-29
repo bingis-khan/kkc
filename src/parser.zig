@@ -333,7 +333,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             const expr = if (!self.isEndStmt())
                 try self.expression()
             else bb: {
-                const t = try self.defined(.Unit);
+                const t = (try self.defined(.Unit)).t;
                 const con = &self.typeContext.getType(t).Con.type.cons[0]; // WARNING: funny casts
                 break :bb try self.allocExpr(.{
                     .t = t,
@@ -377,13 +377,13 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         } // type
         else if (self.check(.IF)) {
             const cond = try self.expression();
-            try self.typeContext.unify(cond.t, try self.defined(.Bool));
+            try self.typeContext.unify(cond.t, (try self.defined(.Bool)).t);
             const bTrue = try self.body();
 
             var elifs = std.ArrayList(AST.Stmt.Elif).init(self.arena);
             while (self.check(.ELIF)) {
                 const elifCond = try self.expression();
-                try self.typeContext.unify(elifCond.t, try self.defined(.Bool));
+                try self.typeContext.unify(elifCond.t, try self.definedType(.Bool));
                 const elifBody = try self.body();
                 try elifs.append(AST.Stmt.Elif{ .cond = elifCond, .body = elifBody });
             }
@@ -623,7 +623,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     };
 
     // another new eye candy - default Unit
-    const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).sepTyo(self) else try self.defined(.Unit);
+    const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).sepTyo(self) else try self.definedType(.Unit);
     try self.endStmt();
     const tvarsMap = self.scope.currentScope().tvars;
     self.scope.endScope();
@@ -709,7 +709,7 @@ fn expression(self: *Self) !*AST.Expr {
 }
 
 fn precedenceExpression(self: *Self, minPrec: u32) ParserError!*AST.Expr {
-    var left = try self.term();
+    var left = try self.term(minPrec);
 
     while (true) {
         const node = try self.increasingPrecedenceExpression(left, minPrec);
@@ -768,6 +768,17 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             });
         }
 
+        if (binop == .Deref) {
+            const ptr = try self.defined(.Ptr);
+            try self.typeContext.unify(ptr.t, left.t);
+            return self.allocExpr(.{
+                .t = ptr.tyArgs[0],
+                .e = .{
+                    .UnOp = .{ .op = .Deref, .e = left },
+                },
+            });
+        }
+
         const right = try self.precedenceExpression(nextPrec);
 
         const exprType = switch (binop) {
@@ -780,7 +791,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .GreaterEqualThan,
             .LessEqualThan,
             => b: {
-                const intTy = try self.defined(.Int);
+                const intTy = (try self.defined(.Int)).t;
                 try self.typeContext.unify(left.t, intTy);
                 try self.typeContext.unify(right.t, intTy);
                 break :b intTy;
@@ -788,7 +799,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
 
             .Equals, .NotEquals => b: {
                 try self.typeContext.unify(left.t, right.t);
-                break :b try self.defined(.Bool);
+                break :b try self.definedType(.Bool);
             },
 
             else => unreachable,
@@ -801,7 +812,20 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
     }
 }
 
-fn term(self: *Self) !*AST.Expr {
+fn term(self: *Self, minPrec: u32) !*AST.Expr {
+    // parse unary prefix.
+    // I'm not sure if this is good, but getting a reference of something is not really done outside of function calls / constructors.
+    // If *nothing* has been parsed, you may get a reference.
+    if (minPrec == 0 and self.check(.REF)) {
+        const n = try self.expression();
+        const ptr = try self.defined(.Ptr);
+        try self.typeContext.unify(ptr.tyArgs[0], n.t);
+        return self.allocExpr(.{
+            .e = .{ .UnOp = .{ .op = .Ref, .e = n } },
+            .t = ptr.t,
+        });
+    }
+
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
     if (self.consume(.IDENTIFIER)) |v| {
         const dv = try self.instantiateVar(v);
@@ -826,7 +850,7 @@ fn term(self: *Self) !*AST.Expr {
     } // con
     else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
-            .t = try self.defined(.Int),
+            .t = try self.definedType(.Int),
             .e = .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable },
         });
     } // var
@@ -861,7 +885,7 @@ fn stringLiteral(self: *Self, s: Token) !*AST.Expr {
     };
 
     return self.allocExpr(.{
-        .t = try self.defined(.ConstStr),
+        .t = try self.definedType(.ConstStr),
         .e = .{ .Str = .{ .lit = lit, .og = og[1 .. og.len - 1] } },
     });
 }
@@ -878,6 +902,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .TIMES => .Times,
         .EQEQ => .Equals,
         .LEFT_PAREN => .Call,
+        .REF => .Deref,
         else => null,
     };
 }
@@ -892,6 +917,7 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 
         .Call => 10,
         .RecordAccess => 10,
+        .Deref => 10,
         else => unreachable,
     };
 }
@@ -937,7 +963,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
                         break;
                     }
 
-                    try tyArgs.append(try Type(.Type).typ(self));
+                    try tyArgs.append(try typ(self));
                 }
 
                 const ty = try self.instantiateType(tyName);
@@ -986,7 +1012,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
                     return args.items[0];
                 } else if (args.items.len == 0) {
                     // only Unit tuple is supported.
-                    return try self.defined(.Unit);
+                    return try self.definedType(.Unit);
                 } else { // this LOOKS like a tuple, but we don't support tuples yet!
                     try self.errors.append(.{ .TuplesNotYetSupported = .{} });
                     return self.typeContext.fresh();
@@ -1290,11 +1316,13 @@ fn newClass(self: *Self, class: *AST.Class) !void {
         try self.scope.currentScope().vars.put(classFun.name.name, .{ .ClassFun = classFun });
     }
 }
-fn instantiateData(self: *Self, data: *AST.Data) !struct {
+
+const DataInst = struct {
     t: AST.Type,
     tyArgs: []AST.Type,
     match: *AST.Match(AST.Type),
-} {
+};
+fn instantiateData(self: *Self, data: *AST.Data) !DataInst {
     const match = try self.instantiateScheme(data.scheme);
 
     return .{
@@ -1927,22 +1955,24 @@ const Env = std.ArrayList(AST.VarInst);
 
 // typechecking zone
 fn getReturnType(self: *Self) !AST.Type {
-    return self.returnType orelse try self.defined(.Int);
+    return self.returnType orelse try self.definedType(.Int);
 }
 
-fn defined(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
-    return if (self.prelude) |prelude|
-        prelude.defined(predefinedType)
+fn definedType(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
+    return (try self.defined(predefinedType)).t;
+}
+
+fn defined(self: *Self, predefinedType: Prelude.PremadeType) !DataInst {
+    return if (self.prelude) |_|
+        // prelude.defined(predefinedType) // TODO: will have to rewrite that bruh.
+        unreachable
     else b: {
         const data = switch (self.maybeLookupType(Prelude.PremadeTypeName.get(predefinedType)) orelse break :b error.PreludeError) {
             .Data => |data| data,
             .Class => |_| break :b error.PreludeError,
         };
-        // too much work. We should create a TypeRef and then cache it.
-        break :b try self.typeContext.newType(.{ .Con = .{
-            .type = data,
-            .application = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(data.scheme)),
-        } });
+
+        return try self.instantiateData(data);
     };
 }
 

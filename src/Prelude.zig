@@ -13,6 +13,7 @@ pub const PremadeType = enum {
     Bool,
     Int,
     ConstStr,
+    Ptr,
 };
 pub const NumPredefinedTypes = @typeInfo(PremadeType).Enum.fields.len;
 

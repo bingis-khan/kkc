@@ -403,9 +403,11 @@ pub const BinOp = enum {
     GreaterEqualThan,
     LessEqualThan,
 
+    // FAKE OPS
     // TODO: explain
     Call,
     RecordAccess,
+    Deref,
 
     fn print(self: @This(), c: Ctx) void {
         const sop = switch (self) {
