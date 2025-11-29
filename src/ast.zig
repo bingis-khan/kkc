@@ -133,15 +133,16 @@ pub const Env = []VarInst;
 pub const VarInst = struct {
     v: union(enum) {
         Fun: *Function,
-        ClassFun: *ClassFun,
+        ClassFun: struct { cfun: *ClassFun, ref: *?Match(Type).AssocRef },
         Var: Var,
     },
+    m: *Match(Type),
     t: Type,
 
     pub fn getVar(self: @This()) Var {
         return switch (self.v) {
             .Fun => |fun| fun.name,
-            .ClassFun => |cfun| cfun.name,
+            .ClassFun => |cfun| cfun.cfun.name,
             .Var => |v| v,
         };
     }
@@ -155,7 +156,7 @@ pub const VarInst = struct {
 
             .ClassFun => |cfun| {
                 c.s("$");
-                cfun.name.print(c);
+                cfun.cfun.name.print(c);
             },
 
             .Var => |v| {
@@ -294,7 +295,7 @@ pub const Expr = struct {
         UnOp: struct { e: Rec, op: UnOp },
         Access: struct { e: Rec, acc: Str },
         Call: struct { callee: Rec, args: []Rec },
-        Var: VarType,
+        Var: struct { v: VarType, match: *Match(Type) }, // NOTE: Match is owned here!
         Con: *Con,
         Int: i64, // obv temporary.
         Str: struct { lit: Str, og: Str },
@@ -302,7 +303,7 @@ pub const Expr = struct {
 
     pub const VarType = union(enum) {
         Fun: *Function,
-        ClassFun: *ClassFun,
+        ClassFun: struct { cfun: *ClassFun, ref: *?Match(Type).AssocRef }, // SMELL: this one I have to allocate, because I'm returning the whole struct from a function, so the address will change.
         Var: Var,
         ExternalFun: *ExternalFunction,
 
@@ -323,7 +324,7 @@ pub const Expr = struct {
                     fun.name.print(c);
                 },
                 .ClassFun => |cfun| {
-                    cfun.name.print(c);
+                    cfun.cfun.name.print(c);
                 },
                 .ExternalFun => |extfun| {
                     extfun.name.print(c);
@@ -337,7 +338,7 @@ pub const Expr = struct {
         c.s("(");
         switch (self.e) {
             .Var => |v| {
-                v.print(c);
+                v.v.print(c);
             },
             .Con => |con| {
                 con.print(c);
@@ -472,7 +473,7 @@ pub fn TypeF(comptime a: ?type) type {
     return union(enum) {
         const Rec = a orelse *@This();
 
-        Con: struct { type: *Data, application: Match(Rec) },
+        Con: struct { type: *Data, application: *Match(Rec) },
         Fun: struct { args: []Rec, ret: Rec, env: EnvRef },
         TVar: TVar,
         TyVar: TyVar,
@@ -518,6 +519,20 @@ pub const Var = struct {
     fn print(v: @This(), c: Ctx) void {
         c.s(v.name);
         c.sp("{}", .{v.uid}); // ZIG BUG(?): there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
+    }
+
+    pub fn comparator() type {
+        return struct {
+            pub fn eql(ctx: @This(), a: Var, b: Var) bool {
+                _ = ctx;
+                return a.uid == b.uid;
+            }
+
+            pub fn hash(ctx: @This(), k: Var) u64 {
+                _ = ctx;
+                return k.uid;
+            }
+        };
     }
 };
 
@@ -584,6 +599,9 @@ pub const Association = struct {
     depends: TVar,
     to: Type,
     classFun: *ClassFun,
+    uid: ID,
+
+    pub const ID = Unique;
 
     fn print(self: @This(), c: Ctx) void {
         c.s("(");
@@ -600,6 +618,15 @@ pub fn Match(comptime T: type) type {
         scheme: Scheme,
         envVars: []EnvRef,
         tvars: []T,
+        assocs: []?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined"
+
+        pub const AssocRef = union(enum) {
+            InstFun: InstPair, // some top level association.
+            Id: Association.ID, // this one means the assoc is contained in some Scheme.
+
+            // I FUCKING HATE THESE NAMES
+            pub const InstPair = struct { fun: *Function, m: *Match(Type) };
+        };
 
         pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
             for (self.scheme.tvars, self.tvars) |tv, t| {
@@ -630,6 +657,7 @@ pub fn Match(comptime T: type) type {
                 .scheme = scheme,
                 .tvars = &.{},
                 .envVars = &.{},
+                .assocs = &.{},
             };
         }
     };

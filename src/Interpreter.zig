@@ -8,31 +8,29 @@ const TypeContext = @import("TypeContext.zig");
 
 const Self = @This();
 
+// NOTE: I'll try to mark areas where something is SLOW due to laziness with `SLOW`.
+
 arena: std.mem.Allocator,
 returnValue: *Value = undefined, // default value is returned at the end of run()
-scope: Scope,
+scope: *Scope,
+tymap: *const TypeMap,
 funLoader: DyLibLoader,
 typeContext: *const TypeContext,
-
-const Scope = std.HashMap(ast.Var, *Value, struct {
-    pub fn eql(ctx: @This(), a: ast.Var, b: ast.Var) bool {
-        _ = ctx;
-        return a.uid == b.uid;
-    }
-
-    pub fn hash(ctx: @This(), k: ast.Var) u64 {
-        _ = ctx;
-        return k.uid;
-    }
-}, std.hash_map.default_max_load_percentage);
 
 // right now a very simple interpreter where we don't free.
 pub fn run(module: ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
     _ = prelude;
-    const scope = Scope.init(al);
+    var scope = Scope.init(null, al);
+    const scheme = ast.Scheme.empty();
+    const tymap = TypeMap{
+        .prev = null,
+        .scheme = &scheme,
+        .match = &ast.Match(ast.Type).empty(scheme),
+    };
     var self: Self = .{
-        .scope = scope,
+        .scope = &scope,
         .typeContext = typeContext,
+        .tymap = &tymap,
         .arena = al,
         .funLoader = DyLibLoader.init(al),
     };
@@ -60,28 +58,15 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         },
         .VarDec => |vd| {
             const v = try self.expr(vd.varValue);
-            try self.scope.put(vd.varDef, v);
+            try self.scope.vars.put(vd.varDef, v);
         },
         .Function => |fun| {
-            // construct env for this function yo.
-            const envSnapshot = try self.arena.alloc(Value.Type.Fun.EnvSnapshot, fun.env.len);
-            for (fun.env, 0..) |ei, i| {
-                const v = ei.getVar();
-                envSnapshot[i] = .{
-                    .v = v,
-                    .vv = self.scope.get(v) orelse unreachable,
-                };
+            try self.addEnvSnapshot(fun);
+        },
+        .Instance => |inst| {
+            for (inst.instFuns) |instFun| {
+                try self.addEnvSnapshot(instFun.fun);
             }
-
-            try self.scope.put(fun.name, try self.initValue(.{
-                .data = .{
-                    .fun = try common.allocOne(self.arena, Value.Type.Fun{
-                        .fun = fun,
-                        .env = envSnapshot, // TODO
-                    }),
-                },
-                .header = .{ .functionType = .LocalFunction },
-            }));
         },
         .If => |ifs| {
             const cond = try self.expr(ifs.cond);
@@ -111,17 +96,43 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                 return error.CaseNotMatched;
             }
         },
-        else => {
-            unreachable;
-        },
     }
+}
+
+fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
+    // construct env for this function yo.
+    const envSnapshot = try self.arena.alloc(Value.Type.Fun.EnvSnapshot, fun.env.len);
+    for (fun.env, 0..) |ei, i| {
+        envSnapshot[i] = switch (ei.v) {
+            .Var => |v| .{ .Snap = .{
+                .v = v,
+                .vv = self.scope.getVar(v),
+            } },
+            .Fun => |envfun| .{ .Snap = .{
+                .v = envfun.name,
+                .vv = try self.initFunction(envfun, ei.m),
+            } },
+            .ClassFun => |cfr| b: {
+                const instfun = switch (cfr.ref.*.?) {
+                    .InstFun => |instfun| instfun,
+                    .Id => |id| self.tymap.tryGetFunctionByID(id) orelse break :b .{ .AssocID = id },
+                };
+                break :b .{ .Snap = .{
+                    .v = instfun.fun.name,
+                    .vv = try self.initFunction(instfun.fun, instfun.m),
+                } };
+            },
+        };
+    }
+
+    try self.scope.funs.put(fun.name, envSnapshot);
 }
 
 // note that we are getting deep into structs. we must not convert that Value.Type pointer into *Value, because it might not have that header.
 fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool {
     switch (decon.d) {
         .Var => |vn| {
-            try self.scope.put(vn, try self.copyValue(v, decon.t));
+            try self.scope.vars.put(vn, try self.copyValue(v, decon.t));
             return true;
         },
         .Con => |con| {
@@ -186,21 +197,25 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             };
         },
         .Var => |v| {
-            switch (v) {
+            switch (v.v) {
                 .Var => |vv| {
-                    if (self.scope.get(vv)) |val| {
-                        return val;
-                    } else {
-                        unreachable;
-                    }
+                    return self.scope.getVar(vv);
                 },
 
                 .Fun => |fun| {
-                    if (self.scope.get(fun.name)) |val| {
-                        return val;
-                    } else {
-                        unreachable;
-                    }
+                    return try self.initFunction(fun, v.match);
+                },
+
+                .ClassFun => |cfr| {
+                    const cfun = cfr.cfun;
+                    _ = cfun;
+                    return switch (cfr.ref.*.?) {
+                        .Id => |uid| b: {
+                            const instfun = self.tymap.tryGetFunctionByID(uid).?;
+                            break :b try self.initFunction(instfun.fun, instfun.m);
+                        },
+                        .InstFun => |instfun| try self.initFunction(instfun.fun, instfun.m),
+                    };
                 },
 
                 .ExternalFun => |extfun| {
@@ -215,12 +230,11 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     const fun = try self.funLoader.loadFunction(libName, funName);
                     return try self.initValue(.{
                         .data = .{ .ptr = fun },
-                        .header = .{ .functionType = .ExternalFunction },
+                        .header = .{
+                            .functionType = .ExternalFunction,
+                            .match = v.match,
+                        },
                     });
-                },
-
-                else => {
-                    unreachable;
                 },
             }
         },
@@ -228,7 +242,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit.lit));
             return try self.initValue(Value{
                 .data = .{ .ptr = s },
-                .header = .{ .functionType = .None },
+                .header = .{ .functionType = .None, .match = undefined },
             });
         },
         .Call => |c| {
@@ -236,9 +250,17 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
             switch (fun.header.functionType) {
                 .ExternalFunction => {
+                    // INCORRECT. check https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf
+                    //  (also just ask an LLM, this time it seems to know what it's talking about.)
+                    //    Depending on the data, return values are returned differently (like, floats are returned in XMM registers, so currently it wont work.)
+                    //   We can have a function type for each case, then beat it for it to make sense for our types.
+                    //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
+                    //   Nah, I should just use inline assembly in this case.
                     const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(fun.data.ptr);
 
-                    const MaxExtArgs = 5;
+                    const MaxExtArgs = 8;
+                    if (c.args.len > MaxExtArgs) unreachable;
+
                     var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
                     inline for (0..MaxExtArgs) |i| {
                         if (i < c.args.len) {
@@ -254,7 +276,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
                 .LocalFunction => {
                     const args = try self.exprs(c.args);
-                    return self.function(fun.data.fun, args);
+                    return self.function(fun.data.fun, args, fun.header.match);
                 },
 
                 .ConstructorFunction => {
@@ -267,12 +289,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
         .Con => |con| {
             if (con.tys.len == 0) {
                 return try self.initValue(.{
-                    .header = .{ .functionType = .None },
+                    .header = .{ .functionType = .None, .match = undefined },
                     .data = .{ .enoom = con.tagValue },
                 });
             } else {
                 return try self.initValue(.{
-                    .header = .{ .functionType = .ConstructorFunction },
+                    .header = .{ .functionType = .ConstructorFunction, .match = undefined }, // not needed, because it's in the type.
                     .data = .{ .confun = con },
                 });
             }
@@ -283,16 +305,53 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
     unreachable;
 }
 
-fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value) Err!*Value {
-    // overwrite env first.
-    const env = funAndEnv.env;
-    for (env) |e| {
-        try self.scope.put(e.v, e.vv);
-    }
+fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !*Value {
+    return try self.initValue(.{
+        .data = .{
+            .fun = try common.allocOne(self.arena, Value.Type.Fun{
+                .fun = fun,
+                .env = self.scope.getFun(fun.name),
+            }),
+        },
+        .header = .{
+            .functionType = .LocalFunction,
+            .match = m,
+        },
+    });
+}
+
+fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value, match: *ast.Match(ast.Type)) Err!*Value {
+    // begin new scope
+    const oldScope = self.scope;
+    var scope = Scope.init(oldScope, self.arena);
+    self.scope = &scope;
+    defer self.scope = oldScope;
+
+    // also new typemap yo.
+    const oldTyMap = self.tymap;
+    var tymap = TypeMap{
+        .prev = oldTyMap,
+        .scheme = &funAndEnv.fun.scheme,
+        .match = match,
+    };
+    self.tymap = &tymap;
+    defer self.tymap = oldTyMap;
 
     const fun = funAndEnv.fun;
+    const env = funAndEnv.env;
+    for (env) |e| {
+        switch (e) {
+            .Snap => |ee| try self.scope.vars.put(ee.v, ee.vv),
+            .AssocID => |id| {
+                const efun = self.tymap.tryGetFunctionByID(id).?;
+                const efunv = try self.initFunction(efun.fun, efun.m);
+                try self.scope.vars.put(efun.fun.name, efunv);
+            },
+        }
+    }
+
     for (fun.params, args) |p, a| {
-        try self.scope.put(p.pn, a);
+        try self.scope.vars.put(p.pn, a);
     }
     self.stmts(fun.body) catch |err| switch (err) {
         error.Return => {
@@ -332,7 +391,10 @@ const Value = extern struct {
             fun: *ast.Function,
             env: []EnvSnapshot,
 
-            const EnvSnapshot = struct { v: ast.Var, vv: *Value };
+            const EnvSnapshot = union(enum) {
+                Snap: struct { v: ast.Var, vv: *Value },
+                AssocID: ast.Association.ID,
+            };
         };
 
         fn toValuePtr(self: *@This()) *Value {
@@ -373,6 +435,8 @@ const Header = extern struct {
         ConstructorFunction,
         None,
     },
+
+    match: *ast.Match(ast.Type),
 };
 
 fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
@@ -396,7 +460,7 @@ fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
 
 fn intValue(self: *const Self, i: i64) !*Value {
     return try self.initValue(.{
-        .header = .{ .functionType = .None },
+        .header = .{ .functionType = .None, .match = undefined },
         .data = .{ .int = i },
     });
 }
@@ -464,9 +528,18 @@ fn calculatePadding(cur: usize, alignment: usize) usize {
 //  size includes alignment!
 //  VERY SLOW, BECAUSE IT RECALCULATES ALIGNMENT EACH TIME.
 const Sizes = struct { size: usize, alignment: usize };
-fn sizeOf(self: *const Self, t: ast.Type) Sizes {
+fn sizeOf(self: *Self, t: ast.Type) Sizes {
     switch (self.typeContext.getType(t)) {
         .Con => |c| {
+            const oldTyMap = self.tymap;
+            const tymap = TypeMap{
+                .prev = oldTyMap,
+                .scheme = &c.type.scheme,
+                .match = c.application,
+            };
+            self.tymap = &tymap;
+            defer self.tymap = oldTyMap;
+
             switch (c.type.structureType()) {
                 // ERROR: this is not correct for ints, so watch out.
                 //  I should be able to specify expected datatype size.
@@ -505,14 +578,14 @@ fn sizeOf(self: *const Self, t: ast.Type) Sizes {
                 },
             }
         },
-        .TVar => unreachable, // TODO
+        .TVar => |tv| return self.sizeOf(self.tymap.getTVar(tv)),
 
-        .Fun => unreachable, // TODO
-        .TyVar => unreachable,
+        .Fun => unreachable,
+        .TyVar => unreachable, // actual error. should not happen!
     }
 }
 
-fn sizeOfCon(self: *const Self, con: *const ast.Con, beginOff: usize) Sizes {
+fn sizeOfCon(self: *Self, con: *const ast.Con, beginOff: usize) Sizes {
     var off = beginOff;
     // SMELL: duplicate logic with initRecord
     var maxAlignment: usize = 1;
@@ -529,6 +602,62 @@ fn sizeOfCon(self: *const Self, con: *const ast.Con, beginOff: usize) Sizes {
         .alignment = maxAlignment,
     };
 }
+
+const Scope = struct {
+    prev: ?*@This(),
+    vars: Vars,
+    funs: Funs,
+
+    const Vars = std.HashMap(ast.Var, *Value, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
+
+    const Funs = std.HashMap(ast.Var, []Value.Type.Fun.EnvSnapshot, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
+
+    fn init(prev: ?*@This(), al: std.mem.Allocator) @This() {
+        return .{
+            .prev = prev,
+            .vars = Vars.init(al),
+            .funs = Funs.init(al),
+        };
+    }
+
+    fn getVar(self: *const @This(), v: ast.Var) *Value {
+        return self.vars.get(v) orelse (self.prev orelse unreachable).getVar(v);
+    }
+
+    fn getFun(self: *const @This(), v: ast.Var) []Value.Type.Fun.EnvSnapshot {
+        return self.funs.get(v) orelse (self.prev orelse unreachable).getFun(v);
+    }
+};
+
+const TypeMap = struct {
+    prev: ?*const @This(),
+    scheme: *const ast.Scheme,
+    match: *const ast.Match(ast.Type),
+
+    fn getTVar(self: *const @This(), tv: ast.TVar) ast.Type {
+        // SLOW
+        for (self.scheme.tvars, self.match.tvars) |s, m| {
+            if (s.eq(tv)) {
+                return m;
+            }
+        } else {
+            return (self.prev orelse unreachable).getTVar(tv);
+        }
+    }
+
+    fn tryGetFunctionByID(self: *const @This(), uid: ast.Association.ID) ?ast.Match(ast.Type).AssocRef.InstPair {
+        for (self.scheme.associations, self.match.assocs) |a, r| {
+            if (a.uid == uid) {
+                return switch (r.?) {
+                    .Id => |refuid| return self.tryGetFunctionByID(refuid),
+                    .InstFun => |instfun| instfun,
+                };
+            }
+        } else {
+            return (self.prev orelse return null).tryGetFunctionByID(uid);
+        }
+    }
+};
 
 const DyLibLoader = struct {
     // also cache functions yo.

@@ -21,11 +21,20 @@ external printf1(format ConstStr, x a) -> Void
 #[cfunname 'printf', dylib 'libc.so']
 external printf3(format ConstStr, x a, y b, z c) -> Void
 
+class ToInt
+	to-int (self _) -> Int
+
+inst ToInt Int
+	to-int (self _)
+		return self
+
 StrConcat l r
 	StrConcat l r
 
-sc = StrConcat(1, StrConcat(StrConcat(1337, 420), Unit))
-case sc
-	StrConcat(l, StrConcat(StrConcat(ll, r), u))
-		x = printf1('left: %d\n', l)
-		x = printf1('right: %d\n', r)
+inst ToInt StrConcat
+	to-int (self _)
+		case self
+			StrConcat(l, r)
+				return to-int(l) + to-int(r)
+
+x = printf1('%d\n', to-int(StrConcat(1, StrConcat(2, StrConcat(3, 45)))))

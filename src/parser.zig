@@ -51,6 +51,7 @@ const Gen = struct {
     classes: UniqueGen,
     classFuns: UniqueGen,
     instances: UniqueGen,
+    assocs: UniqueGen,
 
     fn init() @This() {
         return std.mem.zeroInit(@This(), .{});
@@ -608,7 +609,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     self.scope.beginScope(null); // let's capture all tvars.
     var params = std.ArrayList(AST.ClassFun.Param).init(self.arena);
     try self.devour(.LEFT_PAREN);
-    while (true) {
+    if (!self.check(.RIGHT_PAREN)) while (true) {
         // consume identifier if possible.
         if (self.check(.IDENTIFIER)) {}
 
@@ -619,7 +620,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         }
 
         try self.devour(.COMMA);
-    }
+    };
 
     // another new eye candy - default Unit
     const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).sepTyo(self) else try self.defined(.Unit);
@@ -806,7 +807,7 @@ fn term(self: *Self) !*AST.Expr {
         const dv = try self.instantiateVar(v);
         return self.allocExpr(.{
             .t = dv.t,
-            .e = .{ .Var = dv.v },
+            .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
         });
     } // var
     else if (self.consume(.TYPE)) |con| {
@@ -1042,16 +1043,25 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
 fn instantiateVar(self: *@This(), varTok: Token) !struct {
     v: AST.Expr.VarType,
     t: AST.Type,
+    m: *AST.Match(AST.Type),
 } {
     const varName = varTok.literal(self.lexer.source);
     var lastVars = self.scope.scopes.iterateFromTop();
     while (lastVars.nextPtr()) |cursc| {
         if (cursc.vars.get(varName)) |vorf| {
             const varInst: AST.VarInst = switch (vorf) {
-                .Var => |vt| .{ .v = .{ .Var = vt.v }, .t = vt.t },
+                .Var => |vt| .{
+                    .v = .{ .Var = vt.v },
+                    .t = vt.t,
+                    .m = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(AST.Scheme.empty())),
+                },
                 .Fun => |fun| b: {
-                    const funTy = try self.instantiateFunction(fun);
-                    break :b .{ .v = .{ .Fun = fun }, .t = funTy };
+                    const funTyAndMatch = try self.instantiateFunction(fun);
+                    break :b .{
+                        .v = .{ .Fun = fun },
+                        .t = funTyAndMatch.t,
+                        .m = funTyAndMatch.m,
+                    };
                 },
 
                 .ClassFun => |cfun| b: {
@@ -1060,30 +1070,40 @@ fn instantiateVar(self: *@This(), varTok: Token) !struct {
                     // mk new, instantiated type
                     var params = std.ArrayList(AST.Type).init(self.arena);
                     for (cfun.params) |p| {
-                        try params.append(try self.mapType(&match, p.t));
+                        try params.append(try self.mapType(match, p.t));
                     }
 
-                    const ret = try self.mapType(&match, cfun.ret);
+                    const ret = try self.mapType(match, cfun.ret);
                     const funTy = try self.typeContext.newType(.{ .Fun = .{
                         .args = params.items,
                         .ret = ret,
                         .env = try self.typeContext.newEnv(null),
                     } });
 
-                    const classSelf = try self.mapType(&match, cfun.self);
+                    const classSelf = try self.mapType(match, cfun.self);
 
                     const instances = try self.getInstancesForClass(cfun.class);
+
+                    const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
+                    const varInst = AST.VarInst{
+                        .v = .{
+                            .ClassFun = .{
+                                .cfun = cfun,
+                                .ref = ref,
+                            },
+                        },
+                        .t = funTy,
+                        .m = match,
+                    };
 
                     try self.addAssociation(.{
                         .from = classSelf,
                         .to = funTy,
                         .classFun = cfun,
                         .instances = instances,
+                        .ref = ref,
                     });
-                    break :b .{
-                        .v = .{ .ClassFun = cfun },
-                        .t = funTy,
-                    };
+                    break :b varInst;
                 },
 
                 .Extern => |extfun| {
@@ -1091,10 +1111,10 @@ fn instantiateVar(self: *@This(), varTok: Token) !struct {
 
                     var params = std.ArrayList(AST.Type).init(self.arena);
                     for (extfun.params) |p| {
-                        try params.append(try self.mapType(&match, p.pt));
+                        try params.append(try self.mapType(match, p.pt));
                     }
 
-                    const ret = try self.mapType(&match, extfun.ret);
+                    const ret = try self.mapType(match, extfun.ret);
                     const funTy = try self.typeContext.newType(.{
                         .Fun = .{
                             .args = params.items,
@@ -1109,6 +1129,7 @@ fn instantiateVar(self: *@This(), varTok: Token) !struct {
                             .ExternalFun = extfun,
                         },
                         .t = funTy,
+                        .m = match,
                     };
                 },
             };
@@ -1126,9 +1147,15 @@ fn instantiateVar(self: *@This(), varTok: Token) !struct {
                 .v = switch (varInst.v) {
                     .Var => |vv| .{ .Var = vv },
                     .Fun => |fun| .{ .Fun = fun },
-                    .ClassFun => |cfun| .{ .ClassFun = cfun },
+                    .ClassFun => |cfun| .{
+                        .ClassFun = .{
+                            .cfun = cfun.cfun,
+                            .ref = cfun.ref,
+                        },
+                    },
                 },
                 .t = varInst.t,
+                .m = varInst.m,
             };
         }
     } else {
@@ -1146,11 +1173,15 @@ fn instantiateVar(self: *@This(), varTok: Token) !struct {
         const t = try self.typeContext.fresh();
 
         // return placeholder var after an error.
-        return .{ .v = .{ .Var = placeholderVar }, .t = t };
+        return .{
+            .v = .{ .Var = placeholderVar },
+            .t = t,
+            .m = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(AST.Scheme.empty())),
+        };
     }
 }
 
-fn instantiateFunction(self: *Self, fun: *AST.Function) !AST.Type {
+fn instantiateFunction(self: *Self, fun: *AST.Function) !struct { t: AST.Type, m: *AST.Match(AST.Type) } {
     const match = try self.instantiateScheme(fun.scheme);
 
     // mk normal, uninstantiated type.
@@ -1166,7 +1197,7 @@ fn instantiateFunction(self: *Self, fun: *AST.Function) !AST.Type {
             .env = try self.typeContext.newEnv(fun.env), // this is sussy. maybe we should also keep the "newEnv" still.
         },
     });
-    return try self.mapType(&match, funTy);
+    return .{ .t = try self.mapType(match, funTy), .m = match };
 }
 
 // CURRENTLY VERY SLOW!
@@ -1218,8 +1249,11 @@ fn solveAvailableConstraints(self: *Self) !void {
 
                             unreachable;
                         };
-                        const funTy = try self.instantiateFunction(fun);
+                        const funTyAndMatch = try self.instantiateFunction(fun);
+                        const funTy = funTyAndMatch.t;
                         try self.typeContext.unify(assoc.to, funTy);
+
+                        assoc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
 
                         _ = self.associations.orderedRemove(i); // TODO: not very efficient with normal ArrayList.
                         i -%= 1; // make sure to adjust index.
@@ -1259,7 +1293,7 @@ fn newClass(self: *Self, class: *AST.Class) !void {
 fn instantiateData(self: *Self, data: *AST.Data) !struct {
     t: AST.Type,
     tyArgs: []AST.Type,
-    match: AST.Match(AST.Type),
+    match: *AST.Match(AST.Type),
 } {
     const match = try self.instantiateScheme(data.scheme);
 
@@ -1302,7 +1336,7 @@ const DataShit = struct {
     data: *AST.Data,
     t: AST.Type,
     tyArgs: []AST.Type,
-    match: AST.Match(AST.Type),
+    match: *AST.Match(AST.Type),
 };
 fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !DataShit {
     const placeholderType = try Common.allocOne(self.arena, AST.Data{
@@ -1315,7 +1349,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         .UndefinedType = .{ .typename = typename, .loc = location },
     });
 
-    const match = AST.Match(AST.Type).empty(placeholderType.scheme);
+    const match = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(placeholderType.scheme));
     return .{
         .data = placeholderType,
         .t = try self.typeContext.newType(.{ .Con = .{
@@ -1396,7 +1430,7 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct {
                 // NOTE: function type making moved to .Con case in expression()
                 var args = std.ArrayList(AST.Type).init(self.arena);
                 for (con.tys) |ty| {
-                    try args.append(try self.mapType(&dt.match, ty));
+                    try args.append(try self.mapType(dt.match, ty));
                 }
                 return .{
                     .con = con,
@@ -1432,7 +1466,7 @@ fn instantiateCon(self: *@This(), conTok: Token) !struct {
 }
 
 // SCHEMES
-fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match(AST.Type) {
+fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
     const tvars = try self.arena.alloc(AST.Type, scheme.tvars.len);
     for (scheme.tvars, 0..) |_, i| {
         tvars[i] = try self.typeContext.fresh();
@@ -1443,14 +1477,20 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match(AST.Type) {
         envVars[i] = try self.typeContext.newEnv(null);
     }
 
+    const assocs = try self.arena.alloc(?AST.Match(AST.Type).AssocRef, scheme.associations.len);
+    for (assocs) |*a| {
+        a.* = null; // default VALUE YO
+    }
+
     const tvarMatch = AST.Match(AST.Type){
         .tvars = tvars,
         .envVars = envVars,
+        .assocs = assocs,
         .scheme = scheme,
     };
 
     // should prolly add assocs to "Match", but we don't need em yet.
-    for (scheme.associations) |assoc| {
+    for (scheme.associations, assocs) |assoc, *ref| {
         try self.addAssociation(.{
             .classFun = assoc.classFun,
             .from = try self.mapType(&tvarMatch, try self.typeContext.newType(
@@ -1458,10 +1498,11 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !AST.Match(AST.Type) {
             )),
             .to = try self.mapType(&tvarMatch, assoc.to),
             .instances = try self.getInstancesForClass(assoc.classFun.class),
+            .ref = ref,
         });
     }
 
-    return tvarMatch;
+    return try Common.allocOne(self.arena, tvarMatch);
 }
 
 const FTVs = struct {
@@ -1537,7 +1578,8 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                 try self.ftvs(&envftvs, fun.ret);
             },
 
-            .ClassFun => |cfun| {
+            .ClassFun => |vv| {
+                const cfun = vv.cfun;
                 for (cfun.params) |p| {
                     try self.ftvs(&envftvs, p.t);
                 }
@@ -1616,10 +1658,15 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         try envs.append(e.*);
                     }
 
+                    // here we are adding an existing association to a scheme.
+                    // remember to create a uid and pointer-write it to the previous match's association.
+                    const assocID = self.gen.assocs.newUnique();
+                    assoc.ref.* = .{ .Id = assocID };
                     try assocs.append(.{
                         .depends = assocTV,
                         .to = assoc.to,
                         .classFun = assoc.classFun,
+                        .uid = assocID,
                     });
 
                     // also, make sure to later add tvars to them
@@ -1670,7 +1717,7 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
     const t = self.typeContext.getType(ty);
     return switch (t) {
         .Con => |con| b: {
-            const conMatch = try self.mapMatch(match, &con.application) orelse {
+            const conMatch = try self.mapMatch(match, con.application) orelse {
                 break :b ty;
             };
 
@@ -1714,7 +1761,7 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
 }
 
 // null when match did not change (so we can keep the same data structure)
-fn mapMatch(self: *Self, match: *const AST.Match(AST.Type), mm: *const AST.Match(AST.Type)) ParserError!?AST.Match(AST.Type) {
+fn mapMatch(self: *Self, match: *const AST.Match(AST.Type), mm: *const AST.Match(AST.Type)) ParserError!?*AST.Match(AST.Type) {
     var changed = false;
 
     var tvars = std.ArrayList(AST.Type).init(self.arena);
@@ -1737,11 +1784,12 @@ fn mapMatch(self: *Self, match: *const AST.Match(AST.Type), mm: *const AST.Match
         return null;
     }
 
-    return .{
+    return try Common.allocOne(self.arena, AST.Match(AST.Type){
         .scheme = mm.scheme,
         .tvars = tvars.items,
         .envVars = envs.items,
-    };
+        .assocs = match.assocs,
+    });
 }
 
 fn mapEnv(self: *Self, match: *const AST.Match(AST.Type), envref: AST.EnvRef) ParserError!AST.EnvRef {
@@ -1752,7 +1800,7 @@ fn mapEnv(self: *Self, match: *const AST.Match(AST.Type), envref: AST.EnvRef) Pa
         for (env) |inst| {
             const newTy = try self.mapType(match, inst.t);
             envChanged = envChanged or !newTy.eq(inst.t);
-            try nuenv.append(.{ .v = inst.v, .t = newTy });
+            try nuenv.append(.{ .v = inst.v, .t = newTy, .m = inst.m });
         }
 
         break :bb if (envChanged) try self.typeContext.newEnv(nuenv.items) else envref;
@@ -1774,6 +1822,7 @@ const Association = struct {
     to: AST.Type,
 
     classFun: *AST.ClassFun,
+    ref: *?AST.Match(AST.Type).AssocRef,
 
     instances: DataInstance,
 };
@@ -1892,7 +1941,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
         // too much work. We should create a TypeRef and then cache it.
         break :b try self.typeContext.newType(.{ .Con = .{
             .type = data,
-            .application = AST.Match(AST.Type).empty(data.scheme),
+            .application = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(data.scheme)),
         } });
     };
 }
