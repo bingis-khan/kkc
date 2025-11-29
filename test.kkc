@@ -28,9 +28,28 @@ external printf1(format ConstStr, x a) -> Void
 #[cfunname 'printf', dylib 'libc.so']
 external printf3(format ConstStr, x a, y b, z c) -> Void
 
-x = 11328
-xp = &&&&&x
-int = xp&&&&&
-x = printf1('asd %d\n', int)
+class IntoIter
+	into-iter (self _) -> itershit
 
+class Iter
+	next (self Ptr _) -> Maybe item
+
+
+
+Map it from to
+	Map it (from -> to)
+
+inst IntoIter Map
+	into-iter (self Map it from to) -> Map it from to
+		return self
+
+m = 420
+add (x): x + m
+id (x)
+	asd = printf1('miau %d\n', m)
+	return x
+x = Just(id)
+case x
+	Just(fun)
+		x = printf1('cock %d\n', fun(123))
 

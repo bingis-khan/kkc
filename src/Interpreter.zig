@@ -230,10 +230,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
                     const fun = try self.funLoader.loadFunction(libName, funName);
                     return try self.initValue(.{
-                        .data = .{ .extptr = fun },
+                        .data = .{ .extptr = nanbox(fun, .ExternalFunction) },
                         .header = .{
                             .functionType = .ExternalFunction,
-                            .match = v.match,
                         },
                     });
                 },
@@ -243,7 +242,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit.lit));
             return try self.initValue(Value{
                 .data = .{ .extptr = s },
-                .header = .{ .functionType = .None, .match = undefined },
+                .header = .{ .functionType = .None },
             });
         },
         .Call => |c| {
@@ -257,7 +256,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     //   We can have a function type for each case, then beat it for it to make sense for our types.
                     //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
                     //   Nah, I should just use inline assembly in this case.
-                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(fun.data.extptr);
+                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(nunbox(fun.data.extptr).ptr);
 
                     const MaxExtArgs = 8;
                     if (c.args.len > MaxExtArgs) unreachable;
@@ -277,26 +276,26 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
                 .LocalFunction => {
                     const args = try self.exprs(c.args);
-                    return self.function(fun.data.fun, args, fun.header.match);
+                    return self.function(nunbox(fun.data.fun).ptr, args);
                 },
 
                 .ConstructorFunction => {
-                    return self.initRecord(fun.data.confun, c.args);
+                    return self.initRecord(nunbox(fun.data.confun).ptr, c.args);
                 },
 
-                else => unreachable,
+                .None => unreachable,
             }
         },
         .Con => |con| {
             if (con.tys.len == 0) {
                 return try self.initValue(.{
-                    .header = .{ .functionType = .None, .match = undefined },
+                    .header = .{ .functionType = .None },
                     .data = .{ .enoom = con.tagValue },
                 });
             } else {
                 return try self.initValue(.{
-                    .header = .{ .functionType = .ConstructorFunction, .match = undefined }, // not needed, because it's in the type.
-                    .data = .{ .confun = con },
+                    .header = .{ .functionType = .ConstructorFunction }, // not needed, because it's in the type.
+                    .data = .{ .confun = nanbox(con, .ConstructorFunction) },
                 });
             }
         },
@@ -309,7 +308,6 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     .data = .{ .ptr = @alignCast(&v.data) },
                     .header = .{
                         .functionType = .None,
-                        .match = undefined,
                     },
                 }),
             };
@@ -324,19 +322,19 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !*Value {
     return try self.initValue(.{
         .data = .{
-            .fun = try common.allocOne(self.arena, Value.Type.Fun{
+            .fun = nanbox(try common.allocOne(self.arena, Value.Type.Fun{
                 .fun = fun,
                 .env = self.scope.getFun(fun.name),
-            }),
+                .match = m,
+            }), .LocalFunction),
         },
         .header = .{
             .functionType = .LocalFunction,
-            .match = m,
         },
     });
 }
 
-fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value, match: *ast.Match(ast.Type)) Err!*Value {
+fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value) Err!*Value {
     // begin new scope
     const oldScope = self.scope;
     var scope = Scope.init(oldScope, self.arena);
@@ -344,6 +342,7 @@ fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value, match: *ast
     defer self.scope = oldScope;
 
     // also new typemap yo.
+    const match = funAndEnv.match;
     const oldTyMap = self.tymap;
     var tymap = TypeMap{
         .prev = oldTyMap,
@@ -407,6 +406,7 @@ const Value = extern struct {
         const Fun = struct {
             fun: *ast.Function,
             env: []EnvSnapshot,
+            match: *ast.Match(ast.Type),
 
             const EnvSnapshot = union(enum) {
                 Snap: struct { v: ast.Var, vv: *Value },
@@ -446,14 +446,15 @@ const Value = extern struct {
 
 const Header = extern struct {
     // Interpreter shit.
-    functionType: enum(u64) { // optional value parameter, which distinguishes local functions and external (which need to be called differently.)
+    functionType: FunctionType, // optional value parameter, which distinguishes local functions and external (which need to be called differently.)
+
+    // match: *ast.Match(ast.Type),
+    const FunctionType = enum(u64) {
         ExternalFunction,
         LocalFunction,
         ConstructorFunction,
         None,
-    },
-
-    match: *ast.Match(ast.Type),
+    };
 };
 
 fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
@@ -471,13 +472,22 @@ fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
     const memptr: []u8 = try self.arena.alloc(u8, Value.headerSize() + sz.size);
     @memcpy(memptr[Value.headerSize() .. Value.headerSize() + sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
     const vptr: *Value = @alignCast(@ptrCast(memptr.ptr));
-    vptr.header.functionType = .None;
+    switch (self.typeContext.getType(t)) {
+        .Fun => {
+            const nbx = nunbox(vptr.data.fun); // any pointer is okay.
+            vptr.header.functionType = nbx.fty;
+            if (nbx.fty == .LocalFunction) {
+                // vptr.header.match = unreachable;
+            }
+        },
+        else => vptr.header.functionType = .None,
+    }
     return vptr;
 }
 
 fn intValue(self: *const Self, i: i64) !*Value {
     return try self.initValue(.{
-        .header = .{ .functionType = .None, .match = undefined },
+        .header = .{ .functionType = .None },
         .data = .{ .int = i },
     });
 }
@@ -603,7 +613,10 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
         },
         .TVar => |tv| return self.sizeOf(self.tymap.getTVar(tv)),
 
-        .Fun => unreachable,
+        .Fun => return .{
+            .size = @sizeOf(*Value.Type.Fun),
+            .alignment = @alignOf(*Value.Type.Fun),
+        },
         .TyVar => unreachable, // actual error. should not happen!
     }
 }
@@ -723,6 +736,33 @@ const DyLibLoader = struct {
         return fun;
     }
 };
+
+fn nanbox(ptr: anytype, fty: Header.FunctionType) @TypeOf(ptr) {
+    const choice: usize = switch (fty) {
+        .None => unreachable, // we shouldn't call it on non-functions.
+        .ConstructorFunction => 0b001,
+        .LocalFunction => 0b010,
+        .ExternalFunction => 0b100,
+    };
+
+    var pint = @intFromPtr(ptr);
+    pint = @bitReverse(pint);
+    if ((pint & 0b111) > 0 and (pint & 0b111) != choice) unreachable; // check just in case - this would be a bug frfr.
+    pint |= choice;
+    pint = @bitReverse(pint);
+
+    return @ptrFromInt(pint);
+}
+
+fn nunbox(ptr: anytype) struct { ptr: @TypeOf(ptr), fty: Header.FunctionType } {
+    var pint = @intFromPtr(ptr);
+    pint = @bitReverse(pint);
+    const clearedPtr: @TypeOf(ptr) = @ptrFromInt(@bitReverse(pint & ~@as(usize, 0b111)));
+    return .{
+        .ptr = clearedPtr,
+        .fty = if ((pint & 0b100) > 0) .ExternalFunction else if ((pint & 0b010) > 0) .LocalFunction else if ((pint & 0b001) > 0) .ConstructorFunction else unreachable,
+    };
+}
 
 // kek
 const Err = RealErr || Runtime;
