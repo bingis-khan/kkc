@@ -390,6 +390,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 //     try self.errors.append(.{ .CannotDirectlyMutateVarFromEnv = .{} });
                 // }
 
+                try self.endStmt();
                 break :b .{ .VarMut = .{
                     .varRef = vv.v,
                     .refs = refs,
@@ -410,6 +411,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         else if (self.check(.UNDERSCORE)) {
             try self.devour(.EQUALS);
             const e = try self.expression();
+            try self.endStmt();
             break :b .{ .Expr = e };
         } // assignment to nothing
         else if (self.consume(.TYPE)) |typename| {
@@ -715,6 +717,12 @@ fn deconstruction(self: *Self) !*AST.Decon {
             .d = .{ .Var = v.v },
         };
     } // var
+    else if (self.check(.UNDERSCORE)) b: {
+        break :b .{
+            .t = try self.typeContext.fresh(),
+            .d = .{ .None = .{} },
+        };
+    } // ignore var
     else if (self.consume(.TYPE)) |cn| b: {
         const con = try self.instantiateCon(cn);
         var decons: []*AST.Decon = &.{};
@@ -773,6 +781,7 @@ fn precedenceExpression(self: *Self, minPrec: u32) ParserError!*AST.Expr {
 }
 
 fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*AST.Expr {
+    const optok = self.peek();
     const binop = getBinOp(self.peek()) orelse return left;
     const nextPrec = binOpPrecedence(binop);
 
@@ -814,6 +823,53 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 .t = retType,
                 .e = .{ .Call = .{
                     .callee = left,
+                    .args = params.items,
+                } },
+            });
+        }
+
+        if (binop == .PostfixCall) {
+            var params = std.ArrayList(*AST.Expr).init(self.arena);
+            try params.append(left);
+            _ = try self.devour(.LEFT_PAREN);
+            if (!self.check(.RIGHT_PAREN)) {
+                while (true) {
+                    try params.append(try self.expression());
+                    if (!self.check(.COMMA)) break;
+                }
+
+                try self.devour(.RIGHT_PAREN);
+            }
+
+            // how a function is represented.
+            const paramTs = try self.arena.alloc(AST.Type, params.items.len);
+            for (params.items, 0..) |et, i| {
+                paramTs[i] = et.t;
+            }
+
+            const retType = try self.typeContext.fresh();
+
+            const callType = try self.typeContext.newType(.{
+                .Fun = .{
+                    .args = paramTs,
+                    .ret = retType,
+                    .env = try self.typeContext.newEnv(null),
+                },
+            });
+
+            const funts = try self.instantiateVar(optok);
+            try self.typeContext.unify(callType, funts.t);
+
+            return self.allocExpr(.{
+                .t = retType,
+                .e = .{ .Call = .{
+                    .callee = try self.allocExpr(.{
+                        .t = funts.t,
+                        .e = .{ .Var = .{
+                            .v = funts.v,
+                            .match = funts.m,
+                        } },
+                    }),
                     .args = params.items,
                 } },
             });
@@ -964,6 +1020,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .GT => .GreaterThan,
         .LEFT_PAREN => .Call,
         .REF => .Deref,
+        .IDENTIFIER => .PostfixCall,
         else => null,
     };
 }
@@ -984,6 +1041,7 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
         .Call => 10,
         .RecordAccess => 10,
         .Deref => 10,
+        .PostfixCall => 10,
         else => unreachable,
     };
 }

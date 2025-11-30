@@ -20,7 +20,6 @@ typeContext: *const TypeContext,
 // right now a very simple interpreter where we don't free.
 pub fn run(module: ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
     _ = prelude;
-    std.debug.print("{}\n", .{@sizeOf(Header)});
     var scope = Scope.init(null, al);
     const scheme = ast.Scheme.empty();
     const tymap = TypeMap{
@@ -158,6 +157,7 @@ fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
 // note that we are getting deep into structs. we must not convert that Value.Type pointer into *Value, because it might not have that header.
 fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool {
     switch (decon.d) {
+        .None => return true,
         .Var => |vn| {
             try self.scope.vars.put(vn, try self.copyValue(v, decon.t));
             return true;

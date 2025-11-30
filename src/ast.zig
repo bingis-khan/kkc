@@ -311,6 +311,7 @@ pub const Case = struct {
 pub const Decon = struct {
     t: Type,
     d: union(enum) {
+        None: struct {},
         Var: Var,
         Con: struct {
             con: *Con,
@@ -451,6 +452,7 @@ pub const BinOp = enum {
     // FAKE OPS
     // TODO: explain
     Call,
+    PostfixCall,
     RecordAccess,
     Deref,
 

@@ -29,3 +29,7 @@ BUT, unifying envs is currently scuffed and I need to think more about how it sh
 
   note, that I want kkc code to be a superset of kc.
 
+
+## Bugs
+
+- release=fast breaks (some incorrect pointer stuff) - dunno why.

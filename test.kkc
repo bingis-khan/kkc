@@ -97,6 +97,7 @@ Range
 RangeIter
 	RangeIter Range Int
 
+to (from, to): Range(from, to)
 range (from, to): Range(from, to)
 
 inst IntoIter Range
@@ -129,6 +130,10 @@ for-each (iterable, fn)
 			Just(x)
 				_ = fn(x)
 
-m = 420
-add1(x): x + m
-_ = for-each(map(map(range(1, 10), add1), add1), println)
+addn(m)
+	add(x)
+		return x + m
+	return add
+
+_ = 1 to (10) map(addn(1)) map(addn(3)) for-each(println)
+# _ = for-each(map(map(range(1, 10), add1), add1), println)
