@@ -20,6 +20,7 @@ typeContext: *const TypeContext,
 // right now a very simple interpreter where we don't free.
 pub fn run(module: ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
     _ = prelude;
+    std.debug.print("{}\n", .{@sizeOf(Header)});
     var scope = Scope.init(null, al);
     const scheme = ast.Scheme.empty();
     const tymap = TypeMap{
@@ -51,6 +52,9 @@ fn stmts(self: *Self, ss: []*ast.Stmt) !void {
 
 fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     switch (s.*) {
+        .Expr => |e| {
+            _ = try self.expr(e);
+        },
         .Return => |e| {
             const v = try self.expr(e);
             self.returnValue = v;
@@ -59,6 +63,16 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         .VarDec => |vd| {
             const v = try self.expr(vd.varValue);
             try self.scope.vars.put(vd.varDef, v);
+        },
+        .VarMut => |vm| {
+            var varVal = self.scope.getVar(vm.varRef);
+            for (0..vm.refs) |_| {
+                varVal = varVal.data.ptr.toValuePtr();
+            }
+            const exprVal = try self.expr(vm.varValue);
+            varVal.header = exprVal.header;
+            const sz = self.sizeOf(vm.varValue.t);
+            @memcpy(varVal.dataSlice(sz.size), exprVal.dataSlice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
         },
         .Function => |fun| {
             try self.addEnvSnapshot(fun);
@@ -71,17 +85,30 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         .If => |ifs| {
             const cond = try self.expr(ifs.cond);
 
-            if (cond.data.enoom > 0) {
+            if (isTrue(cond)) {
                 try self.stmts(ifs.bTrue);
             } else {
                 for (ifs.bOthers) |elif| {
-                    if ((try self.expr(elif.cond)).data.enoom > 0) {
+                    if (isTrue(try self.expr(elif.cond))) {
                         try self.stmts(elif.body);
                         break;
                     }
                 } else if (ifs.bElse) |bElse| {
                     try self.stmts(bElse);
                 }
+            }
+        },
+        .While => |whl| {
+            while (true) loop: {
+                const cond = try self.expr(whl.cond);
+                if (!isTrue(cond)) break;
+
+                self.stmts(whl.body) catch |err| switch (err) {
+                    error.Break => {
+                        break :loop;
+                    },
+                    else => return err,
+                };
             }
         },
         .Switch => |sw| {
@@ -194,6 +221,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             const r = try self.expr(op.r);
             return switch (op.op) {
                 .Plus => try self.intValue(l.data.int + r.data.int),
+                .Minus => try self.intValue(l.data.int - r.data.int),
+                .GreaterThan => try self.boolValue(l.data.int > r.data.int),
                 else => unreachable,
             };
         },
@@ -233,6 +262,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                         .data = .{ .extptr = nanbox(fun, .ExternalFunction) },
                         .header = .{
                             .functionType = .ExternalFunction,
+                            .ogPtr = null,
                         },
                     });
                 },
@@ -242,7 +272,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit.lit));
             return try self.initValue(Value{
                 .data = .{ .extptr = s },
-                .header = .{ .functionType = .None },
+                .header = .{ .functionType = .None, .ogPtr = null },
             });
         },
         .Call => |c| {
@@ -289,12 +319,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
         .Con => |con| {
             if (con.tys.len == 0) {
                 return try self.initValue(.{
-                    .header = .{ .functionType = .None },
+                    .header = .{ .functionType = .None, .ogPtr = null },
                     .data = .{ .enoom = con.tagValue },
                 });
             } else {
                 return try self.initValue(.{
-                    .header = .{ .functionType = .ConstructorFunction }, // not needed, because it's in the type.
+                    .header = .{ .functionType = .ConstructorFunction, .ogPtr = null }, // not needed, because it's in the type.
                     .data = .{ .confun = nanbox(con, .ConstructorFunction) },
                 });
             }
@@ -305,9 +335,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             return switch (uop.op) {
                 .Deref => v.data.ptr.toValuePtr(),
                 .Ref => try self.initValue(.{
-                    .data = .{ .ptr = @alignCast(&v.data) },
+                    .data = .{
+                        .ptr = if (v.header.ogPtr) |ogPtr| @alignCast(ogPtr) else @alignCast(&v.data),
+                    },
                     .header = .{
                         .functionType = .None,
+                        .ogPtr = null,
                     },
                 }),
             };
@@ -330,6 +363,7 @@ fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !*Valu
         },
         .header = .{
             .functionType = .LocalFunction,
+            .ogPtr = null,
         },
     });
 }
@@ -385,6 +419,8 @@ fn evaluateString(self: *const Self, s: Str) ![:0]u8 {
 
 // values n shit
 // note, that we must preserve the inner representation for compatibility with external functions.
+const ValRef = *align(1) Value; // basically, because we don't know *where* the basic data might be, we must assume its offfest can be whatever (imagine: struct with  three chars and getting a reference to one of them)
+const DataRef = *align(1) Value.Type;
 const Value = extern struct {
     header: Header align(1), // TEMP align(1)
 
@@ -393,7 +429,7 @@ const Value = extern struct {
     const Type = extern union { // NTE: I might change it so that `data` only contains stuff that should be accessible by C.
         int: i64,
         extptr: *anyopaque,
-        ptr: *Type,
+        ptr: *align(1) Type,
         fun: *Fun,
         confun: *ast.Con,
         enoom: u32, // for enum-like data structures
@@ -414,11 +450,11 @@ const Value = extern struct {
             };
         };
 
-        fn toValuePtr(self: *@This()) *Value {
+        fn toValuePtr(self: *align(1) @This()) ValRef {
             return @fieldParentPtr("data", self);
         }
 
-        fn offset(self: *align(1) @This(), off: usize) *align(1) Value.Type {
+        fn offset(self: *align(1) @This(), off: usize) DataRef {
             const p: [*]u8 = @ptrCast(self);
             const offp = p[off..];
             return @alignCast(@ptrCast(offp));
@@ -447,6 +483,7 @@ const Value = extern struct {
 const Header = extern struct {
     // Interpreter shit.
     functionType: FunctionType, // optional value parameter, which distinguishes local functions and external (which need to be called differently.)
+    ogPtr: ?DataRef, // in case of deconstructions, I want pointers to point to the original value.
 
     // match: *ast.Match(ast.Type),
     const FunctionType = enum(u64) {
@@ -467,28 +504,33 @@ fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
     //      Problem 1: How to access context? We may not be able to provide it (eg. atexit) So, the interpreter state must be at some known location.
     //      Problem 2: How to know which function it should execute? We might use global state if we solve Problem 1, but maybe there is a better way? Like, I need to differentiate the calls somehow. Slightly different pointer?
 
-    // currently at 1!
+    // currently at 2!
     const sz = self.sizeOf(t);
     const memptr: []u8 = try self.arena.alloc(u8, Value.headerSize() + sz.size);
     @memcpy(memptr[Value.headerSize() .. Value.headerSize() + sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
-    const vptr: *Value = @alignCast(@ptrCast(memptr.ptr));
+    const vptr: ValRef = @alignCast(@ptrCast(memptr.ptr));
     switch (self.typeContext.getType(t)) {
         .Fun => {
             const nbx = nunbox(vptr.data.fun); // any pointer is okay.
             vptr.header.functionType = nbx.fty;
-            if (nbx.fty == .LocalFunction) {
-                // vptr.header.match = unreachable;
-            }
         },
         else => vptr.header.functionType = .None,
     }
+    vptr.header.ogPtr = vt;
     return vptr;
 }
 
 fn intValue(self: *const Self, i: i64) !*Value {
     return try self.initValue(.{
-        .header = .{ .functionType = .None },
+        .header = .{ .functionType = .None, .ogPtr = null },
         .data = .{ .int = i },
+    });
+}
+
+fn boolValue(self: *const Self, b: bool) !*Value {
+    return try self.initValue(.{
+        .header = .{ .functionType = .None, .ogPtr = null },
+        .data = .{ .enoom = @intFromBool(b) },
     });
 }
 
@@ -656,7 +698,7 @@ const Scope = struct {
         };
     }
 
-    fn getVar(self: *const @This(), v: ast.Var) *Value {
+    fn getVar(self: *const @This(), v: ast.Var) ValRef {
         return self.vars.get(v) orelse (self.prev orelse unreachable).getVar(v);
     }
 
@@ -762,6 +804,12 @@ fn nunbox(ptr: anytype) struct { ptr: @TypeOf(ptr), fty: Header.FunctionType } {
         .ptr = clearedPtr,
         .fty = if ((pint & 0b100) > 0) .ExternalFunction else if ((pint & 0b010) > 0) .LocalFunction else if ((pint & 0b001) > 0) .ConstructorFunction else unreachable,
     };
+}
+
+// check if value is true.
+// the impl is funny and not immediately obvious, so this function was made to document that.
+fn isTrue(v: *Value) bool {
+    return v.data.enoom > 0;
 }
 
 // kek

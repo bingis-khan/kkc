@@ -359,6 +359,42 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                     .varDef = vt.v,
                     .varValue = expr,
                 } };
+            } else if (self.check(.LT)) {
+                var refs: usize = 0;
+                while (self.check(.REF)) refs += 1;
+
+                const vtsc = try self.lookupVar(v);
+                try self.devour(.EQUALS);
+                const e = try self.expression();
+
+                const vv = switch (vtsc.vorf) {
+                    .Var => |vt| vt,
+                    else => bb: {
+                        try self.errors.append(.{ .TryingToMutateNonVar = .{} });
+                        break :bb try self.newVar(v);
+                    },
+                };
+
+                var innerTy = vv.t;
+                for (0..refs) |_| {
+                    const ptr = try self.defined(.Ptr);
+
+                    try self.typeContext.unify(innerTy, ptr.t);
+                    innerTy = ptr.tyArgs[0];
+                }
+
+                try self.typeContext.unify(innerTy, e.t);
+
+                // TEMP
+                // if (vtsc.sc != self.scope.currentScope()) {
+                //     try self.errors.append(.{ .CannotDirectlyMutateVarFromEnv = .{} });
+                // }
+
+                break :b .{ .VarMut = .{
+                    .varRef = vv.v,
+                    .refs = refs,
+                    .varValue = e,
+                } };
             } else if (self.check(.LEFT_PAREN)) {
                 // parse call
                 // SIKE
@@ -370,7 +406,12 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             } else {
                 return self.err(*AST.Stmt, "Expect statement.", .{});
             }
-        } // var or function
+        } // var or mut or function
+        else if (self.check(.UNDERSCORE)) {
+            try self.devour(.EQUALS);
+            const e = try self.expression();
+            break :b .{ .Expr = e };
+        } // assignment to nothing
         else if (self.consume(.TYPE)) |typename| {
             try self.dataDef(typename);
             break :b null;
@@ -401,6 +442,16 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 .bElse = elseBody,
             } };
         } // if
+        else if (self.check(.WHILE)) {
+            const cond = try self.expression();
+            const boolTy = try self.definedType(.Bool);
+            try self.typeContext.unify(cond.t, boolTy);
+            const bod = try self.body();
+            break :b .{ .While = .{
+                .cond = cond,
+                .body = bod,
+            } };
+        } // while
         else if (self.check(.CASE)) {
             const switchOn = try self.expression();
 
@@ -786,6 +837,13 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .Minus,
             .Times,
             .Divide,
+            => b: {
+                const intTy = try self.definedType(.Int);
+                try self.typeContext.unify(left.t, intTy);
+                try self.typeContext.unify(right.t, intTy);
+                break :b intTy;
+            },
+
             .GreaterThan,
             .LessThan,
             .GreaterEqualThan,
@@ -794,7 +852,8 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 const intTy = (try self.defined(.Int)).t;
                 try self.typeContext.unify(left.t, intTy);
                 try self.typeContext.unify(right.t, intTy);
-                break :b intTy;
+                const boolTy = try self.definedType(.Bool);
+                break :b boolTy;
             },
 
             .Equals, .NotEquals => b: {
@@ -901,6 +960,8 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .PLUS => .Plus,
         .TIMES => .Times,
         .EQEQ => .Equals,
+        .LT => .LessThan,
+        .GT => .GreaterThan,
         .LEFT_PAREN => .Call,
         .REF => .Deref,
         else => null,
@@ -911,9 +972,14 @@ fn getBinOp(tok: Token) ?AST.BinOp {
 fn binOpPrecedence(op: AST.BinOp) u32 {
     return switch (op) {
         // 0 means it won't be consumed, like a sentinel value.
-        .Equals => 1,
-        .Plus => 2,
-        .Times => 3,
+        .Equals => 3,
+        .LessThan => 3,
+        .GreaterThan => 3,
+
+        .Plus => 4,
+        .Minus => 4,
+        .Times => 6,
+        .Divide => 6,
 
         .Call => 10,
         .RecordAccess => 10,
@@ -1043,7 +1109,8 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
 
 // resolver zone
 // VARS
-fn newVar(self: *@This(), varTok: Token) !struct { v: AST.Var, t: AST.Type } {
+const VarAndType = struct { v: AST.Var, t: AST.Type };
+fn newVar(self: *@This(), varTok: Token) !VarAndType {
     const varName = varTok.literal(self.lexer.source);
     const t = try self.typeContext.fresh();
     const thisVar = AST.Var{
@@ -1066,123 +1133,15 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
     return funPtr;
 }
 
-fn instantiateVar(self: *@This(), varTok: Token) !struct {
-    v: AST.Expr.VarType,
-    t: AST.Type,
-    m: *AST.Match(AST.Type),
+fn lookupVar(self: *Self, varTok: Token) !struct {
+    vorf: CurrentScope.VarOrFun,
+    sc: ?*CurrentScope,
 } {
     const varName = varTok.literal(self.lexer.source);
     var lastVars = self.scope.scopes.iterateFromTop();
     while (lastVars.nextPtr()) |cursc| {
         if (cursc.vars.get(varName)) |vorf| {
-            const varInst: AST.VarInst = switch (vorf) {
-                .Var => |vt| .{
-                    .v = .{ .Var = vt.v },
-                    .t = vt.t,
-                    .m = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(AST.Scheme.empty())),
-                },
-                .Fun => |fun| b: {
-                    const funTyAndMatch = try self.instantiateFunction(fun);
-                    break :b .{
-                        .v = .{ .Fun = fun },
-                        .t = funTyAndMatch.t,
-                        .m = funTyAndMatch.m,
-                    };
-                },
-
-                .ClassFun => |cfun| b: {
-                    const match = try self.instantiateScheme(cfun.scheme);
-
-                    // mk new, instantiated type
-                    var params = std.ArrayList(AST.Type).init(self.arena);
-                    for (cfun.params) |p| {
-                        try params.append(try self.mapType(match, p.t));
-                    }
-
-                    const ret = try self.mapType(match, cfun.ret);
-                    const funTy = try self.typeContext.newType(.{ .Fun = .{
-                        .args = params.items,
-                        .ret = ret,
-                        .env = try self.typeContext.newEnv(null),
-                    } });
-
-                    const classSelf = try self.mapType(match, cfun.self);
-
-                    const instances = try self.getInstancesForClass(cfun.class);
-
-                    const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
-                    const varInst = AST.VarInst{
-                        .v = .{
-                            .ClassFun = .{
-                                .cfun = cfun,
-                                .ref = ref,
-                            },
-                        },
-                        .t = funTy,
-                        .m = match,
-                    };
-
-                    try self.addAssociation(.{
-                        .from = classSelf,
-                        .to = funTy,
-                        .classFun = cfun,
-                        .instances = instances,
-                        .ref = ref,
-                    });
-                    break :b varInst;
-                },
-
-                .Extern => |extfun| {
-                    const match = try self.instantiateScheme(extfun.scheme);
-
-                    var params = std.ArrayList(AST.Type).init(self.arena);
-                    for (extfun.params) |p| {
-                        try params.append(try self.mapType(match, p.pt));
-                    }
-
-                    const ret = try self.mapType(match, extfun.ret);
-                    const funTy = try self.typeContext.newType(.{
-                        .Fun = .{
-                            .args = params.items,
-                            .ret = ret,
-                            .env = try self.typeContext.newEnv(&.{}),
-                        },
-                    });
-
-                    // NOTE: we just return. External functions are not added to the environment.
-                    return .{
-                        .v = .{
-                            .ExternalFun = extfun,
-                        },
-                        .t = funTy,
-                        .m = match,
-                    };
-                },
-            };
-
-            // TODO: I should make a separate function, but I'm still not sure about the interface.
-            var lastScope = self.scope.scopes.iterateFromTop();
-            while (lastScope.nextPtr()) |sc| {
-                if (sc == cursc) break; // we are in the scope the var was defined in, so don't add it to its env.
-
-                if (sc.env) |env| {
-                    try env.append(varInst);
-                }
-            }
-            return .{
-                .v = switch (varInst.v) {
-                    .Var => |vv| .{ .Var = vv },
-                    .Fun => |fun| .{ .Fun = fun },
-                    .ClassFun => |cfun| .{
-                        .ClassFun = .{
-                            .cfun = cfun.cfun,
-                            .ref = cfun.ref,
-                        },
-                    },
-                },
-                .t = varInst.t,
-                .m = varInst.m,
-            };
+            return .{ .vorf = vorf, .sc = cursc };
         }
     } else {
         const placeholderVar = AST.Var{
@@ -1200,11 +1159,130 @@ fn instantiateVar(self: *@This(), varTok: Token) !struct {
 
         // return placeholder var after an error.
         return .{
-            .v = .{ .Var = placeholderVar },
-            .t = t,
-            .m = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(AST.Scheme.empty())),
+            .vorf = .{
+                .Var = .{ .v = placeholderVar, .t = t },
+            },
+            .sc = null,
         };
     }
+}
+
+fn instantiateVar(self: *@This(), varTok: Token) !struct {
+    v: AST.Expr.VarType,
+    t: AST.Type,
+    m: *AST.Match(AST.Type),
+} {
+    const vorfAndScope = try self.lookupVar(varTok);
+    const vorf = vorfAndScope.vorf;
+    const cursc = vorfAndScope.sc;
+    const varInst: AST.VarInst = switch (vorf) {
+        .Var => |vt| .{
+            .v = .{ .Var = vt.v },
+            .t = vt.t,
+            .m = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(AST.Scheme.empty())),
+        },
+        .Fun => |fun| b: {
+            const funTyAndMatch = try self.instantiateFunction(fun);
+            break :b .{
+                .v = .{ .Fun = fun },
+                .t = funTyAndMatch.t,
+                .m = funTyAndMatch.m,
+            };
+        },
+
+        .ClassFun => |cfun| b: {
+            const match = try self.instantiateScheme(cfun.scheme);
+
+            // mk new, instantiated type
+            var params = std.ArrayList(AST.Type).init(self.arena);
+            for (cfun.params) |p| {
+                try params.append(try self.mapType(match, p.t));
+            }
+
+            const ret = try self.mapType(match, cfun.ret);
+            const funTy = try self.typeContext.newType(.{ .Fun = .{
+                .args = params.items,
+                .ret = ret,
+                .env = try self.typeContext.newEnv(null),
+            } });
+
+            const classSelf = try self.mapType(match, cfun.self);
+
+            const instances = try self.getInstancesForClass(cfun.class);
+
+            const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
+            const varInst = AST.VarInst{
+                .v = .{
+                    .ClassFun = .{
+                        .cfun = cfun,
+                        .ref = ref,
+                    },
+                },
+                .t = funTy,
+                .m = match,
+            };
+
+            try self.addAssociation(.{
+                .from = classSelf,
+                .to = funTy,
+                .classFun = cfun,
+                .instances = instances,
+                .ref = ref,
+            });
+            break :b varInst;
+        },
+
+        .Extern => |extfun| {
+            const match = try self.instantiateScheme(extfun.scheme);
+
+            var params = std.ArrayList(AST.Type).init(self.arena);
+            for (extfun.params) |p| {
+                try params.append(try self.mapType(match, p.pt));
+            }
+
+            const ret = try self.mapType(match, extfun.ret);
+            const funTy = try self.typeContext.newType(.{
+                .Fun = .{
+                    .args = params.items,
+                    .ret = ret,
+                    .env = try self.typeContext.newEnv(&.{}),
+                },
+            });
+
+            // NOTE: we just return. External functions are not added to the environment.
+            return .{
+                .v = .{
+                    .ExternalFun = extfun,
+                },
+                .t = funTy,
+                .m = match,
+            };
+        },
+    };
+
+    // TODO: I should make a separate function, but I'm still not sure about the interface.
+    var lastScope = self.scope.scopes.iterateFromTop();
+    while (lastScope.nextPtr()) |sc| {
+        if (sc == cursc) break; // we are in the scope the var was defined in, so don't add it to its env.
+
+        if (sc.env) |env| {
+            try env.append(varInst);
+        }
+    }
+    return .{
+        .v = switch (varInst.v) {
+            .Var => |vv| .{ .Var = vv },
+            .Fun => |fun| .{ .Fun = fun },
+            .ClassFun => |cfun| .{
+                .ClassFun = .{
+                    .cfun = cfun.cfun,
+                    .ref = cfun.ref,
+                },
+            },
+        },
+        .t = varInst.t,
+        .m = varInst.m,
+    };
 }
 
 fn instantiateFunction(self: *Self, fun: *AST.Function) !struct { t: AST.Type, m: *AST.Match(AST.Type) } {
@@ -1674,7 +1752,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         const tv = AST.TVar{
                             .name = name,
                             .uid = self.gen.tvars.newUnique(),
-                            .binding = .{ .Function = unreachable },
+                            .binding = .{ .Function = functionId },
                         };
                         try tvars.append(tv);
                         const tvt = try self.typeContext.newType(.{ .TVar = tv });
@@ -1917,7 +1995,7 @@ const Scope = struct {
 
 const CurrentScope = struct {
     const VarOrFun = union(enum) {
-        Var: struct { v: AST.Var, t: AST.Type },
+        Var: VarAndType,
         Fun: *AST.Function,
         ClassFun: *AST.ClassFun,
         Extern: *AST.ExternalFunction,

@@ -30,6 +30,8 @@ pub const TokenType = enum {
 
     EQUALS,
     EQEQ,
+    GT,
+    LT,
     PLUS,
     MINUS,
     TIMES,
@@ -44,6 +46,8 @@ pub const TokenType = enum {
     IF,
     ELIF,
     ELSE,
+
+    WHILE,
 
     CASE,
 

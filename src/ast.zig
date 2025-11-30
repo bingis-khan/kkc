@@ -62,6 +62,31 @@ pub const Ctx = struct {
         std.debug.print(fmt, args);
     }
 
+    fn print(self: Self, args: anytype) void {
+        const fields = @typeInfo(@TypeOf(args)).Struct.fields;
+        inline for (fields) |field| {
+            // switch (@typeInfo(@TypeOf(arg))) {
+            //     .Pointer => |ptrinfo| {
+            //         switch (ptrinfo.size) {
+            //             .Slice => std.debug.print("{s}", .{arg}),
+            //             .Many => std.debug.print("{s}", .{arg}),
+            //             .One => std.debug.print("{s}", .{arg}),
+            //             else => unreachable,
+            //         }
+            //     }, // only for this: assumme an array is a STRING. (because it's hard to check for one).
+            //     else => arg.print(self),
+            // }
+            // dumbest thing. const strings are a pointer to ONE(!), which means I can't call print on pointers if I proceed in this direction.
+
+            const arg = @field(args, field.name);
+            if (comptime std.meta.hasMethod(field.type, "print")) {
+                arg.print(self);
+            } else {
+                self.s(@as(Str, arg)); // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
+            }
+        }
+    }
+
     fn sepBy(self: Self, args: anytype, sep: Str) void {
         if (args.len == 0) return;
 
@@ -182,11 +207,16 @@ fn printBody(stmts: []*Stmt, oldC: Ctx) void {
 
 pub const Stmt = union(enum) {
     VarDec: struct { varDef: Var, varValue: *Expr },
+    VarMut: struct { varRef: Var, refs: usize, varValue: *Expr },
     If: struct {
         cond: *Expr,
         bTrue: []Rec,
         bOthers: []Elif,
         bElse: ?[]Rec,
+    },
+    While: struct {
+        cond: *Expr,
+        body: []Rec,
     },
     Switch: struct {
         switchOn: *Expr,
@@ -195,6 +225,7 @@ pub const Stmt = union(enum) {
     Return: *Expr,
     Function: *Function,
     Instance: *Instance,
+    Expr: *Expr,
 
     const Rec = *@This();
     pub const Elif = struct { cond: *Expr, body: []Rec };
@@ -206,6 +237,16 @@ pub const Stmt = union(enum) {
                 c.s(" = ");
                 vd.varValue.print(c);
                 c.s("\n");
+            },
+            .VarMut => |vm| {
+                c.print(.{ vm.varRef, " <" });
+                for (0..vm.refs) |_| {
+                    c.s("&");
+                }
+                c.print(.{ "= ", vm.varValue, "\n" });
+            },
+            .Expr => |expr| {
+                c.print(.{ expr, "\n" });
             },
             .If => |ifstmt| {
                 c.s("if ");
@@ -224,6 +265,10 @@ pub const Stmt = union(enum) {
                     c.s("else\n");
                     printBody(els, c);
                 }
+            },
+            .While => |whl| {
+                c.print(.{ "while ", whl.cond, "\n" });
+                printBody(whl.body, c);
             },
             .Switch => |sw| {
                 c.s("case ");
@@ -315,7 +360,7 @@ pub const Expr = struct {
         //     };
         // }
 
-        fn print(self: @This(), c: Ctx) void {
+        pub fn print(self: @This(), c: Ctx) void {
             switch (self) {
                 .Var => |v| {
                     v.print(c);
@@ -334,7 +379,7 @@ pub const Expr = struct {
     };
     const Rec = *@This();
 
-    fn print(self: @This(), c: Ctx) void {
+    pub fn print(self: @This(), c: Ctx) void {
         c.s("(");
         switch (self.e) {
             .Var => |v| {
@@ -518,7 +563,7 @@ pub const Var = struct {
     name: Str,
     uid: Unique,
 
-    fn print(v: @This(), c: Ctx) void {
+    pub fn print(v: @This(), c: Ctx) void {
         c.s(v.name);
         c.sp("{}", .{v.uid}); // ZIG BUG(?): there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
     }

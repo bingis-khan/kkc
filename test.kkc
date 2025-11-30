@@ -28,13 +28,45 @@ external printf1(format ConstStr, x a) -> Void
 #[cfunname 'printf', dylib 'libc.so']
 external printf3(format ConstStr, x a, y b, z c) -> Void
 
+
+class Str
+	print-str (self _)
+
+inst Str Int
+	print-str (self _)
+		_ = printf1('%d', self)
+		return
+
+inst Str ConstStr
+	print-str (self _)
+		_ = printf1('%s', self)
+		return
+
+StrConcat l r
+	StrConcat l r
+
+inst Str StrConcat
+	print-str (self _)
+		case self
+			StrConcat(l, r)
+				_ = print-str(l)
+				_ = print-str(r)
+				return
+
+inst Str Ptr
+	print-str (self _)
+		_ = print-str(self&)
+		return
+
+
+println (s): print-str(StrConcat(s, '\n'))
+
+
 class IntoIter
 	into-iter (self _) -> itershit
 
 class Iter
 	next (self Ptr _) -> Maybe item
-
-
 
 Map it from to
 	Map it (from -> to)
@@ -43,13 +75,60 @@ inst IntoIter Map
 	into-iter (self Map it from to) -> Map it from to
 		return self
 
-m = 420
-add (x): x + m
-id (x)
-	asd = printf1('miau %d\n', m)
-	return x
-x = Just(id)
-case x
-	Just(fun)
-		x = printf1('cock %d\n', fun(123))
+inst Iter Map
+	next (self)
+		case self&
+			Map(it, fn)
+				case next(&it)
+					None
+						return None
+					Just(x)
+						return Just(fn(x))
 
+
+map (iterable, fn)
+	it = into-iter(iterable)
+	return Map(it, fn)
+
+
+Range
+	Range Int Int
+
+RangeIter
+	RangeIter Range Int
+
+range (from, to): Range(from, to)
+
+inst IntoIter Range
+	into-iter (self)
+		case self
+			Range(from, to)
+				return RangeIter(self, from)
+
+inst IntoIter RangeIter
+	into-iter (self RangeIter): self
+
+inst Iter RangeIter
+	next (self Ptr RangeIter) -> Maybe Int
+		case self&
+			RangeIter(Range(from, to), cur)
+				if cur > to
+					return None
+
+				x = Just(cur)
+				self <&= RangeIter(Range(from, to), cur + 1)
+				return x
+
+
+for-each (iterable, fn)
+	it = into-iter(iterable)
+	while True
+		case next(&it)
+			None
+				return
+			Just(x)
+				_ = fn(x)
+
+m = 420
+add1(x): x + m
+_ = for-each(map(map(range(1, 10), add1), add1), println)

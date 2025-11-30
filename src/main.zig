@@ -22,18 +22,18 @@ pub fn main() !void {
     const source = try std.fs.cwd().readFileAlloc(al, "test.kkc", 1337420);
     defer al.free(source);
     const lexer = Lexer.init(source);
-    var l = lexer;
-    while (!l.finished()) {
-        const tok = l.nextToken();
-        std.debug.print("{}\n", .{tok});
-    }
+    // var l = lexer;
+    // while (!l.finished()) {
+    //     const tok = l.nextToken();
+    //     std.debug.print("{}\n", .{tok});
+    // }
 
     var errors = Errors.init(aa);
     var parser = try Parser.init(lexer, &errors, aa);
     const module = try parser.parse();
-    var hadNewline: bool = undefined;
-    const ctx = ast.Ctx.init(&hadNewline, &parser.typeContext);
-    module.ast.print(ctx);
+    // var hadNewline: bool = undefined;
+    // const ctx = ast.Ctx.init(&hadNewline, &parser.typeContext);
+    // module.ast.print(ctx);
 
     var fakeNewline: bool = undefined;
     const fakeHackCtx = ast.Ctx.init(&fakeNewline, &parser.typeContext);

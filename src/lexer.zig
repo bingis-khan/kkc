@@ -85,7 +85,10 @@ pub const Lexer = struct {
             '[' => .LEFT_SQBR,
             ']' => .RIGHT_SQBR,
             '&' => .REF,
+            '<' => .LT,
+            '>' => .GT,
             ',' => .COMMA,
+            '.' => .DOT,
             '=' => b: {
                 if (self.curChar() == '=') {
                     _ = self.nextChar();
@@ -117,6 +120,7 @@ pub const Lexer = struct {
                     inst,
                     external,
                     case,
+                    @"while",
                 };
                 const keyword = std.meta.stringToEnum(Keyword, self.scanned(from)) orelse {
                     break :b .IDENTIFIER;
@@ -131,6 +135,7 @@ pub const Lexer = struct {
                     .inst => .INST,
                     .external => .EXTERNAL,
                     .case => .CASE,
+                    .@"while" => .WHILE,
                 };
             },
 
