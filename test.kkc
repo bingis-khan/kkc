@@ -59,7 +59,7 @@ inst Str Ptr
 		return
 
 
-println (s): print-str(StrConcat(s, '\n'))
+fn println (s): print-str(StrConcat(s, '\n'))
 
 
 class IntoIter
@@ -78,17 +78,17 @@ inst IntoIter Map
 inst Iter Map
 	next (self)
 		case self&
-			Map(it, fn)
+			Map(it, fun)
 				case next(&it)
 					None
 						return None
 					Just(x)
-						return Just(fn(x))
+						return Just(fun(x))
 
 
-map (iterable, fn)
+fn map (iterable, fun)
 	it = into-iter(iterable)
-	return Map(it, fn)
+	return Map(it, fun)
 
 
 Range
@@ -97,8 +97,8 @@ Range
 RangeIter
 	RangeIter Range Int
 
-to (from, to): Range(from, to)
-range (from, to): Range(from, to)
+fn to (from, to): Range(from, to)
+fn range (from, to): Range(from, to)
 
 inst IntoIter Range
 	into-iter (self)
@@ -121,19 +121,20 @@ inst Iter RangeIter
 				return x
 
 
-for-each (iterable, fn)
+fn for-each (iterable, fun)
 	it = into-iter(iterable)
 	while True
 		case next(&it)
 			None
 				return
 			Just(x)
-				_ = fn(x)
+				_ = fun(x)
 
-addn(m)
-	add(x)
+fn addn(m)
+	fn add(x)
 		return x + m
 	return add
 
-_ = 1 to (10) map(addn(1)) map(addn(3)) for-each(println)
-# _ = for-each(map(map(range(1, 10), add1), add1), println)
+1 to (10) map(addn(1)) map(addn(3)) for-each(println)
+x = 420
+println('cock \(x) bruh')

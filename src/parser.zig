@@ -333,7 +333,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             const expr = if (!self.isEndStmt())
                 try self.expression()
             else bb: {
-                const t = (try self.defined(.Unit)).t;
+                const t = try self.definedType(.Unit);
                 const con = &self.typeContext.getType(t).Con.type.cons[0]; // WARNING: funny casts
                 break :bb try self.allocExpr(.{
                     .t = t,
@@ -346,6 +346,14 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             try self.endStmt();
             break :b .{ .Return = expr };
         } // return
+        else if (self.check(.FN)) {
+            const v = try self.expect(.IDENTIFIER);
+            try self.devour(.LEFT_PAREN);
+            const funptr = try self.newFunction(v);
+            const fun = try self.function(funptr);
+            const fndec = AST.Stmt{ .Function = fun };
+            break :b fndec;
+        } // function
         else if (self.consume(.IDENTIFIER)) |v| {
             // here, choose between identifier and call
             if (self.check(.EQUALS)) {
@@ -377,7 +385,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
                 var innerTy = vv.t;
                 for (0..refs) |_| {
-                    const ptr = try self.defined(.Ptr);
+                    const ptr = (try self.defined(.Ptr)).dataInst;
 
                     try self.typeContext.unify(innerTy, ptr.t);
                     innerTy = ptr.tyArgs[0];
@@ -396,18 +404,14 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                     .refs = refs,
                     .varValue = e,
                 } };
-            } else if (self.check(.LEFT_PAREN)) {
-                // parse call
-                // SIKE
-                // right now, parse function
-                const funptr = try self.newFunction(v);
-                const fun = try self.function(funptr);
-                const fndec = AST.Stmt{ .Function = fun };
-                break :b fndec;
-            } else {
-                return self.err(*AST.Stmt, "Expect statement.", .{});
+            } // mutation
+            else {
+                // try parsing expression yo as a variable n shiii
+                const vv = try self.instantiateVar(v);
+                const e = try self.increasingPrecedenceExpression(try self.allocExpr(.{ .t = vv.t, .e = .{ .Var = .{ .v = vv.v, .match = vv.m } } }), 0);
+                break :b .{ .Expr = e };
             }
-        } // var or mut or function
+        } // var or mut
         else if (self.check(.UNDERSCORE)) {
             try self.devour(.EQUALS);
             const e = try self.expression();
@@ -420,7 +424,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         } // type
         else if (self.check(.IF)) {
             const cond = try self.expression();
-            try self.typeContext.unify(cond.t, (try self.defined(.Bool)).t);
+            try self.typeContext.unify(cond.t, try self.definedType(.Bool));
             const bTrue = try self.body();
 
             var elifs = std.ArrayList(AST.Stmt.Elif).init(self.arena);
@@ -621,7 +625,13 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             break :b null;
         } // external function
         else {
-            return self.err(*AST.Stmt, "Expect statement.", .{});
+            // this is kinda funny now, but try to parse an expression in this case.
+            const e = try self.expression();
+            try self.endStmt();
+            break :b .{
+                .Expr = e,
+            };
+            // return self.err(*AST.Stmt, "Expect statement.", .{});
         }
 
         // (if we forget to return an expression, this should catch it)
@@ -876,7 +886,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
         }
 
         if (binop == .Deref) {
-            const ptr = try self.defined(.Ptr);
+            const ptr = (try self.defined(.Ptr)).dataInst;
             try self.typeContext.unify(ptr.t, left.t);
             return self.allocExpr(.{
                 .t = ptr.tyArgs[0],
@@ -905,7 +915,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .GreaterEqualThan,
             .LessEqualThan,
             => b: {
-                const intTy = (try self.defined(.Int)).t;
+                const intTy = try self.definedType(.Int);
                 try self.typeContext.unify(left.t, intTy);
                 try self.typeContext.unify(right.t, intTy);
                 const boolTy = try self.definedType(.Bool);
@@ -933,7 +943,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     // If *nothing* has been parsed, you may get a reference.
     if (minPrec == 0 and self.check(.REF)) {
         const n = try self.expression();
-        const ptr = try self.defined(.Ptr);
+        const ptr = (try self.defined(.Ptr)).dataInst;
         try self.typeContext.unify(ptr.tyArgs[0], n.t);
         return self.allocExpr(.{
             .e = .{ .UnOp = .{ .op = .Ref, .e = n } },
@@ -982,26 +992,110 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     }
 }
 
-fn stringLiteral(self: *Self, s: Token) !*AST.Expr {
-    const og = s.literal(self.lexer.source); // this includes single quotes
-    const lit = b: {
+// TODO: handle errors in literals
+fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
+    const og = st.literal(self.lexer.source); // this includes single quotes
+    var e: ?*AST.Expr = null;
+    var s = std.ArrayList(u8).init(self.arena);
+    var i: usize = 1;
+    var last: usize = i;
+    while (i < og.len - 1) {
+        const ci = i;
+        const c = og[ci];
+        if (c == '\\') {
+            i += 2;
+            switch (og[i - 1]) {
+                '(' => {
+                    const start = i;
+                    while (og[i] != ')') i += 1;
+                    const end = i;
+                    i += 1;
 
-        // funny hack which uses Zig's literal parsing.
-        const qs = try self.arena.dupe(u8, og);
-        qs[0] = '"';
-        qs[qs.len - 1] = '"';
+                    if (last != ci) {
+                        const se = try self.allocExpr(.{
+                            .e = .{
+                                .Str = try s.toOwnedSlice(),
+                            },
+                            .t = try self.definedType(.ConstStr),
+                        });
+                        if (e) |ee| {
+                            e = try self.strConcat(
+                                ee,
+                                se,
+                            );
+                        } else {
+                            e = se;
+                        }
+                    }
 
-        const ss = std.zig.string_literal.parseAlloc(self.arena, qs) catch |er| switch (er) {
-            error.InvalidLiteral => unreachable,
-            error.OutOfMemory => return error.OutOfMemory,
-        };
+                    const v = try self.instantiateVar(.{ .from = st.from + start, .to = st.from + end, .type = .IDENTIFIER });
 
-        break :b ss;
-    };
+                    const ve = try self.allocExpr(.{
+                        .e = .{ .Var = .{
+                            .v = v.v,
+                            .match = v.m,
+                        } },
+                        .t = v.t,
+                    });
 
+                    if (e) |ee| {
+                        e = try self.strConcat(ee, ve);
+                    } else {
+                        e = ve;
+                    }
+                    last = i;
+                },
+                't' => try s.append('\t'),
+                'n' => try s.append('\n'),
+                '\\' => try s.append('\\'),
+                else => unreachable, // TODO handle errors
+            }
+        } else {
+            try s.append(c);
+            i += 1;
+        }
+    }
+
+    if (last != i) {
+        const se = try self.allocExpr(.{
+            .e = .{
+                .Str = try s.toOwnedSlice(),
+            },
+            .t = try self.definedType(.ConstStr),
+        });
+        if (e) |ee| {
+            e = try self.strConcat(
+                ee,
+                se,
+            );
+        } else {
+            e = se;
+        }
+    }
+    return e orelse self.allocExpr(.{ .e = .{ .Str = &.{} }, .t = try self.definedType(.ConstStr) });
+}
+
+fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
+    const sc = try self.defined(.StrConcat);
+    const sci = sc.dataInst;
+    try self.typeContext.unify(sci.tyArgs[0], l.t);
+    try self.typeContext.unify(sci.tyArgs[1], r.t);
+    const args = try self.arena.alloc(*AST.Expr, 2);
+    args[0] = l;
+    args[1] = r;
     return self.allocExpr(.{
-        .t = try self.definedType(.ConstStr),
-        .e = .{ .Str = .{ .lit = lit, .og = og[1 .. og.len - 1] } },
+        .t = sci.t,
+        .e = .{ .Call = .{
+            .callee = try self.allocExpr(.{
+                .t = try self.typeContext.newType(.{ .Fun = .{
+                    .ret = sci.t,
+                    .args = sci.tyArgs,
+                    .env = try self.typeContext.newEnv(&.{}),
+                } }),
+                .e = .{ .Con = &sc.data.cons[0] },
+            }),
+            .args = args,
+        } },
     });
 }
 
@@ -2095,10 +2189,13 @@ fn getReturnType(self: *Self) !AST.Type {
 }
 
 fn definedType(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
-    return (try self.defined(predefinedType)).t;
+    return (try self.defined(predefinedType)).dataInst.t;
 }
 
-fn defined(self: *Self, predefinedType: Prelude.PremadeType) !DataInst {
+fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
+    dataInst: DataInst,
+    data: *AST.Data,
+} {
     return if (self.prelude) |_|
         // prelude.defined(predefinedType) // TODO: will have to rewrite that bruh.
         unreachable
@@ -2108,7 +2205,10 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !DataInst {
             .Class => |_| break :b error.PreludeError,
         };
 
-        return try self.instantiateData(data);
+        return .{
+            .dataInst = try self.instantiateData(data),
+            .data = data,
+        };
     };
 }
 

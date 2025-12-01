@@ -33,3 +33,8 @@ Right now, I'll only do 1.
 right now, all structs are ABI compatible with C, since I need it for external functions. I don't actually want it for structs that do not interact with external stuff, because I can rearrange struct members for best alignment and reduce redundant nested enums.
 
 This is obviously incorrect when it comes to functions with environments.
+
+
+# Temporary `fn` keyword
+
+actually, parsing functions vs variables has gotten a bit complicated. For now, I'll introduce a keyword for functions to make parsing easier. I still want to make it like it was before, but I'll have to think about maybe saving lexing state? I want to make this language work as soon as possible, so I'll handle other shit later.

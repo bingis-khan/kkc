@@ -51,6 +51,8 @@ pub const TokenType = enum {
 
     CASE,
 
+    FN,
+
     // class
     CLASS,
     INST,

@@ -328,6 +328,7 @@ pub const Decon = struct {
                     c.encloseSepBy(con.decons, ", ", "(", ")");
                 }
             },
+            .None => c.s("_"),
         }
 
         c.typed(self.t);
@@ -344,7 +345,7 @@ pub const Expr = struct {
         Var: struct { v: VarType, match: *Match(Type) }, // NOTE: Match is owned here!
         Con: *Con,
         Int: i64, // obv temporary.
-        Str: struct { lit: Str, og: Str },
+        Str: Str,
     },
 
     pub const VarType = union(enum) {
@@ -390,7 +391,7 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
-            .Str => |s| c.sp("'{s}'", .{s.og}),
+            .Str => |s| c.sp("'{s}'", .{s}), // TODO: escape
             .BinOp => |bop| {
                 c.s("(");
                 bop.l.print(c);

@@ -269,7 +269,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             }
         },
         .Str => |slit| {
-            const s: *anyopaque = @ptrCast(try self.evaluateString(slit.lit));
+            const s: *anyopaque = @ptrCast(try self.evaluateString(slit));
             return try self.initValue(Value{
                 .data = .{ .extptr = s },
                 .header = .{ .functionType = .None, .ogPtr = null },
