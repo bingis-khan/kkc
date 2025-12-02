@@ -1,4 +1,4 @@
-
+use Cock
 
 class Str
 	print-str (self _)
@@ -108,3 +108,5 @@ fn addn(m)
 x = 420
 println('x\(x)x')
 println(test-function-with-env-in-prelude())
+
+Cock.cock()

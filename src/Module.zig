@@ -30,9 +30,8 @@ pub const Path = []Str;
 ast: ast,
 exports: Exports,
 
-pub fn lookupVar(varName: Str) ?VarOrFun {
-    _ = varName;
-    unreachable;
+pub fn lookupVar(self: *const Self, varName: Str) ?VarOrFun {
+    return self.exports.vars.get(varName);
 }
 
 pub fn lookupCon(conName: Str) ?*ast.Con {

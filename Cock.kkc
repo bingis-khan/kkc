@@ -1,0 +1,3 @@
+fn cock()
+	printf0('COCK!!!!\n')
+	return

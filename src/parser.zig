@@ -17,6 +17,7 @@ const TypeContext = @import("TypeContext.zig");
 const Prelude = @import("Prelude.zig");
 const Set = @import("Set.zig").Set;
 const Module = @import("Module.zig");
+const Modules = @import("Modules.zig");
 
 // fuck it. let's do it one pass.
 arena: std.mem.Allocator,
@@ -30,6 +31,7 @@ currentToken: Token,
 // resolver zone
 gen: Gen,
 scope: Scope,
+base: Module.Path,
 
 // type zone
 typeContext: *TypeContext,
@@ -37,6 +39,8 @@ prelude: ?Prelude,
 returnType: ?AST.Type,
 selfType: ?AST.Type, // this is used in class and instance context. Whenever it's defined, the user is able to reference the instance type by '_'. In nested instances, obviously points to the innermost one.
 associations: std.ArrayList(Association),
+modules: *Modules,
+importedModules: Modules.ModuleLookup,
 
 const Gen = struct {
     vars: UniqueGen,
@@ -54,7 +58,7 @@ const Gen = struct {
     }
 };
 const Self = @This();
-pub fn init(l: Lexer, prelude: ?Prelude, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
+pub fn init(l: Lexer, prelude: ?Prelude, base: Module.Path, modules: *Modules, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
     var parser = Self{
         .arena = arena,
         .errors = errors, // TODO: use GPA
@@ -66,6 +70,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, errors: *Errors, context: *TypeContext,
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
         .gen = Gen.init(),
+        .base = base,
 
         // typeshit
         .typeContext = context,
@@ -74,6 +79,9 @@ pub fn init(l: Lexer, prelude: ?Prelude, errors: *Errors, context: *TypeContext,
         .prelude = prelude,
 
         .associations = std.ArrayList(Association).init(arena),
+
+        .modules = modules,
+        .importedModules = Modules.ModuleLookup.init(arena),
     };
 
     parser.currentToken = parser.lexer.nextToken();
@@ -361,8 +369,8 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
             try self.endStmt();
 
-            // try self.loadModuleFromPath(modpath.items);
-            unreachable;
+            _ = try self.loadModuleFromPath(modpath.items);
+            break :b null;
         } // use
         else if (self.check(.FN)) {
             const v = try self.expect(.IDENTIFIER);
@@ -389,7 +397,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 var refs: usize = 0;
                 while (self.check(.REF)) refs += 1;
 
-                const vtsc = try self.lookupVar(v);
+                const vtsc = try self.lookupVar(&.{}, v);
                 try self.devour(.EQUALS);
                 const e = try self.expression();
 
@@ -425,7 +433,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             } // mutation
             else {
                 // try parsing expression yo as a variable n shiii
-                const vv = try self.instantiateVar(v);
+                const vv = try self.instantiateVar(&.{}, v);
                 const e = try self.increasingPrecedenceExpression(try self.allocExpr(.{ .t = vv.t, .e = .{ .Var = .{ .v = vv.v, .match = vv.m } } }), 0);
                 break :b .{ .Expr = e };
             }
@@ -437,8 +445,15 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             break :b .{ .Expr = e };
         } // assignment to nothing
         else if (self.consume(.TYPE)) |typename| {
-            try self.dataDef(typename);
-            break :b null;
+            if (self.check(.DOT)) {
+                const qe = try self.qualified(typename);
+                const e = try self.increasingPrecedenceExpression(qe, 0);
+                break :b .{ .Expr = e };
+            } else {
+                // TODO: parse non-qualified postfix expression calls.
+                try self.dataDef(typename);
+                break :b null;
+            }
         } // type
         else if (self.check(.IF)) {
             const cond = try self.expression();
@@ -752,7 +767,26 @@ fn deconstruction(self: *Self) !*AST.Decon {
         };
     } // ignore var
     else if (self.consume(.TYPE)) |cn| b: {
-        const con = try self.instantiateCon(cn);
+        const con = bb: {
+            if (self.check(.DOT)) {
+                var modpath = std.ArrayList(Str).init(self.arena);
+                try modpath.append(cn.literal(self.lexer.source));
+                loop: while (true) {
+                    if (self.consume(.TYPE)) |tn| {
+                        if (self.check(.DOT)) {
+                            try modpath.append(tn.literal(self.lexer.source));
+                            continue :loop;
+                        } else {
+                            break :bb try self.instantiateCon(modpath.items, tn);
+                        }
+                    } else {
+                        unreachable; // TODO
+                    }
+                }
+            } else {
+                break :bb try self.instantiateCon(&.{}, cn);
+            }
+        };
         var decons: []*AST.Decon = &.{};
         var args: []AST.Type = &.{};
         if (self.check(.LEFT_PAREN)) {
@@ -885,7 +919,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 },
             });
 
-            const funts = try self.instantiateVar(optok);
+            const funts = try self.instantiateVar(&.{}, optok);
             try self.typeContext.unify(callType, funts.t);
 
             return self.allocExpr(.{
@@ -971,14 +1005,19 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
     if (self.consume(.IDENTIFIER)) |v| {
-        const dv = try self.instantiateVar(v);
+        const dv = try self.instantiateVar(&.{}, v);
         return self.allocExpr(.{
             .t = dv.t,
             .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
         });
     } // var
     else if (self.consume(.TYPE)) |con| {
-        const ct = try self.instantiateCon(con);
+        if (self.check(.DOT)) {
+            return try self.qualified(con);
+        }
+
+        // COPYPASTA (BAD)
+        const ct = try self.instantiateCon(&.{}, con);
         const t = if (ct.tys.len == 0) ct.t else try self.typeContext.newType(.{
             .Fun = .{
                 .args = ct.tys,
@@ -1007,6 +1046,41 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     } // grouping
     else {
         return self.err(*AST.Expr, "Unexpected term", .{});
+    }
+}
+
+fn qualified(self: *Self, firstMod: Token) !*AST.Expr {
+    var modpath = std.ArrayList(Str).init(self.arena);
+    try modpath.append(firstMod.literal(self.lexer.source));
+
+    loop: while (true) {
+        if (self.consume(.TYPE)) |possibleCon| {
+            if (self.check(.DOT)) {
+                try modpath.append(possibleCon.literal(self.lexer.source));
+                continue :loop;
+            }
+
+            const ct = try self.instantiateCon(modpath.items, possibleCon);
+            const t = if (ct.tys.len == 0) ct.t else try self.typeContext.newType(.{
+                .Fun = .{
+                    .args = ct.tys,
+                    .ret = ct.t,
+                    .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
+                },
+            });
+            return self.allocExpr(.{
+                .e = .{ .Con = ct.con },
+                .t = t,
+            });
+        } else if (self.consume(.IDENTIFIER)) |v| {
+            const dv = try self.instantiateVar(modpath.items, v);
+            return self.allocExpr(.{
+                .t = dv.t,
+                .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+            });
+        } else {
+            return self.err(*AST.Expr, "Unfinished module shit.\n", .{});
+        }
     }
 }
 
@@ -1046,7 +1120,7 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                         }
                     }
 
-                    const v = try self.instantiateVar(.{ .from = st.from + start, .to = st.from + end, .type = .IDENTIFIER });
+                    const v = try self.instantiateVar(&.{}, .{ .from = st.from + start, .to = st.from + end, .type = .IDENTIFIER });
 
                     const ve = try self.allocExpr(.{
                         .e = .{ .Var = .{
@@ -1278,6 +1352,12 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
 }
 
 // resolver zone
+fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
+    const mmod = try self.modules.loadModule(self.base, path);
+    try self.importedModules.put(path, mmod);
+    return mmod;
+}
+
 // VARS
 fn newVar(self: *@This(), varTok: Token) !Module.VarAndType {
     const varName = varTok.literal(self.lexer.source);
@@ -1302,46 +1382,67 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
     return funPtr;
 }
 
-fn lookupVar(self: *Self, varTok: Token) !struct {
+fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
     vorf: Module.VarOrFun,
     sc: ?*CurrentScope,
 } {
     const varName = varTok.literal(self.lexer.source);
-    var lastVars = self.scope.scopes.iterateFromTop();
-    while (lastVars.nextPtr()) |cursc| {
-        if (cursc.vars.get(varName)) |vorf| {
-            return .{ .vorf = vorf, .sc = cursc };
+    if (modpath.len == 0) {
+        var lastVars = self.scope.scopes.iterateFromTop();
+        while (lastVars.nextPtr()) |cursc| {
+            if (cursc.vars.get(varName)) |vorf| {
+                return .{ .vorf = vorf, .sc = cursc };
+            }
         }
     } else {
-        const placeholderVar = AST.Var{
-            .name = varName,
-            .uid = self.gen.vars.newUnique(),
-        };
-        try self.errors.append(.{
-            .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
-                .from = varTok.from,
-                .to = varTok.to,
-                .source = self.lexer.source,
-            } },
-        });
-        const t = try self.typeContext.fresh();
-
-        // return placeholder var after an error.
-        return .{
-            .vorf = .{
-                .Var = .{ .v = placeholderVar, .t = t },
-            },
-            .sc = null,
-        };
+        if (self.importedModules.get(modpath)) |mmod| {
+            if (mmod) |mod| {
+                if (mod.lookupVar(varName)) |vorf| {
+                    return .{
+                        .vorf = vorf,
+                        .sc = null,
+                    };
+                } else {
+                    // FALLTHROUGH.
+                    // TODO: set source module to be of that found module.
+                }
+            } else {
+                // i dunno, probably some other error. Ignore ig?
+                unreachable; // TEMP. I JUST NEED TO SEE WHEN THAT HAPPENS.
+            }
+        } else {
+            try self.errors.append(.{ .UnimportedModule = .{} });
+        }
     }
+
+    const placeholderVar = AST.Var{
+        .name = varName,
+        .uid = self.gen.vars.newUnique(),
+    };
+    try self.errors.append(.{
+        .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
+            .from = varTok.from,
+            .to = varTok.to,
+            .source = self.lexer.source,
+        } },
+    });
+    const t = try self.typeContext.fresh();
+
+    // return placeholder var after an error.
+    return .{
+        .vorf = .{
+            .Var = .{ .v = placeholderVar, .t = t },
+        },
+        .sc = null,
+    };
 }
 
-fn instantiateVar(self: *@This(), varTok: Token) !struct {
+fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
     v: AST.Expr.VarType,
     t: AST.Type,
     m: *AST.Match(AST.Type),
 } {
-    const vorfAndScope = try self.lookupVar(varTok);
+    const vorfAndScope = try self.lookupVar(modpath, varTok);
     const vorf = vorfAndScope.vorf;
     const cursc = vorfAndScope.sc;
     const varInst: AST.VarInst = switch (vorf) {
@@ -1687,11 +1788,12 @@ fn newCon(self: *@This(), con: *AST.Con) !void {
     try self.scope.currentScope().cons.put(con.name, con);
 }
 
-fn instantiateCon(self: *@This(), conTok: Token) !struct {
+fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
     con: *AST.Con,
     t: AST.Type,
     tys: []AST.Type,
 } {
+    _ = modpath;
     const conName = conTok.literal(self.lexer.source);
     var lastVars = self.scope.scopes.iterateFromTop();
     while (lastVars.next()) |cursc| {
@@ -2260,4 +2362,9 @@ fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !
 fn sync_to_next_toplevel() void {}
 
 const ParseError = error{ParseError};
-const ParserError = error{ ParseError, PreludeError, OutOfMemory }; // full error set when it cannot be inferred.
+const ParserError = error{
+    ParseError,
+    PreludeError,
+    OutOfMemory,
+    TempError,
+}; // full error set when it cannot be inferred.

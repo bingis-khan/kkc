@@ -10,7 +10,7 @@ const Prelude = @import("Prelude.zig");
 const TypeContext = @import("TypeContext.zig");
 
 const Self = @This();
-const ModuleLookup = std.HashMap(Module.Path, ?Module, struct {
+pub const ModuleLookup = std.HashMap(Module.Path, ?Module, struct {
     pub fn eql(ctx: @This(), a: Module.Path, b: Module.Path) bool {
         _ = ctx;
 
@@ -92,8 +92,10 @@ pub fn loadModule(self: *Self, base: Module.Path, path: Module.Path) !?Module {
         return module.?;
     }
 
+    try self.modules.put(fullPath, null);
+
     const filepath = try self.modulePathToFilepath(base, path);
-    const source = try std.fs.cwd().readFileAlloc(self.al, filepath, 1337420);
+    const source = std.fs.cwd().readFileAlloc(self.al, filepath, 1337420) catch return error.TempError; // TODO: proper errors.
 
     const lexer = Lexer.init(source);
     var l = lexer;
@@ -102,19 +104,12 @@ pub fn loadModule(self: *Self, base: Module.Path, path: Module.Path) !?Module {
         std.debug.print("{}\n", .{tok});
     }
 
-    var parser = try Parser.init(lexer, self.prelude, self.errors, self.typeContext, self.al);
+    var parser = try Parser.init(lexer, self.prelude, base, self, self.errors, self.typeContext, self.al);
     for (self.defaultExports.items) |xports| {
         try parser.addExports(&xports);
     }
     const module = try parser.parse();
     try self.full.append(module.ast);
-
-    var fakeNewline: bool = undefined;
-    const fakeHackCtx = ast.Ctx.init(&fakeNewline, self.typeContext);
-    fakeNewline = false; // SIKE (but obv. temporary)
-    for (self.errors.items) |err| {
-        err.print(fakeHackCtx);
-    }
 
     var hadNewline: bool = undefined;
     const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
@@ -132,12 +127,12 @@ fn modulePathToFilepath(self: *const Self, base: Module.Path, path: Module.Path)
     // TODO: i don't feel like making an iterator in stack :)
     for (base) |p| {
         try sb.appendSlice(p);
-        try sb.append('.');
+        try sb.append('/');
     }
 
     try sb.appendSlice(path[0]);
     for (path[1..path.len]) |p| {
-        try sb.append('.');
+        try sb.append('/');
         try sb.appendSlice(p);
     }
 

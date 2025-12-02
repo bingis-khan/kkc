@@ -32,6 +32,13 @@ pub fn main() !void {
     _ = try modules.loadDefault("test");
     const fullAST = modules.getAST();
 
+    var fakeNewline: bool = undefined;
+    const fakeHackCtx = ast.Ctx.init(&fakeNewline, &typeContext);
+    fakeNewline = false; // SIKE (but obv. temporary)
+    for (errors.items) |err| {
+        err.print(fakeHackCtx);
+    }
+
     // go and interpret
     if (errors.items.len == 0) {
         const ret = try Interpreter.run(fullAST, prelude, &typeContext, aa);
