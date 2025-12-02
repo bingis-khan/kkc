@@ -148,7 +148,7 @@ fn scopeToExports(self: *Self) Module.Exports {
     };
 }
 
-fn dataDef(self: *Self, typename: Token) !void {
+fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
     const uid = self.gen.types.newUnique();
     self.scope.beginScope(null);
     const data = b: {
@@ -156,6 +156,10 @@ fn dataDef(self: *Self, typename: Token) !void {
 
         // tvars
         var tvars = std.ArrayList(AST.TVar).init(self.arena);
+        if (extraTVar) |tvname| {
+            const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
+            try tvars.append(tv);
+        }
         while (self.consume(.IDENTIFIER)) |tvname| {
             const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
             try tvars.append(tv);
@@ -434,7 +438,8 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             else {
                 // try parsing expression yo as a variable n shiii
                 const vv = try self.instantiateVar(&.{}, v);
-                const e = try self.increasingPrecedenceExpression(try self.allocExpr(.{ .t = vv.t, .e = .{ .Var = .{ .v = vv.v, .match = vv.m } } }), 0);
+                const e = try self.finishExpression(try self.allocExpr(.{ .t = vv.t, .e = .{ .Var = .{ .v = vv.v, .match = vv.m } } }));
+                try self.endStmt();
                 break :b .{ .Expr = e };
             }
         } // var or mut
@@ -445,15 +450,41 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             break :b .{ .Expr = e };
         } // assignment to nothing
         else if (self.consume(.TYPE)) |typename| {
-            if (self.check(.DOT)) {
-                const qe = try self.qualified(typename);
-                const e = try self.increasingPrecedenceExpression(qe, 0);
-                break :b .{ .Expr = e };
-            } else {
-                // TODO: parse non-qualified postfix expression calls.
-                try self.dataDef(typename);
-                break :b null;
-            }
+            const maybeExpr: ?AST.Stmt = funny: {
+                if (self.check(.DOT)) {
+                    const qe = try self.qualified(typename);
+                    const e = try self.finishExpression(qe);
+                    break :funny .{ .Expr = e };
+                }
+
+                // can be a tvar or a postfix call.
+                if (self.consume(.IDENTIFIER)) |mtv| {
+                    if (self.peek().type == .LEFT_PAREN) {
+                        // postfix call.
+                        unreachable;
+                    }
+
+                    try self.dataDef(typename, mtv);
+                    break :funny null;
+                }
+
+                // BRITTLE AS HELL.
+                if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP) {
+                    // TODO: parse non-qualified postfix expression alls.
+                    try self.dataDef(typename, null);
+                    break :funny null;
+                }
+
+                // actually, this is probably an expression, so parse it as one.
+                const ce = try self.constructorExpression(&.{}, typename);
+                const e = try self.finishExpression(ce);
+                break :funny .{ .Expr = e };
+            };
+
+            // NOTE: Experimental shit.
+            // It seems that if I'm parsing a real expression (so not null), I always terminate the statement. I might do the same thing for all cases, because I happen to forget them sometimes.
+            if (maybeExpr != null) try self.endStmt();
+            break :b maybeExpr;
         } // type
         else if (self.check(.IF)) {
             const cond = try self.expression();
@@ -842,6 +873,19 @@ fn precedenceExpression(self: *Self, minPrec: u32) ParserError!*AST.Expr {
     return left;
 }
 
+fn finishExpression(self: *Self, leftmost: *AST.Expr) ParserError!*AST.Expr {
+    var left = leftmost;
+
+    while (true) {
+        const node = try self.increasingPrecedenceExpression(left, 0);
+        if (node == left) break;
+
+        left = node;
+    }
+
+    return left;
+}
+
 fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*AST.Expr {
     const optok = self.peek();
     const binop = getBinOp(self.peek()) orelse return left;
@@ -1016,19 +1060,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             return try self.qualified(con);
         }
 
-        // COPYPASTA (BAD)
-        const ct = try self.instantiateCon(&.{}, con);
-        const t = if (ct.tys.len == 0) ct.t else try self.typeContext.newType(.{
-            .Fun = .{
-                .args = ct.tys,
-                .ret = ct.t,
-                .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
-            },
-        });
-        return self.allocExpr(.{
-            .e = .{ .Con = ct.con },
-            .t = t,
-        });
+        return try self.constructorExpression(&.{}, con);
     } // con
     else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
@@ -1060,18 +1092,7 @@ fn qualified(self: *Self, firstMod: Token) !*AST.Expr {
                 continue :loop;
             }
 
-            const ct = try self.instantiateCon(modpath.items, possibleCon);
-            const t = if (ct.tys.len == 0) ct.t else try self.typeContext.newType(.{
-                .Fun = .{
-                    .args = ct.tys,
-                    .ret = ct.t,
-                    .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
-                },
-            });
-            return self.allocExpr(.{
-                .e = .{ .Con = ct.con },
-                .t = t,
-            });
+            return try self.constructorExpression(modpath.items, possibleCon);
         } else if (self.consume(.IDENTIFIER)) |v| {
             const dv = try self.instantiateVar(modpath.items, v);
             return self.allocExpr(.{
@@ -1082,6 +1103,22 @@ fn qualified(self: *Self, firstMod: Token) !*AST.Expr {
             return self.err(*AST.Expr, "Unfinished module shit.\n", .{});
         }
     }
+}
+
+// properly instantiates a constructor expression. (remembers function types n shit)
+fn constructorExpression(self: *Self, modpath: Module.Path, name: Token) !*AST.Expr {
+    const ct = try self.instantiateCon(modpath, name);
+    const t = if (ct.tys.len == 0) ct.t else try self.typeContext.newType(.{
+        .Fun = .{
+            .args = ct.tys,
+            .ret = ct.t,
+            .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
+        },
+    });
+    return self.allocExpr(.{
+        .e = .{ .Con = ct.con },
+        .t = t,
+    });
 }
 
 // TODO: handle errors in literals

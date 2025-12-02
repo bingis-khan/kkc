@@ -110,3 +110,23 @@ println('x\(x)x')
 println(test-function-with-env-in-prelude())
 
 Cock.cock()
+
+fn unpack (mx)
+	case mx
+		Just(x)
+			println('JUST!!! \(x)')
+
+		None
+			println('NONE!!!')
+
+	return
+
+
+fn mapMaybe (x, fun)
+	case x
+		Just(xx)
+			return Just(fun(xx))
+		None
+			return None
+
+Just(123123) mapMaybe(addn(429)) unpack()
