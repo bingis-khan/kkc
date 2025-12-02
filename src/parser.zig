@@ -458,10 +458,17 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 }
 
                 // can be a tvar or a postfix call.
+                const lexstate = self.lexer;
+                const curtok = self.currentToken;
                 if (self.consume(.IDENTIFIER)) |mtv| {
                     if (self.peek().type == .LEFT_PAREN) {
                         // postfix call.
-                        unreachable;
+                        self.lexer = lexstate; // AHH AHSDH FUCK I DID IT, NO!!
+                        self.currentToken = curtok;
+                        // ITS OBVIOUS I SHOULD USE A `data` KEYWORD OR SOMETHING LIKE THIS BRUHHHH.
+                        // BUT MUH QT SYNTAX :OOOOOOOO
+                        const ce = try self.constructorExpression(&.{}, typename);
+                        break :funny .{ .Expr = try self.finishExpression(ce) };
                     }
 
                     try self.dataDef(typename, mtv);

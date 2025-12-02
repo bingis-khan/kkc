@@ -130,3 +130,4 @@ fn mapMaybe (x, fun)
 			return None
 
 Just(123123) mapMaybe(addn(429)) unpack()
+None unpack()
