@@ -3,9 +3,10 @@ const Token = token.Token;
 const TokenType = token.TokenType;
 const std = @import("std");
 const Common = @import("common.zig");
+const Str = Common.Str;
 const stack = @import("stack.zig");
 pub const Lexer = struct {
-    source: []u8,
+    source: Str,
     indentStack: IndentStack,
 
     currentIndex: usize,
@@ -17,7 +18,7 @@ pub const Lexer = struct {
     const IndentStack = stack.Fixed(usize, Common.MaxIndent);
     const Self = @This();
 
-    pub fn init(src: []u8) Self {
+    pub fn init(src: Str) Self {
         var self = Self{
             .source = src,
             .currentIndex = 0,
@@ -183,7 +184,7 @@ pub const Lexer = struct {
         return Token{ .type = tt, .from = from, .to = to };
     }
 
-    fn scanned(self: Self, from: usize) []u8 {
+    fn scanned(self: Self, from: usize) Str {
         return self.source[from..self.currentIndex];
     }
 

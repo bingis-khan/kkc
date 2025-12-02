@@ -31,7 +31,7 @@ currentToken: Token,
 // resolver zone
 gen: Gen,
 scope: Scope,
-base: Module.Path,
+base: Module.BasePath,
 
 // type zone
 typeContext: *TypeContext,
@@ -40,7 +40,9 @@ returnType: ?AST.Type,
 selfType: ?AST.Type, // this is used in class and instance context. Whenever it's defined, the user is able to reference the instance type by '_'. In nested instances, obviously points to the innermost one.
 associations: std.ArrayList(Association),
 modules: *Modules,
-importedModules: Modules.ModuleLookup,
+importedModules: Imports,
+
+const Imports = std.HashMap(Module.Path, ?Module, Module.PathCtx, std.hash_map.default_max_load_percentage);
 
 const Gen = struct {
     vars: UniqueGen,
@@ -58,7 +60,7 @@ const Gen = struct {
     }
 };
 const Self = @This();
-pub fn init(l: Lexer, prelude: ?Prelude, base: Module.Path, modules: *Modules, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
+pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, modules: *Modules, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
     var parser = Self{
         .arena = arena,
         .errors = errors, // TODO: use GPA
@@ -81,7 +83,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.Path, modules: *Modules, e
         .associations = std.ArrayList(Association).init(arena),
 
         .modules = modules,
-        .importedModules = Modules.ModuleLookup.init(arena),
+        .importedModules = Imports.init(arena),
     };
 
     parser.currentToken = parser.lexer.nextToken();
@@ -1397,7 +1399,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
 
 // resolver zone
 fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
-    const mmod = try self.modules.loadModule(self.base, path);
+    const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } });
     try self.importedModules.put(path, mmod);
     return mmod;
 }

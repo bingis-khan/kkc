@@ -9,6 +9,13 @@ const Modules = @import("Modules.zig");
 const TypeContext = @import("TypeContext.zig");
 
 pub fn main() !void {
+    var args = std.process.args();
+    _ = args.skip(); // skip process name
+    const filename = args.next() orelse {
+        std.debug.print("Expect filename\n", .{});
+        return;
+    };
+    std.debug.print("{s}\n", .{filename});
     // SETUP
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const al = gpa.allocator();
@@ -25,11 +32,11 @@ pub fn main() !void {
     // -|| MODULES ||-
     var errors = Errors.init(aa);
     var typeContext = try TypeContext.init(aa, &errors);
-    var modules = Modules.init(aa, &errors, &typeContext);
-    const prelude = try modules.loadPrelude("prelude");
+    var modules = Modules.init(aa, &errors, &typeContext, "");
+    const prelude = try modules.loadPrelude("prelude.kkc");
     // TODO: load "converged" with default exports.
     // try modules.loadDefault("converged.kc");
-    _ = try modules.loadDefault("test");
+    _ = try modules.initialModule(filename);
     const fullAST = modules.getAST();
 
     var fakeNewline: bool = undefined;

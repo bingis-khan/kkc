@@ -10,29 +10,7 @@ const Prelude = @import("Prelude.zig");
 const TypeContext = @import("TypeContext.zig");
 
 const Self = @This();
-pub const ModuleLookup = std.HashMap(Module.Path, ?Module, struct {
-    pub fn eql(ctx: @This(), a: Module.Path, b: Module.Path) bool {
-        _ = ctx;
-
-        if (a.len != b.len) return false;
-        for (a, b) |sa, sb| {
-            if (!common.streq(sa, sb)) return false;
-        }
-
-        return true;
-    }
-
-    pub fn hash(ctx: @This(), k: Module.Path) u64 {
-        _ = ctx;
-
-        var cumhash: u64 = 1;
-        for (k) |kk| {
-            cumhash *%= std.hash_map.StringContext.hash(undefined, kk);
-        }
-
-        return cumhash;
-    }
-}, std.hash_map.default_max_load_percentage);
+pub const ModuleLookup = std.HashMap(Module.BasePath, ?Module, Module.BasePath.Ctx, std.hash_map.default_max_load_percentage);
 
 // NOTE: null means that the Module is still being parsed.
 modules: ModuleLookup,
@@ -42,8 +20,9 @@ al: std.mem.Allocator,
 defaultExports: std.ArrayList(Module.Exports), // TODO: instead of re-adding stuff for every module, save the state and COPY.
 prelude: ?Prelude,
 full: std.ArrayList(ast),
+rootPath: Str,
 
-pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext) Self {
+pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str) Self {
     return .{
         .modules = ModuleLookup.init(al),
         .errors = errors,
@@ -52,6 +31,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext) S
         .defaultExports = std.ArrayList(Module.Exports).init(al),
         .prelude = null,
         .full = std.ArrayList(ast).init(al),
+        .rootPath = root,
     };
 }
 
@@ -63,39 +43,92 @@ pub fn loadPrelude(self: *Self, path: Str) !Prelude {
 }
 
 pub fn loadDefault(self: *Self, path: Str) !Module {
-    var modpath: Module.Path = undefined;
-    modpath.len = 1;
-    modpath.ptr = @constCast(@ptrCast(&path));
-    const module = try self.loadModule(&.{}, modpath);
+    const module = try self.loadModule(.{ .ByFilename = .{
+        .isSTD = true,
+        .path = path,
+    } });
     try self.defaultExports.append(module.?.exports);
     return module.?;
 }
 
+pub fn initialModule(self: *Self, filename: Str) !Module {
+    return (try self.loadModule(.{ .ByFilename = .{ .isSTD = false, .path = filename } })).?;
+}
+
 // NOTE: this function reports errors with modules that were not found.
-pub fn loadModule(self: *Self, base: Module.Path, path: Module.Path) !?Module {
-    const fullPath = b: {
-        if (base.len == 0) break :b path;
-        if (path.len == 0) break :b base;
+// OMG I HATE THIS BRUH. IT BECAME SO COMPLICATED. FOR SOME REASON I CANT THINK ABOUT THIS STUFF??????? WTF??????
+pub fn loadModule(self: *Self, pathtype: union(enum) {
+    ByModulePath: struct { base: Module.BasePath, path: Module.Path },
+    ByFilename: struct { isSTD: bool, path: Str },
+}) !?Module {
+    var fullPath: Module.BasePath = switch (pathtype) {
+        .ByModulePath => |modpath| bb: {
+            const fullPath: Module.BasePath = b: {
+                const base = modpath.base;
+                const path = modpath.path;
+                if (base.path.len == 0) break :b .{ .isSTD = base.isSTD, .path = path };
+                if (path.len == 0) unreachable;
 
-        const pp = try self.al.alloc(Str, base.len + path.len);
-        std.mem.copyForwards(Str, pp[0..base.len], base);
-        std.mem.copyForwards(Str, pp[base.len .. base.len + path.len], path);
-        break :b pp;
+                const pp = try self.al.alloc(Str, base.path.len + path.len);
+                std.mem.copyForwards(Str, pp[0..base.path.len], base.path);
+                std.mem.copyForwards(Str, pp[base.path.len .. base.path.len + path.len], path);
+                break :b .{ .isSTD = base.isSTD, .path = pp };
+            };
+
+            if (self.modules.get(fullPath)) |module| {
+                if (module == null) {
+                    try self.errors.append(.{ .CircularModuleReference = .{} });
+                    return null;
+                }
+
+                return module.?;
+            }
+
+            try self.modules.put(fullPath, null);
+            break :bb fullPath;
+        },
+
+        .ByFilename => |filename| .{
+            .isSTD = filename.isSTD,
+            .path = &.{filename.path},
+        },
     };
+    const source = switch (pathtype) {
+        .ByModulePath => self.readSource(try self.modulePathToFilepath(fullPath)) catch |err| switch (err) {
+            error.FileNotFound => b: {
+                if (fullPath.isSTD) return error.TempError;
+                fullPath.isSTD = true;
 
-    if (self.modules.get(fullPath)) |module| {
-        if (module == null) {
-            try self.errors.append(.{ .CircularModuleReference = .{} });
-            return null;
-        }
+                if (self.modules.get(fullPath)) |module| {
+                    if (module == null) {
+                        try self.errors.append(.{ .CircularModuleReference = .{} });
+                        return null;
+                    }
 
-        return module.?;
-    }
+                    return module.?;
+                }
 
-    try self.modules.put(fullPath, null);
+                const stdSource = self.readSource(try self.modulePathToFilepath(fullPath)) catch return error.TempError;
+                break :b stdSource;
+            },
+            else => return error.TempError,
+        },
 
-    const filepath = try self.modulePathToFilepath(base, path);
-    const source = std.fs.cwd().readFileAlloc(self.al, filepath, 1337420) catch return error.TempError; // TODO: proper errors.
+        .ByFilename => |fullpath| b: {
+            var filepath = std.ArrayList(u8).init(self.al);
+            if (fullpath.isSTD) {
+                try filepath.appendSlice("std/");
+            } else {
+                if (self.rootPath.len > 0) {
+                    try filepath.appendSlice(self.rootPath);
+                    try filepath.append('/');
+                }
+            }
+            try filepath.appendSlice(fullpath.path);
+            std.debug.print("{s}\n", .{filepath.items});
+            break :b self.readSource(filepath.items) catch return error.TempError;
+        },
+    };
 
     const lexer = Lexer.init(source);
     var l = lexer;
@@ -104,12 +137,16 @@ pub fn loadModule(self: *Self, base: Module.Path, path: Module.Path) !?Module {
         std.debug.print("{}\n", .{tok});
     }
 
-    var parser = try Parser.init(lexer, self.prelude, base, self, self.errors, self.typeContext, self.al);
+    var parser = try Parser.init(lexer, self.prelude, switch (pathtype) {
+        .ByModulePath => |modpath| modpath.base,
+        .ByFilename => |filename| .{ .isSTD = filename.isSTD, .path = &.{} },
+    }, self, self.errors, self.typeContext, self.al);
     for (self.defaultExports.items) |xports| {
         try parser.addExports(&xports);
     }
     const module = try parser.parse();
     try self.full.append(module.ast);
+    try self.modules.put(fullPath, module);
 
     var hadNewline: bool = undefined;
     const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
@@ -122,20 +159,27 @@ pub fn getAST(self: *const Self) []ast {
     return self.full.items;
 }
 
-fn modulePathToFilepath(self: *const Self, base: Module.Path, path: Module.Path) !Str {
+fn readSource(self: *Self, filepath: Str) !Str {
+    const source = try std.fs.cwd().readFileAlloc(self.al, filepath, 1337420);
+    return source;
+}
+
+fn modulePathToFilepath(self: *const Self, base: Module.BasePath) !Str {
     var sb = std.ArrayList(u8).init(self.al);
+
+    if (base.isSTD) {
+        try sb.appendSlice("std/");
+    } else {
+        try sb.appendSlice(self.rootPath);
+        try sb.append('/');
+    }
+
     // TODO: i don't feel like making an iterator in stack :)
-    for (base) |p| {
+    for (base.path[0 .. base.path.len - 1]) |p| {
         try sb.appendSlice(p);
         try sb.append('/');
     }
-
-    try sb.appendSlice(path[0]);
-    for (path[1..path.len]) |p| {
-        try sb.append('/');
-        try sb.appendSlice(p);
-    }
-
+    try sb.appendSlice(base.path[base.path.len - 1]);
     try sb.appendSlice(".kkc");
 
     return sb.items;
