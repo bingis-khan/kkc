@@ -373,9 +373,90 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 try modpath.append(mod.literal(self.lexer.source));
             }
 
-            try self.endStmt();
+            const mmodule = try self.loadModuleFromPath(modpath.items);
 
-            _ = try self.loadModuleFromPath(modpath.items);
+            // IMPORT LIST YO.
+            if (self.check(.INDENT)) {
+                while (true) {
+                    if (self.consume(.IDENTIFIER)) |v| {
+                        try self.endStmt();
+                        if (mmodule) |mod| {
+                            const varName = v.literal(self.lexer.source);
+                            if (mod.lookupVar(varName)) |vv| {
+                                try self.scope.currentScope().vars.put(varName, vv);
+                            } else {
+                                try self.errors.append(.{ .ModuleDoesNotExportThing = .{} });
+                            }
+                        }
+                    } else if (self.consume(.TYPE)) |tt| {
+                        const typeName = tt.literal(self.lexer.source);
+                        const dataOrClass: ?Module.DataOrClass = bb: {
+                            if (mmodule) |mod| {
+                                const doc = mod.lookupData(typeName) orelse {
+                                    try self.errors.append(.{ .UndefinedType = .{ .typename = typeName, .loc = tt.toLocation(self.lexer.source) } });
+                                    break :bb null;
+                                };
+                                try self.scope.currentScope().types.put(typeName, doc);
+                                break :bb doc;
+                            } else {
+                                break :bb null;
+                            }
+                        };
+
+                        if (self.check(.LEFT_PAREN)) {
+                            if (!self.check(.RIGHT_PAREN)) while (true) {
+                                if (self.consume(.IDENTIFIER)) |vt| {
+                                    const vname = vt.literal(self.lexer.source);
+                                    if (dataOrClass) |doc| {
+                                        switch (doc) {
+                                            .Class => |c| {
+                                                for (c.classFuns) |cfun| {
+                                                    if (Common.streq(cfun.name.name, vname)) {
+                                                        try self.scope.currentScope().vars.put(vname, .{ .ClassFun = cfun });
+                                                        break;
+                                                    }
+                                                } else {
+                                                    try self.errors.append(.{ .ClassDoesNotExportThing = .{} });
+                                                }
+                                            },
+                                            .Data => try self.errors.append(.{ .ModuleDoesNotExportThing = .{} }),
+                                        }
+                                    }
+                                } else if (self.consume(.TYPE)) |ct| {
+                                    const cname = ct.literal(self.lexer.source);
+                                    if (dataOrClass) |doc| {
+                                        switch (doc) {
+                                            .Data => |d| {
+                                                for (d.cons) |*con| {
+                                                    if (Common.streq(con.name, cname)) {
+                                                        try self.scope.currentScope().cons.put(cname, con);
+                                                        break;
+                                                    }
+                                                } else {
+                                                    try self.errors.append(.{ .DataDoesNotExportThing = .{} });
+                                                }
+                                            },
+                                            .Class => try self.errors.append(.{ .ModuleDoesNotExportThing = .{} }),
+                                        }
+                                    }
+                                } else {
+                                    return self.err(*AST.Stmt, "Expect imported stuff", .{});
+                                }
+
+                                if (self.check(.RIGHT_PAREN)) break;
+                                try self.devour(.COMMA);
+                            };
+                        }
+                    } else {
+                        return self.err(*AST.Stmt, "Expect import", .{});
+                    }
+
+                    if (self.check(.DEDENT)) break;
+                }
+            } else {
+                try self.endStmt();
+            }
+
             break :b null;
         } // use
         else if (self.check(.FN)) {
@@ -1401,6 +1482,14 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
 fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
     const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } });
     try self.importedModules.put(path, mmod);
+
+    // automatically add instances (like muh haskells)
+    if (mmod) |mod| {
+        var it = mod.exports.instances.iterator();
+        while (it.next()) |inst| {
+            try self.scope.currentScope().instances.put(inst.key_ptr.*, inst.value_ptr.*);
+        }
+    }
     return mmod;
 }
 

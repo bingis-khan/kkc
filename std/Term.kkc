@@ -1,0 +1,4 @@
+use Str
+println (s)
+	print-str('\(s)\n')
+	return

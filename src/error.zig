@@ -57,6 +57,11 @@ pub const Error = union(enum) {
 
     UnimportedModule: struct {},
 
+    ModuleDoesNotExportThing: struct {},
+
+    DataDoesNotExportThing: struct {},
+    ClassDoesNotExportThing: struct {},
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -89,6 +94,10 @@ pub const Error = union(enum) {
             .CircularModuleReference => p("circular module reference", .{}),
 
             .UnimportedModule => p("unimported module", .{}),
+            .ModuleDoesNotExportThing => p("ModuleDoesNotExportThing", .{}),
+
+            .DataDoesNotExportThing => p("DataDoesNotExportThing", .{}),
+            .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),
         }
     }
 };

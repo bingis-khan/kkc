@@ -77,15 +77,15 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
             if (self.modules.get(fullPath)) |module| {
                 if (module == null) {
+                    std.debug.print("{s}", .{fullPath.path[fullPath.path.len - 1]});
                     try self.errors.append(.{ .CircularModuleReference = .{} });
                     return null;
                 }
 
                 return module.?;
+            } else {
+                break :bb fullPath;
             }
-
-            try self.modules.put(fullPath, null);
-            break :bb fullPath;
         },
 
         .ByFilename => |filename| .{
@@ -93,6 +93,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
             .path = &.{filename.path},
         },
     };
+
     const source = switch (pathtype) {
         .ByModulePath => self.readSource(try self.modulePathToFilepath(fullPath)) catch |err| switch (err) {
             error.FileNotFound => b: {
@@ -130,6 +131,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         },
     };
 
+    try self.modules.put(fullPath, null);
     const lexer = Lexer.init(source);
     var l = lexer;
     while (!l.finished()) {

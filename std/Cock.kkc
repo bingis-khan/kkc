@@ -1,3 +1,5 @@
+use Cnile
+
 fn cock()
-	printf0('COCK!!!!\n')
+	Cnile.printf0('COCK!!!!\n')
 	return

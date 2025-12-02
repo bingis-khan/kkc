@@ -1,12 +1,17 @@
+const common = @import("common.zig");
+const Str = common.Str;
 pub const Token = struct {
     type: TokenType,
     from: usize,
     to: usize,
 
     const Self = @This();
-    const Str = @import("common.zig").Str;
     pub fn literal(self: Self, src: Str) Str {
         return src[self.from..self.to];
+    }
+
+    pub fn toLocation(self: Self, src: Str) common.Location {
+        return .{ .from = self.from, .to = self.to, .source = src };
     }
 };
 

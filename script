@@ -1,0 +1,6 @@
+use Cock
+	cock
+use Term
+
+cock()
+Term.println(1)

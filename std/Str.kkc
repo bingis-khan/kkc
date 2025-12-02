@@ -1,0 +1,16 @@
+use Cnile
+
+class Str
+	# later should write to some buffer instead of printing directly.
+	print-str (self _) -> Unit
+	# chars (self _) -> iter
+
+inst Str Int
+	print-str (self Int) -> Unit
+		Cnile.printf1('%d', self)
+		return
+
+inst Str ConstStr
+	print-str (self _) -> Unit
+		Cnile.printf('%s', self)
+		return
