@@ -18,7 +18,7 @@ funLoader: DyLibLoader,
 typeContext: *const TypeContext,
 
 // right now a very simple interpreter where we don't free.
-pub fn run(module: ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
+pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
     _ = prelude;
     var scope = Scope.init(null, al);
     const scheme = ast.Scheme.empty();
@@ -34,12 +34,14 @@ pub fn run(module: ast, prelude: Prelude, typeContext: *const TypeContext, al: s
         .arena = al,
         .funLoader = DyLibLoader.init(al),
     };
-    self.stmts(module.toplevel) catch |err| switch (err) {
-        error.Return => {
-            return self.returnValue.data.int;
-        },
-        else => return err,
-    };
+    for (modules) |module| {
+        self.stmts(module.toplevel) catch |err| switch (err) {
+            error.Return => {
+                return self.returnValue.data.int;
+            },
+            else => return err,
+        };
+    }
     return 0;
 }
 

@@ -391,7 +391,11 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
-            .Str => |s| c.sp("'{s}'", .{s}), // TODO: escape
+            .Str => |s| {
+                std.debug.lockStdErr();
+                defer std.debug.unlockStdErr();
+                std.zig.stringEscape(s, "'", .{}, std.io.getStdErr().writer()) catch unreachable;
+            },
             .BinOp => |bop| {
                 c.s("(");
                 bop.l.print(c);

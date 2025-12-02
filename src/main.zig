@@ -5,8 +5,11 @@ const ast = @import("ast.zig");
 const Errors = @import("error.zig").Errors;
 const Interpreter = @import("Interpreter.zig");
 const Prelude = @import("Prelude.zig");
+const Modules = @import("Modules.zig");
+const TypeContext = @import("TypeContext.zig");
 
 pub fn main() !void {
+    // SETUP
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const al = gpa.allocator();
     defer {
@@ -19,35 +22,19 @@ pub fn main() !void {
     defer arena.deinit();
     const aa = arena.allocator();
 
-    const source = try std.fs.cwd().readFileAlloc(al, "test.kkc", 1337420);
-    defer al.free(source);
-    const lexer = Lexer.init(source);
-    var l = lexer;
-    while (!l.finished()) {
-        const tok = l.nextToken();
-        std.debug.print("{}\n", .{tok});
-    }
-
+    // -|| MODULES ||-
     var errors = Errors.init(aa);
-    var parser = try Parser.init(lexer, &errors, aa);
-    const module = try parser.parse();
-    var hadNewline: bool = undefined;
-    const ctx = ast.Ctx.init(&hadNewline, &parser.typeContext);
-    module.ast.print(ctx);
-
-    var fakeNewline: bool = undefined;
-    const fakeHackCtx = ast.Ctx.init(&fakeNewline, &parser.typeContext);
-    fakeNewline = false; // SIKE (but obv. temporary)
-    for (errors.items) |err| {
-        err.print(fakeHackCtx);
-    }
-
-    // temp: make prelude here.
-    const prelude = try parser.mkPrelude();
+    var typeContext = try TypeContext.init(aa, &errors);
+    var modules = Modules.init(aa, &errors, &typeContext);
+    const prelude = try modules.loadPrelude("prelude");
+    // TODO: load "converged" with default exports.
+    // try modules.loadDefault("converged.kc");
+    _ = try modules.loadDefault("test");
+    const fullAST = modules.getAST();
 
     // go and interpret
     if (errors.items.len == 0) {
-        const ret = try Interpreter.run(module.ast, prelude, &parser.typeContext, aa);
+        const ret = try Interpreter.run(fullAST, prelude, &typeContext, aa);
         std.debug.print("=== return value: {} ===\n", .{ret});
     }
 }

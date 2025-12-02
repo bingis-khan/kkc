@@ -13,6 +13,8 @@ inst Str ConstStr
 		_ = printf1('%s', self)
 		return
 
+StrConcat l r
+	StrConcat l r
 
 inst Str StrConcat
 	print-str (self _)
@@ -107,4 +109,3 @@ fn addn(m)
 1 to (10) map(addn(1)) map(addn(3)) for-each(println)
 x = 420
 println('x\(x)x')
-println(test-function-with-env-in-prelude())

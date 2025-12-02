@@ -16,11 +16,7 @@ const stack = @import("stack.zig");
 const TypeContext = @import("TypeContext.zig");
 const Prelude = @import("Prelude.zig");
 const Set = @import("Set.zig").Set;
-
-const ModuleResult = struct {
-    ast: AST,
-    // errors: Errors,
-};
+const Module = @import("Module.zig");
 
 // fuck it. let's do it one pass.
 arena: std.mem.Allocator,
@@ -36,7 +32,7 @@ gen: Gen,
 scope: Scope,
 
 // type zone
-typeContext: TypeContext,
+typeContext: *TypeContext,
 prelude: ?Prelude,
 returnType: ?AST.Type,
 selfType: ?AST.Type, // this is used in class and instance context. Whenever it's defined, the user is able to reference the instance type by '_'. In nested instances, obviously points to the innermost one.
@@ -58,8 +54,7 @@ const Gen = struct {
     }
 };
 const Self = @This();
-pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
-    const context = try TypeContext.init(arena, errors);
+pub fn init(l: Lexer, prelude: ?Prelude, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
     var parser = Self{
         .arena = arena,
         .errors = errors, // TODO: use GPA
@@ -76,7 +71,7 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
         .typeContext = context,
         .returnType = null,
         .selfType = null,
-        .prelude = null,
+        .prelude = prelude,
 
         .associations = std.ArrayList(Association).init(arena),
     };
@@ -85,27 +80,7 @@ pub fn init(l: Lexer, errors: *Errors, arena: std.mem.Allocator) !Self {
     return parser;
 }
 
-// should be const, but stack.Fixed's iterator can return pointers. This can be fixed by using two different types.
-pub fn mkPrelude(self: *Self) !Prelude {
-    var enums: [Prelude.NumPredefinedTypes]*AST.Data = .{undefined} ** Prelude.NumPredefinedTypes;
-    var copy = Prelude.PremadeTypeName;
-    var it = copy.iterator();
-    while (it.next()) |kv| {
-        if (self.maybeLookupType(kv.value.*)) |dc| {
-            switch (dc) {
-                .Data => |d| enums[@intCast(@intFromEnum(kv.key))] = d,
-                .Class => return error.PreludeError,
-            }
-        } else {
-            return error.PreludeError;
-        }
-    }
-    return .{
-        .predefinedTypes = enums,
-    };
-}
-
-pub fn parse(self: *Self) !ModuleResult {
+pub fn parse(self: *Self) !Module {
     std.debug.print("in parser\n", .{});
 
     var decs = std.ArrayList(*AST.Stmt).init(self.arena);
@@ -133,71 +108,100 @@ pub fn parse(self: *Self) !ModuleResult {
 
     return .{
         .ast = AST{ .toplevel = decs.items },
-        // .errors = self.errors,
+        .exports = self.scopeToExports(),
+    };
+}
+
+pub fn addExports(self: *Self, exports: *const Module.Exports) !void {
+    try addToHash(&self.scope.currentScope().vars, exports.vars);
+    try addToHash(&self.scope.currentScope().cons, exports.cons);
+    try addToHash(&self.scope.currentScope().types, exports.types);
+    try addToHash(&self.scope.currentScope().instances, exports.instances);
+}
+
+fn addToHash(dest: anytype, src: anytype) !void {
+    var it = src.iterator();
+    while (it.next()) |e| {
+        try dest.put(e.key_ptr.*, e.value_ptr.*);
+    }
+}
+
+// NOTE: assumes Module.Exports now owns the thing.
+fn scopeToExports(self: *Self) Module.Exports {
+    std.debug.print("{}\n", .{self.scope.scopes.current});
+    std.debug.assert(self.scope.scopes.current == 1);
+
+    const scope = self.scope.currentScope();
+    return .{
+        .vars = scope.vars,
+        .types = scope.types,
+        .cons = scope.cons,
+        .instances = scope.instances,
     };
 }
 
 fn dataDef(self: *Self, typename: Token) !void {
     const uid = self.gen.types.newUnique();
     self.scope.beginScope(null);
+    const data = b: {
+        defer self.scope.endScope();
 
-    // tvars
-    var tvars = std.ArrayList(AST.TVar).init(self.arena);
-    while (self.consume(.IDENTIFIER)) |tvname| {
-        const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
-        try tvars.append(tv);
-    }
-
-    if (!self.check(.INDENT)) {
-        // Add type without any constructors
-        try self.newData(try Common.allocOne(self.arena, AST.Data{
-            .uid = uid,
-            .name = typename.literal(self.lexer.source),
-            .cons = &.{},
-            .scheme = .{
-                .tvars = tvars.items,
-                .envVars = &.{},
-                .associations = &.{}, // TODO: when I add fake class names as types, this will  be non-empty.
-            },
-        }));
-        return;
-    }
-
-    const data = try self.arena.create(AST.Data);
-    data.uid = self.gen.types.newUnique();
-    data.name = typename.literal(self.lexer.source);
-    data.scheme = .{
-        .tvars = tvars.items,
-        .envVars = &.{}, // TEMP
-        .associations = &.{},
-    }; // TODO: check for repeating tvars and such.
-
-    var cons = std.ArrayList(AST.Con).init(self.arena);
-    var tag: u32 = 0;
-    while (!self.check(.DEDENT)) {
-        const conName = try self.expect(.TYPE);
-        var tys = std.ArrayList(AST.Type).init(self.arena);
-        while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
-            // TODO: for now, no complicated types!
-            const ty = try Type(.Type).typ(self);
-            try tys.append(ty);
+        // tvars
+        var tvars = std.ArrayList(AST.TVar).init(self.arena);
+        while (self.consume(.IDENTIFIER)) |tvname| {
+            const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
+            try tvars.append(tv);
         }
-        self.consumeSeps();
 
-        try cons.append(.{
-            .uid = self.gen.cons.newUnique(),
-            .name = conName.literal(self.lexer.source),
-            .tys = tys.items,
-            .data = data,
-            .tagValue = tag,
-        });
+        if (!self.check(.INDENT)) {
+            // Add type without any constructors
+            break :b try Common.allocOne(self.arena, AST.Data{
+                .uid = uid,
+                .name = typename.literal(self.lexer.source),
+                .cons = &.{},
+                .scheme = .{
+                    .tvars = tvars.items,
+                    .envVars = &.{},
+                    .associations = &.{}, // TODO: when I add fake class names as types, this will  be non-empty.
+                },
+            });
+        }
 
-        tag += 1;
-    }
+        const data = try self.arena.create(AST.Data);
+        data.uid = self.gen.types.newUnique();
+        data.name = typename.literal(self.lexer.source);
+        data.scheme = .{
+            .tvars = tvars.items,
+            .envVars = &.{}, // TEMP
+            .associations = &.{},
+        }; // TODO: check for repeating tvars and such.
 
-    data.cons = cons.items;
+        var cons = std.ArrayList(AST.Con).init(self.arena);
+        var tag: u32 = 0;
+        while (!self.check(.DEDENT)) {
+            const conName = try self.expect(.TYPE);
+            var tys = std.ArrayList(AST.Type).init(self.arena);
+            while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
+                // TODO: for now, no complicated types!
+                const ty = try Type(.Type).typ(self);
+                try tys.append(ty);
+            }
+            self.consumeSeps();
 
-    self.scope.endScope();
+            try cons.append(.{
+                .uid = self.gen.cons.newUnique(),
+                .name = conName.literal(self.lexer.source),
+                .tys = tys.items,
+                .data = data,
+                .tagValue = tag,
+            });
+
+            tag += 1;
+        }
+
+        data.cons = cons.items;
+        break :b data;
+    };
     try self.newData(data);
 }
 
@@ -346,6 +350,20 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             try self.endStmt();
             break :b .{ .Return = expr };
         } // return
+        else if (self.check(.USE)) {
+            var modpath = std.ArrayList(Str).init(self.arena);
+            const firstMod = try self.expect(.TYPE);
+            try modpath.append(firstMod.literal(self.lexer.source));
+            while (self.check(.DOT)) {
+                const mod = try self.expect(.TYPE);
+                try modpath.append(mod.literal(self.lexer.source));
+            }
+
+            try self.endStmt();
+
+            // try self.loadModuleFromPath(modpath.items);
+            unreachable;
+        } // use
         else if (self.check(.FN)) {
             const v = try self.expect(.IDENTIFIER);
             try self.devour(.LEFT_PAREN);
@@ -1261,8 +1279,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
 
 // resolver zone
 // VARS
-const VarAndType = struct { v: AST.Var, t: AST.Type };
-fn newVar(self: *@This(), varTok: Token) !VarAndType {
+fn newVar(self: *@This(), varTok: Token) !Module.VarAndType {
     const varName = varTok.literal(self.lexer.source);
     const t = try self.typeContext.fresh();
     const thisVar = AST.Var{
@@ -1286,7 +1303,7 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
 }
 
 fn lookupVar(self: *Self, varTok: Token) !struct {
-    vorf: CurrentScope.VarOrFun,
+    vorf: Module.VarOrFun,
     sc: ?*CurrentScope,
 } {
     const varName = varTok.literal(self.lexer.source);
@@ -1457,14 +1474,14 @@ fn instantiateFunction(self: *Self, fun: *AST.Function) !struct { t: AST.Type, m
 }
 
 // CURRENTLY VERY SLOW!
-fn getInstancesForClass(self: *Self, class: *AST.Class) !DataInstance {
+fn getInstancesForClass(self: *Self, class: *AST.Class) !Module.DataInstance {
     // OPTIMIZATION POSSIBILITY: Instance declarations happen often in sequence, then are used. Right now, the list is copied each time. Instead, we can make instances copied on demand.
     //  1. lots of instance declarations, then class:
     //      copy hashmap and insert into associations and assign to function class
     //  2. lots of function class calls, then instance
     //      copy hashmap and then insert into associations and add instance
     // basically, when unchanged, pass the current one and create a copy when it needs to be changed.
-    var foundInsts = DataInstance.init(self.arena);
+    var foundInsts = Module.DataInstance.init(self.arena);
     var scopeIt = self.scope.scopes.iterateFromTop();
     while (scopeIt.nextPtr()) |sc| {
         if (sc.instances.getPtr(class)) |insts| {
@@ -1619,7 +1636,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
     };
 }
 
-fn maybeLookupType(self: *Self, typename: Str) ?CurrentScope.DataOrClass {
+fn maybeLookupType(self: *Self, typename: Str) ?Module.DataOrClass {
     var lastScopes = self.scope.scopes.iterateFromTop();
     while (lastScopes.next()) |cursc| {
         if (cursc.types.get(typename)) |t| {
@@ -2082,10 +2099,8 @@ const Association = struct {
     classFun: *AST.ClassFun,
     ref: *?AST.Match(AST.Type).AssocRef,
 
-    instances: DataInstance,
+    instances: Module.DataInstance,
 };
-
-const DataInstance = std.AutoArrayHashMap(*AST.Data, *AST.Instance);
 
 fn addAssociation(self: *Self, assoc: Association) !void {
     try self.associations.append(assoc);
@@ -2094,7 +2109,7 @@ fn addAssociation(self: *Self, assoc: Association) !void {
 fn addInstance(self: *Self, instance: *AST.Instance) !void {
     const getOrPutResult = try self.scope.currentScope().instances.getOrPut(instance.class);
     if (!getOrPutResult.found_existing) {
-        getOrPutResult.value_ptr.* = DataInstance.init(self.arena);
+        getOrPutResult.value_ptr.* = Module.DataInstance.init(self.arena);
     }
 
     const dataInsts = getOrPutResult.value_ptr;
@@ -2146,33 +2161,21 @@ const Scope = struct {
 };
 
 const CurrentScope = struct {
-    const VarOrFun = union(enum) {
-        Var: VarAndType,
-        Fun: *AST.Function,
-        ClassFun: *AST.ClassFun,
-        Extern: *AST.ExternalFunction,
-    };
-
-    const DataOrClass = union(enum) {
-        Data: *AST.Data,
-        Class: *AST.Class,
-    };
-
-    vars: std.StringHashMap(VarOrFun),
-    types: std.StringHashMap(DataOrClass),
+    vars: std.StringHashMap(Module.VarOrFun),
+    types: std.StringHashMap(Module.DataOrClass),
     cons: std.StringHashMap(*AST.Con),
     tvars: std.StringHashMap(AST.TVar),
-    instances: std.AutoHashMap(*AST.Class, DataInstance),
+    instances: std.AutoHashMap(*AST.Class, Module.DataInstance),
 
     env: ?*Env,
 
     fn init(al: std.mem.Allocator, env: ?*Env) @This() {
         return .{
-            .vars = std.StringHashMap(VarOrFun).init(al),
-            .types = std.StringHashMap(DataOrClass).init(al),
+            .vars = std.StringHashMap(Module.VarOrFun).init(al),
+            .types = std.StringHashMap(Module.DataOrClass).init(al),
             .cons = std.StringHashMap(*AST.Con).init(al),
             .tvars = std.StringHashMap(AST.TVar).init(al),
-            .instances = std.AutoHashMap(*AST.Class, DataInstance).init(al),
+            .instances = std.AutoHashMap(*AST.Class, Module.DataInstance).init(al),
             .env = env,
         };
     }
@@ -2196,10 +2199,13 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
     dataInst: DataInst,
     data: *AST.Data,
 } {
-    return if (self.prelude) |_|
-        // prelude.defined(predefinedType) // TODO: will have to rewrite that bruh.
-        unreachable
-    else b: {
+    return if (self.prelude) |prelude| {
+        const data = prelude.defined(predefinedType);
+        return .{
+            .dataInst = try self.instantiateData(data),
+            .data = data,
+        };
+    } else b: {
         const data = switch (self.maybeLookupType(Prelude.PremadeTypeName.get(predefinedType)) orelse break :b error.PreludeError) {
             .Data => |data| data,
             .Class => |_| break :b error.PreludeError,

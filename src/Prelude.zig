@@ -19,11 +19,8 @@ pub const PremadeType = enum {
 pub const NumPredefinedTypes = @typeInfo(PremadeType).Enum.fields.len;
 
 // later should be defined in prelude?
-pub fn defined(self: *const Self, premade: PremadeType) ast.Type {
-    _ = self;
-    _ = premade;
-    // return .{ .id = @intCast(@intFromEnum(premade)) };
-    unreachable;
+pub fn defined(self: *const Self, premade: PremadeType) *ast.Data {
+    return self.predefinedTypes[@intFromEnum(premade)];
 }
 
 // I don't know how to easily extract field names from an enum value.

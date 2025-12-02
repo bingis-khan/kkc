@@ -48,10 +48,9 @@ pub const TokenType = enum {
     ELSE,
 
     WHILE,
-
     CASE,
-
     FN,
+    USE,
 
     // class
     CLASS,

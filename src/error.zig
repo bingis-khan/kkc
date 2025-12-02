@@ -53,6 +53,8 @@ pub const Error = union(enum) {
 
     TryingToMutateNonVar: struct {},
 
+    CircularModuleReference: struct {},
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -82,6 +84,7 @@ pub const Error = union(enum) {
 
             .CannotDirectlyMutateVarFromEnv => p("cannot directly mutate a var from outer scope", .{}),
             .TryingToMutateNonVar => p("trying to mutate non var", .{}),
+            .CircularModuleReference => p("circular module reference", .{}),
         }
     }
 };
