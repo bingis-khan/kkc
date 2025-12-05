@@ -8,9 +8,26 @@ const Parser = @import("parser.zig");
 const Errors = @import("error.zig").Errors;
 const Prelude = @import("Prelude.zig");
 const TypeContext = @import("TypeContext.zig");
+const UniqueGen = @import("UniqueGen.zig");
 
 const Self = @This();
 pub const ModuleLookup = std.HashMap(Module.BasePath, ?Module, Module.BasePath.Ctx, std.hash_map.default_max_load_percentage);
+
+pub const Gen = struct {
+    vars: UniqueGen,
+    types: UniqueGen,
+    cons: UniqueGen,
+    tvars: UniqueGen,
+    // mems: UniqueGen,
+    classes: UniqueGen,
+    classFuns: UniqueGen,
+    instances: UniqueGen,
+    assocs: UniqueGen,
+
+    fn init() @This() {
+        return std.mem.zeroInit(@This(), .{});
+    }
+};
 
 // NOTE: null means that the Module is still being parsed.
 modules: ModuleLookup,
@@ -21,6 +38,7 @@ defaultExports: std.ArrayList(Module.Exports), // TODO: instead of re-adding stu
 prelude: ?Prelude,
 full: std.ArrayList(ast),
 rootPath: Str,
+gen: Gen,
 
 pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str) Self {
     return .{
@@ -32,6 +50,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
         .prelude = null,
         .full = std.ArrayList(ast).init(al),
         .rootPath = root,
+        .gen = Gen.init(),
     };
 }
 

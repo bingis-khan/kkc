@@ -29,7 +29,7 @@ lexer: Lexer,
 currentToken: Token,
 
 // resolver zone
-gen: Gen,
+gen: *Modules.Gen,
 scope: Scope,
 base: Module.BasePath,
 
@@ -44,21 +44,6 @@ importedModules: Imports,
 
 const Imports = std.HashMap(Module.Path, ?Module, Module.PathCtx, std.hash_map.default_max_load_percentage);
 
-const Gen = struct {
-    vars: UniqueGen,
-    types: UniqueGen,
-    cons: UniqueGen,
-    tvars: UniqueGen,
-    // mems: UniqueGen,
-    classes: UniqueGen,
-    classFuns: UniqueGen,
-    instances: UniqueGen,
-    assocs: UniqueGen,
-
-    fn init() @This() {
-        return std.mem.zeroInit(@This(), .{});
-    }
-};
 const Self = @This();
 pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, modules: *Modules, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
     var parser = Self{
@@ -71,7 +56,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, modules: *Module
 
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
-        .gen = Gen.init(),
+        .gen = &modules.gen,
         .base = base,
 
         // typeshit
@@ -1766,6 +1751,14 @@ fn solveAvailableConstraints(self: *Self) !void {
 
                         _ = self.associations.orderedRemove(i); // TODO: not very efficient with normal ArrayList.
                         i -%= 1; // make sure to adjust index.
+                    } else {
+                        // error
+                        try self.errors.append(.{ .CouldNotFindInstanceForType = .{
+                            .data = con.type,
+                            .class = assoc.classFun.class,
+                        } });
+                        assoc.ref.* = null;
+                        _ = self.associations.orderedRemove(i);
                     }
                     hadChanges = true;
                 },

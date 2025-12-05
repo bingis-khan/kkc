@@ -62,6 +62,11 @@ pub const Error = union(enum) {
     DataDoesNotExportThing: struct {},
     ClassDoesNotExportThing: struct {},
 
+    CouldNotFindInstanceForType: struct {
+        data: *ast.Data,
+        class: *ast.Class,
+    },
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -98,6 +103,7 @@ pub const Error = union(enum) {
 
             .DataDoesNotExportThing => p("DataDoesNotExportThing", .{}),
             .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),
+            .CouldNotFindInstanceForType => |e| p("could not find instance of class {s} for type {s}", .{ e.class.name, e.data.name }),
         }
     }
 };

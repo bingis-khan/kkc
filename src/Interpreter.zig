@@ -308,7 +308,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
                 .LocalFunction => {
                     const args = try self.exprs(c.args);
-                    return self.function(nunbox(fun.data.fun).ptr, args);
+                    const uf = nunbox(fun.data.fun);
+                    if (uf.fty != .LocalFunction) unreachable;
+                    return self.function(uf.ptr, args);
                 },
 
                 .ConstructorFunction => {

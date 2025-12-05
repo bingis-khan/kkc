@@ -12,5 +12,13 @@ inst Str Int
 
 inst Str ConstStr
 	print-str (self _) -> Unit
-		Cnile.printf('%s', self)
+		Cnile.printf1('%s', self)
 		return
+
+inst Str StrConcat
+	print-str (self _) -> Unit
+		case self
+			StrConcat(l, r)
+				print-str(l)
+				print-str(r)
+				return
