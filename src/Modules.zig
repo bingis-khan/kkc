@@ -54,14 +54,14 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
     };
 }
 
-pub fn loadPrelude(self: *Self, path: Str) !Prelude {
+pub fn loadPrelude(self: *Self, path: *const Str) !Prelude {
     const preludeModule = try self.loadDefault(path);
     const prelude = try preludeModule.mkPrelude();
     self.prelude = prelude;
     return prelude;
 }
 
-pub fn loadDefault(self: *Self, path: Str) !Module {
+pub fn loadDefault(self: *Self, path: *const Str) !Module {
     const module = try self.loadModule(.{ .ByFilename = .{
         .isSTD = true,
         .path = path,
@@ -70,7 +70,7 @@ pub fn loadDefault(self: *Self, path: Str) !Module {
     return module.?;
 }
 
-pub fn initialModule(self: *Self, filename: Str) !Module {
+pub fn initialModule(self: *Self, filename: *const Str) !Module {
     return (try self.loadModule(.{ .ByFilename = .{ .isSTD = false, .path = filename } })).?;
 }
 
@@ -78,7 +78,7 @@ pub fn initialModule(self: *Self, filename: Str) !Module {
 // OMG I HATE THIS BRUH. IT BECAME SO COMPLICATED. FOR SOME REASON I CANT THINK ABOUT THIS STUFF??????? WTF??????
 pub fn loadModule(self: *Self, pathtype: union(enum) {
     ByModulePath: struct { base: Module.BasePath, path: Module.Path },
-    ByFilename: struct { isSTD: bool, path: Str },
+    ByFilename: struct { isSTD: bool, path: *const Str },
 }) !?Module {
     var fullPath: Module.BasePath = switch (pathtype) {
         .ByModulePath => |modpath| bb: {
@@ -109,7 +109,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
         .ByFilename => |filename| .{
             .isSTD = filename.isSTD,
-            .path = &.{filename.path},
+            .path = common.singleElemSlice(Str, filename.path),
         },
     };
 
@@ -144,7 +144,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
                     try filepath.append('/');
                 }
             }
-            try filepath.appendSlice(fullpath.path);
+            try filepath.appendSlice(fullpath.path.*);
             std.debug.print("{s}\n", .{filepath.items});
             break :b self.readSource(filepath.items) catch return error.TempError;
         },

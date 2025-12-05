@@ -7,6 +7,7 @@ const Interpreter = @import("Interpreter.zig");
 const Prelude = @import("Prelude.zig");
 const Modules = @import("Modules.zig");
 const TypeContext = @import("TypeContext.zig");
+const Str = @import("common.zig").Str;
 
 pub fn main() !void {
     var args = std.process.args();
@@ -33,10 +34,10 @@ pub fn main() !void {
     var errors = Errors.init(aa);
     var typeContext = try TypeContext.init(aa, &errors);
     var modules = Modules.init(aa, &errors, &typeContext, "");
-    const prelude = try modules.loadPrelude("prelude.kkc");
+    const prelude = try modules.loadPrelude(&"prelude.kkc");
     // TODO: load "converged" with default exports.
     // try modules.loadDefault("converged.kc");
-    _ = try modules.initialModule(filename);
+    _ = try modules.initialModule(&filename);
     const fullAST = modules.getAST();
 
     var fakeNewline: bool = undefined;

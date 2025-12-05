@@ -28,3 +28,10 @@ pub fn allocOne(al: std.mem.Allocator, e: anytype) !*@TypeOf(e) {
     ptr.* = e;
     return ptr;
 }
+
+pub fn singleElemSlice(T: type, x: *const T) []const T {
+    var s: []T = undefined;
+    s.len = 1;
+    s.ptr = @constCast(@ptrCast(x));
+    return s;
+}
