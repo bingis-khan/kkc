@@ -1,0 +1,69 @@
+
+class IntoIter
+	into-iter (self _) -> itershit
+
+class Iter
+	next (self Ptr _) -> Maybe item
+
+Map it from to
+	Map it (from -> to)
+
+inst IntoIter Map
+	into-iter (self Map it from to) -> Map it from to
+		return self
+
+inst Iter Map
+	next (self)
+		case self&
+			Map(it, fun)
+				case next(&it)
+					None
+						return None
+					Just(x)
+						return Just(fun(x))
+
+
+fn map (iterable, fun)
+	it = into-iter(iterable)
+	return Map(it, fun)
+
+
+Range
+	Range Int Int
+
+RangeIter
+	RangeIter Range Int
+
+fn to (from, to): Range(from, to)
+fn range (from, to): Range(from, to)
+
+inst IntoIter Range
+	into-iter (self)
+		case self
+			Range(from, to)
+				return RangeIter(self, from)
+
+inst IntoIter RangeIter
+	into-iter (self RangeIter): self
+
+inst Iter RangeIter
+	next (self Ptr RangeIter) -> Maybe Int
+		case self&
+			RangeIter(Range(from, to), cur)
+				if cur > to
+					return None
+
+				x = Just(cur)
+				self <&= RangeIter(Range(from, to), cur + 1)
+				return x
+
+
+fn for-each (iterable, fun)
+	it = into-iter(iterable)
+	while True
+		case next(&it)
+			None
+				return
+			Just(x)
+				_ = fun(x)
+

@@ -22,3 +22,9 @@ inst Str StrConcat
 				print-str(l)
 				print-str(r)
 				return
+
+
+inst Str Ptr
+	print-str (self _)
+		_ = print-str(self&)
+		return

@@ -76,8 +76,6 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, modules: *Module
 }
 
 pub fn parse(self: *Self) !Module {
-    std.debug.print("in parser\n", .{});
-
     var decs = std.ArrayList(*AST.Stmt).init(self.arena);
     self.consumeSeps();
     while (self.consume(.EOF) == null) {
@@ -99,7 +97,7 @@ pub fn parse(self: *Self) !Module {
         std.debug.print("ERROR! constraints left: {}", .{self.associations.items.len});
     }
 
-    std.debug.print("parsing success\n", .{});
+    // std.debug.print("parsing success\n", .{});
 
     return .{
         .ast = AST{ .toplevel = decs.items },
@@ -123,7 +121,6 @@ fn addToHash(dest: anytype, src: anytype) !void {
 
 // NOTE: assumes Module.Exports now owns the thing.
 fn scopeToExports(self: *Self) Module.Exports {
-    std.debug.print("{}\n", .{self.scope.scopes.current});
     std.debug.assert(self.scope.scopes.current == 1);
 
     const scope = self.scope.currentScope();

@@ -1,6 +1,15 @@
 use Cock
-	cock
 use Term
+use Iter
+	to
+	map
+	for-each
 
-cock()
-Term.println(1)
+fn addn(m)
+	fn add(x)
+		return x + m
+	return add
+
+1 to (10) map(addn(1)) map(addn(3)) for-each(Term.println)
+x = 420
+Term.println('x\(x)x')

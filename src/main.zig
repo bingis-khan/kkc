@@ -7,16 +7,13 @@ const Interpreter = @import("Interpreter.zig");
 const Prelude = @import("Prelude.zig");
 const Modules = @import("Modules.zig");
 const TypeContext = @import("TypeContext.zig");
-const Str = @import("common.zig").Str;
+const common = @import("common.zig");
+const Str = common.Str;
+const Args = @import("Args.zig");
 
 pub fn main() !void {
-    var args = std.process.args();
-    _ = args.skip(); // skip process name
-    const filename = args.next() orelse {
-        std.debug.print("Expect filename\n", .{});
-        return;
-    };
-    std.debug.print("{s}\n", .{filename});
+    const opts = try Args.parse(std.process.args());
+
     // SETUP
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const al = gpa.allocator();
@@ -33,11 +30,11 @@ pub fn main() !void {
     // -|| MODULES ||-
     var errors = Errors.init(aa);
     var typeContext = try TypeContext.init(aa, &errors);
-    var modules = Modules.init(aa, &errors, &typeContext, "");
+    var modules = Modules.init(aa, &errors, &typeContext, "", &opts);
     const prelude = try modules.loadPrelude(&"prelude.kkc");
     // TODO: load "converged" with default exports.
     // try modules.loadDefault("converged.kc");
-    _ = try modules.initialModule(&filename);
+    _ = try modules.initialModule(&opts.filename);
     const fullAST = modules.getAST();
 
     var fakeNewline: bool = undefined;

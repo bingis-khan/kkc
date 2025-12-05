@@ -9,6 +9,7 @@ const Errors = @import("error.zig").Errors;
 const Prelude = @import("Prelude.zig");
 const TypeContext = @import("TypeContext.zig");
 const UniqueGen = @import("UniqueGen.zig");
+const Args = @import("Args.zig");
 
 const Self = @This();
 pub const ModuleLookup = std.HashMap(Module.BasePath, ?Module, Module.BasePath.Ctx, std.hash_map.default_max_load_percentage);
@@ -39,8 +40,9 @@ prelude: ?Prelude,
 full: std.ArrayList(ast),
 rootPath: Str,
 gen: Gen,
+opts: *const Args,
 
-pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str) Self {
+pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str, args: *const Args) Self {
     return .{
         .modules = ModuleLookup.init(al),
         .errors = errors,
@@ -51,6 +53,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
         .full = std.ArrayList(ast).init(al),
         .rootPath = root,
         .gen = Gen.init(),
+        .opts = args,
     };
 }
 
@@ -96,7 +99,6 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
             if (self.modules.get(fullPath)) |module| {
                 if (module == null) {
-                    std.debug.print("{s}", .{fullPath.path[fullPath.path.len - 1]});
                     try self.errors.append(.{ .CircularModuleReference = .{} });
                     return null;
                 }
@@ -145,17 +147,21 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
                 }
             }
             try filepath.appendSlice(fullpath.path.*);
-            std.debug.print("{s}\n", .{filepath.items});
+            // std.debug.print("{s}\n", .{filepath.items});
             break :b self.readSource(filepath.items) catch return error.TempError;
         },
     };
 
     try self.modules.put(fullPath, null);
+
     const lexer = Lexer.init(source);
-    var l = lexer;
-    while (!l.finished()) {
-        const tok = l.nextToken();
-        std.debug.print("{}\n", .{tok});
+
+    if (self.opts.printTokens) {
+        var l = lexer;
+        while (!l.finished()) {
+            const tok = l.nextToken();
+            std.debug.print("{}\n", .{tok});
+        }
     }
 
     var parser = try Parser.init(lexer, self.prelude, switch (pathtype) {
@@ -169,9 +175,11 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     try self.full.append(module.ast);
     try self.modules.put(fullPath, module);
 
-    var hadNewline: bool = undefined;
-    const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
-    module.ast.print(ctx);
+    if (self.opts.printAST) {
+        var hadNewline: bool = undefined;
+        const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+        module.ast.print(ctx);
+    }
 
     return module;
 }
