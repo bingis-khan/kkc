@@ -27,6 +27,7 @@ errors: *Errors,
 // parser zone
 lexer: Lexer,
 currentToken: Token,
+mode: ParsingMode, // A bit of a hack. I think we should utilize the zigger's polymorphism to make different parsers (akin to the type parser)
 
 // resolver zone
 gen: *Modules.Gen,
@@ -53,6 +54,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, modules: *Module
         // parser
         .lexer = l,
         .currentToken = undefined,
+        .mode = .Normal,
 
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
@@ -94,7 +96,7 @@ pub fn parse(self: *Self) !Module {
     try self.solveAvailableConstraints();
 
     if (self.associations.items.len > 0) {
-        std.debug.print("ERROR! constraints left: {}", .{self.associations.items.len});
+        std.debug.print("ERROR! constraints left: {}\n", .{self.associations.items.len});
     }
 
     // std.debug.print("parsing success\n", .{});
@@ -330,10 +332,14 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
     const stmtVal: ?AST.Stmt = b: {
         if (self.check(.RETURN)) {
-            const expr = if (!self.isEndStmt())
-                try self.expression()
-            else bb: {
+            const expr = if (!self.isEndStmt()) bb: {
+                const pm = self.foldFromHere();
+                const e = try self.expression();
+                try self.finishFold(pm);
+                break :bb e;
+            } else bb: {
                 const t = try self.definedType(.Unit);
+                try self.endStmt();
                 const con = &self.typeContext.getType(t).Con.type.cons[0]; // WARNING: funny casts
                 break :bb try self.allocExpr(.{
                     .t = t,
@@ -343,7 +349,6 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
             try self.typeContext.unify(expr.t, try self.getReturnType());
 
-            try self.endStmt();
             break :b .{ .Return = expr };
         } // return
         else if (self.check(.USE)) {
@@ -372,6 +377,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                         }
                     } else if (self.consume(.TYPE)) |tt| {
                         const typeName = tt.literal(self.lexer.source);
+                        try self.endStmt();
                         const dataOrClass: ?Module.DataOrClass = bb: {
                             if (mmodule) |mod| {
                                 const doc = mod.lookupData(typeName) orelse {
@@ -762,8 +768,9 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         } // external function
         else {
             // this is kinda funny now, but try to parse an expression in this case.
+            const pm = self.foldFromHere();
             const e = try self.expression();
-            try self.endStmt();
+            try self.finishFold(pm);
             break :b .{
                 .Expr = e,
             };
@@ -788,12 +795,12 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 // for single line statements that do not contain a body.
 // (why? in IF and such, a dedent is equivalent to STMTSEP, so we must accept both. it depends on the type of statement.)
 fn endStmt(self: *Self) !void {
-    if (self.peek().type != .DEDENT) {
+    if (self.peek().type != .DEDENT and self.peek().type != .EOF) {
         try self.devour(.STMT_SEP);
     }
 }
 
-fn isEndStmt(self: *const Self) bool {
+fn isEndStmt(self: *Self) bool {
     const tt = self.peek().type;
     return tt == .DEDENT or tt == .STMT_SEP;
 }
@@ -1309,6 +1316,7 @@ fn allocExpr(self: *const Self, ev: AST.Expr) error{OutOfMemory}!*AST.Expr {
 fn getBinOp(tok: Token) ?AST.BinOp {
     return switch (tok.type) {
         .PLUS => .Plus,
+        .MINUS => .Minus,
         .TIMES => .Times,
         .EQEQ => .Equals,
         .LT => .LessThan,
@@ -2446,6 +2454,24 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
 }
 
 // parser zone
+fn foldFromHere(self: *Self) ParsingMode {
+    const old = self.mode;
+    self.mode = .{ .CountIndent = 0 };
+    return old;
+}
+
+fn finishFold(self: *Self, mode: ParsingMode) !void {
+    switch (self.mode) {
+        .Normal => unreachable,
+        .CountIndent => |i| {
+            if (i == 1) {
+                try self.devour(.DEDENT); // maybe make not consuming it `unreachable`? since this might not even be possible.
+            }
+        },
+    }
+    self.mode = mode;
+}
+
 fn expect(self: *Self, tt: TokenType) !Token {
     return self.consume(tt) orelse return self.err(Token, "Expect {}", .{tt});
 }
@@ -2454,12 +2480,44 @@ fn devour(self: *Self, tt: TokenType) !void {
     _ = try self.expect(tt);
 }
 
-fn peek(self: *const Self) Token {
+fn check(self: *Self, tt: TokenType) bool {
+    return self.consume(tt) != null;
+}
+
+// PARSING PRIMITIVES
+fn peek(self: *Self) Token {
+    switch (self.mode) {
+        .Normal => {},
+        .CountIndent => |*ind| while (true) {
+            if (!self.currentToken.isWhitespace()) break;
+            if (self.currentToken.type == .STMT_SEP and ind.* == 0) break;
+            if (self.currentToken.type == .INDENT) ind.* += 1;
+            if (self.currentToken.type == .DEDENT) {
+                if (ind.* <= 1) break;
+                ind.* -= 1;
+            }
+            self.skip();
+        },
+    }
     return self.currentToken;
 }
 
 fn consume(self: *Self, tt: TokenType) ?Token {
-    const tok = self.currentToken;
+    var tok = self.currentToken;
+    switch (self.mode) {
+        .Normal => {},
+        .CountIndent => |*ind| while (tok.isWhitespace()) {
+            if (tok.type == .STMT_SEP and ind.* == 0) break;
+            if (tok.type == .INDENT) ind.* += 1;
+            if (tok.type == .DEDENT) {
+                if (ind.* <= 1) break;
+                ind.* -= 1;
+            }
+            self.skip();
+            tok = self.currentToken;
+        },
+    }
+
     if (tok.type == tt) {
         self.skip();
         return tok;
@@ -2468,13 +2526,16 @@ fn consume(self: *Self, tt: TokenType) ?Token {
     }
 }
 
-fn check(self: *Self, tt: TokenType) bool {
-    return self.consume(tt) != null;
-}
-
+// IMPORTANT: DON'T MODIFY SKIP, SINCE AFTER PEEK/CONSUME THE MODE SHOULD BE CHANGED. LET PEEK / CONSUME CONSUME ALL THE WHITESPACE BEFOREHAND.
+// ALSO, THEY ALL DEPEND ON SKIP.
 fn skip(self: *Self) void {
     self.currentToken = self.lexer.nextToken();
 }
+
+const ParsingMode = union(enum) {
+    Normal,
+    CountIndent: u32,
+};
 
 // NOTE: later, we don't have to specify a return value. Just always follow it with "return unreachable".
 fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
@@ -2493,3 +2554,6 @@ const ParserError = error{
     OutOfMemory,
     TempError,
 }; // full error set when it cannot be inferred.
+
+// TEMP
+const Fold = *u32;

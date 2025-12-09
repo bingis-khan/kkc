@@ -28,3 +28,14 @@ inst Str Ptr
 	print-str (self _)
 		_ = print-str(self&)
 		return
+
+
+inst Str Maybe
+	print-str (self _)
+		case self
+			None
+				print-str('None')
+
+			Just(x)
+				print-str('Just(\(x))')
+		return

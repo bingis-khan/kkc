@@ -1,0 +1,35 @@
+#!./zig-out/bin/kkc
+use Sh
+	newer-than
+use Args
+use Alloc
+use Term
+
+# test build system for testing.
+
+kkc-path = './zig-out/bin/kkc'
+this-file-path = Args.get()[0]
+
+# rebuild if needed
+if 'src' newer-than (kkc-path)
+	Sh.run('zig build')
+	Sh.fork-run('\(kkc-path) \(this-file-path)')  # and rerun this file.
+	unreachable()
+
+al = Alloc.arena()
+files = Sh.ls('test') sort(al)
+for file in files
+	expected = file parse-expected-output()  # todo
+	res = Sh.run-alloc-result('\(kkc-path) \(file)', al)
+	case compare-output(res.stdout, expected)  # todo
+		None
+			Term.println('TEST \(file): OK')
+
+		Just(err)
+			Term.println('TEST \(file): FAIL')
+			Term.println(err)
+
+
+al deinit()
+
+

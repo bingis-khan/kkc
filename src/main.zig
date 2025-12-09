@@ -32,8 +32,7 @@ pub fn main() !void {
     var typeContext = try TypeContext.init(aa, &errors);
     var modules = Modules.init(aa, &errors, &typeContext, "", &opts);
     const prelude = try modules.loadPrelude(&"prelude.kkc");
-    // TODO: load "converged" with default exports.
-    // try modules.loadDefault("converged.kc");
+    _ = try modules.loadDefault(&"converged.kkc");
     _ = try modules.initialModule(&opts.filename);
     const fullAST = modules.getAST();
 

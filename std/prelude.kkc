@@ -40,7 +40,7 @@ Ptr a
 	Ptr a
 
 
-# this might be generated at compile time bruv.
+# this might be generated at compile time bruv. thats why im keeping it here.
 Tuple a b
 	Tuple a b
 
@@ -48,4 +48,3 @@ Tuple a b
 Maybe a
 	None
 	Just a
-

@@ -1,10 +1,11 @@
-
 class IntoIter
 	into-iter (self _) -> itershit
 
 class Iter
 	next (self Ptr _) -> Maybe item
 
+
+# MAPPPP
 Map it from to
 	Map it (from -> to)
 
@@ -26,6 +27,32 @@ inst Iter Map
 fn map (iterable, fun)
 	it = into-iter(iterable)
 	return Map(it, fun)
+
+
+
+# DROPPPP
+Drop it
+	Drop it Int
+
+inst IntoIter Drop
+	into-iter (self Drop it) -> Drop it: self
+
+inst Iter Drop
+	next (self)
+		case self&
+			Drop(it, i)
+				# WTF
+				miau = Drop(it, 0)
+				self <&= miau
+				while i > 0
+					_ = next(&it)
+					i <= i - 1
+				return next(&it)
+
+
+fn drop (iterable, i)
+	it = iterable into-iter()
+	return Drop(it, i)
 
 
 Range
@@ -58,10 +85,12 @@ inst Iter RangeIter
 				return x
 
 
+
+
 fn for-each (iterable, fun)
-	it = into-iter(iterable)
+	it =& into-iter(iterable)
 	while True
-		case next(&it)
+		case next(it)
 			None
 				return
 			Just(x)

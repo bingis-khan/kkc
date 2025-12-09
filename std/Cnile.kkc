@@ -10,3 +10,7 @@ external printf1(format ConstStr, x a) -> Void
 
 #[cfunname 'printf', dylib 'libc.so']
 external printf3(format ConstStr, x a, y b, z c) -> Void
+
+
+#[cfunname 'rand', dylib 'libc.so']
+external rand() -> Int

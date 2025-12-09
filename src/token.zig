@@ -13,6 +13,13 @@ pub const Token = struct {
     pub fn toLocation(self: Self, src: Str) common.Location {
         return .{ .from = self.from, .to = self.to, .source = src };
     }
+
+    pub fn isWhitespace(self: *const Self) bool {
+        return switch (self.type) {
+            .INDENT, .DEDENT, .STMT_SEP => true,
+            else => false,
+        };
+    }
 };
 
 pub const TokenType = enum {

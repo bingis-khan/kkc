@@ -1,15 +1,41 @@
-use Cock
+#!./zig-out/bin/kkc
 use Term
-use Iter
-	to
-	map
-	for-each
 
-fn addn(m)
-	fn add(x)
-		return x + m
-	return add
+# fn addn(m)
+# 	fn add(x)
+# 		return x + m
+# 	return add
 
-1 to (10) map(addn(1)) map(addn(3)) for-each(Term.println)
-x = 420
-Term.println('x\(x)x')
+# fn funny(s)
+# 	Term.println('x\(s)x')
+# 	return
+
+# 1 to (10)
+# 	map(addn(1))
+# 	drop(1)
+# 	for-each(Term.println)
+
+# x = 420
+
+Tup a b
+	Tup a b
+
+inst Str Tup
+	print-str (tup)
+		case tup
+			Tup(l, r)
+				print-str('Tup(\(l), \(r))')
+				return
+
+
+# x =& Tup(1, 2)
+# Term.println(x)
+# case x&
+# 	Tup(n, m)
+# 		x <&= Tup(5, m)
+
+# Term.println(x)
+
+1 to (10)
+	drop(3)
+	for-each(Term.println)

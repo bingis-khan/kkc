@@ -157,6 +157,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     const lexer = Lexer.init(source);
 
     if (self.opts.printTokens) {
+        std.debug.print("TOKENS OF {s}\n", .{fullPath.path[fullPath.path.len - 1]});
         var l = lexer;
         while (!l.finished()) {
             const tok = l.nextToken();
