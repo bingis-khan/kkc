@@ -39,3 +39,11 @@ inst Str Maybe
 			Just(x)
 				print-str('Just(\(x))')
 		return
+
+
+inst Str Tuple2
+	print-str (tup)
+		case tup
+			Tuple2(l, r)
+				print-str('(\(l), \(r))')
+				return

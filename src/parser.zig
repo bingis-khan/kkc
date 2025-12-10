@@ -533,7 +533,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         } // assignment to nothing
         else if (self.consume(.TYPE)) |typename| {
             const maybeExpr: ?AST.Stmt = funny: {
-                if (self.check(.DOT)) {
+                if (self.peek().type == .DOT) { // DON'T CONSUME!
                     const qe = try self.qualified(typename);
                     const e = try self.finishExpression(qe);
                     break :funny .{ .Expr = e };
@@ -1025,6 +1025,8 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
         }
 
         if (binop == .PostfixCall) {
+            const funt: *AST.Expr = try self.qualified(optok);
+
             var params = std.ArrayList(*AST.Expr).init(self.arena);
             try params.append(left);
             _ = try self.devour(.LEFT_PAREN);
@@ -1053,19 +1055,12 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 },
             });
 
-            const funts = try self.instantiateVar(&.{}, optok);
-            try self.typeContext.unify(callType, funts.t);
+            try self.typeContext.unify(callType, funt.t);
 
             return self.allocExpr(.{
                 .t = retType,
                 .e = .{ .Call = .{
-                    .callee = try self.allocExpr(.{
-                        .t = funts.t,
-                        .e = .{ .Var = .{
-                            .v = funts.v,
-                            .match = funts.m,
-                        } },
-                    }),
+                    .callee = funt,
                     .args = params.items,
                 } },
             });
@@ -1146,11 +1141,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         });
     } // var
     else if (self.consume(.TYPE)) |con| {
-        if (self.check(.DOT)) {
-            return try self.qualified(con);
-        }
-
-        return try self.constructorExpression(&.{}, con);
+        return try self.qualified(con);
     } // con
     else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
@@ -1171,9 +1162,25 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     }
 }
 
-fn qualified(self: *Self, firstMod: Token) !*AST.Expr {
+fn qualified(self: *Self, first: Token) !*AST.Expr {
+    if (first.type == .IDENTIFIER) {
+        const dv = try self.instantiateVar(&.{}, first);
+        return self.allocExpr(.{
+            .t = dv.t,
+            .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+        });
+    } // single identifier
+    else if (first.type == .TYPE) {
+        if (self.check(.DOT)) {
+            // fallthrough
+        } else {
+            return try self.constructorExpression(&.{}, first);
+        }
+    } // single constructor
+    else unreachable;
+
     var modpath = std.ArrayList(Str).init(self.arena);
-    try modpath.append(firstMod.literal(self.lexer.source));
+    try modpath.append(first.literal(self.lexer.source));
 
     loop: while (true) {
         if (self.consume(.TYPE)) |possibleCon| {
@@ -1335,6 +1342,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .LEFT_PAREN => .Call,
         .REF => .Deref,
         .IDENTIFIER => .PostfixCall,
+        .TYPE => .PostfixCall,
         else => null,
     };
 }
@@ -1481,7 +1489,7 @@ fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
 
 // resolver zone
 fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
-    const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } });
+    const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } }, .{});
     try self.importedModules.put(path, mmod);
 
     // automatically add instances (like muh haskells)
@@ -2477,6 +2485,8 @@ fn finishFold(self: *Self, mode: ParsingMode) !void {
         .CountIndent => |i| {
             if (i == 1) {
                 try self.devour(.DEDENT); // maybe make not consuming it `unreachable`? since this might not even be possible.
+            } else if (i == 0) {
+                try self.endStmt();
             }
         },
     }

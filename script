@@ -1,42 +1,19 @@
 #!./zig-out/bin/kkc
 use Term
 
-# fn addn(m)
-# 	fn add(x)
-# 		return x + m
-# 	return add
+fn const(a)
+	fn inner(b)
+		return a
+	return inner
 
-# fn funny(s)
-# 	Term.println('x\(s)x')
-# 	return
+fn each(it, fun): for-each(it, fun)
 
-# 1 to (10)
-# 	map(addn(1))
-# 	drop(1)
-# 	for-each(Term.println)
+1 to (2) map(const('all the things she said')) each(Term.println)
+1 to (3) map(const('running through my head')) each(Term.println)
 
-# x = 420
+1 to (2) map(const('all the things she said')) each(Term.println)
+1 to (3) map(const('running through my head')) each(Term.println)
 
-Tup a b
-	Tup a b
-
-inst Str Tup
-	print-str (tup)
-		case tup
-			Tup(l, r)
-				print-str('Tup(\(l), \(r))')
-				return
-
-
-# x =& Tup(1, 2)
-# Term.println(x)
-# case x&
-# 	Tup(n, m)
-# 		x <&= Tup(5, m)
-
-# Term.println(x)
-
-1 to (10)
-	drop(3)
-	for-each(Term.println)
-
+Term.println('this is not enough')
+'aah ah' Term.println()
+'THIS IS NOT ENOUGH' Term.println()

@@ -41,8 +41,9 @@ Ptr a
 
 
 # this might be generated at compile time bruv. thats why im keeping it here.
-Tuple a b
-	Tuple a b
+# Also, instead of Tuple, Treeple, Quantuple use Tuple2, Tuple3, etc. It'll be easier to parse.
+Tuple2 a b
+	Tuple2 a b
 
 
 Maybe a

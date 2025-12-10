@@ -65,16 +65,22 @@ pub fn loadPrelude(self: *Self, path: *const Str) !Prelude {
 }
 
 pub fn loadDefault(self: *Self, path: *const Str) !Module {
-    const module = try self.loadModule(.{ .ByFilename = .{
-        .isSTD = true,
-        .path = path,
-    } });
+    const module = try self.loadModule(
+        .{ .ByFilename = .{
+            .isSTD = true,
+            .path = path,
+        } },
+        .{ .printAST = self.opts.printAST, .printTokens = self.opts.printTokens },
+    );
     try self.defaultExports.append(module.?.exports);
     return module.?;
 }
 
 pub fn initialModule(self: *Self, filename: *const Str) !Module {
-    return (try self.loadModule(.{ .ByFilename = .{ .isSTD = false, .path = filename } })).?;
+    return (try self.loadModule(
+        .{ .ByFilename = .{ .isSTD = false, .path = filename } },
+        .{ .printAST = self.opts.printRootAST or self.opts.printAST, .printTokens = self.opts.printRootTokens or self.opts.printTokens },
+    )).?;
 }
 
 // NOTE: this function reports errors with modules that were not found.
@@ -82,6 +88,9 @@ pub fn initialModule(self: *Self, filename: *const Str) !Module {
 pub fn loadModule(self: *Self, pathtype: union(enum) {
     ByModulePath: struct { base: Module.BasePath, path: Module.Path },
     ByFilename: struct { isSTD: bool, path: *const Str },
+}, opts: struct {
+    printTokens: ?bool = null,
+    printAST: ?bool = null,
 }) !?Module {
     var fullPath: Module.BasePath = switch (pathtype) {
         .ByModulePath => |modpath| bb: {
@@ -156,7 +165,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
     const lexer = Lexer.init(source);
 
-    if (self.opts.printTokens) {
+    if (opts.printTokens orelse self.opts.printTokens) {
         std.debug.print("TOKENS OF {s}\n", .{fullPath.path[fullPath.path.len - 1]});
         var l = lexer;
         while (!l.finished()) {
@@ -176,7 +185,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     try self.full.append(module.ast);
     try self.modules.put(fullPath, module);
 
-    if (self.opts.printAST) {
+    if (opts.printAST orelse self.opts.printAST) {
         var hadNewline: bool = undefined;
         const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
         module.ast.print(ctx);
