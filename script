@@ -39,3 +39,4 @@ inst Str Tup
 1 to (10)
 	drop(3)
 	for-each(Term.println)
+

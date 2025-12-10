@@ -53,6 +53,11 @@ fn stmts(self: *Self, ss: []*ast.Stmt) !void {
 
 fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     switch (s.*) {
+        .Pass => |mlbl| {
+            if (mlbl) |lbl| {
+                std.debug.print("### LABEL {} ###\n", .{lbl});
+            }
+        },
         .Expr => |e| {
             _ = try self.expr(e);
         },
@@ -63,17 +68,35 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         },
         .VarDec => |vd| {
             const v = try self.expr(vd.varValue);
-            try self.scope.vars.put(vd.varDef, v);
+            try self.scope.putVar(vd.varDef, v);
         },
         .VarMut => |vm| {
-            var varVal = self.scope.getVar(vm.varRef);
-            for (0..vm.refs) |_| {
-                varVal = varVal.data.ptr.toValuePtr();
-            }
             const exprVal = try self.expr(vm.varValue);
-            varVal.header = exprVal.header;
             const sz = self.sizeOf(vm.varValue.t);
-            @memcpy(varVal.dataSlice(sz.size), exprVal.dataSlice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+
+            const varValOrRef = self.scope.getVar(vm.varRef);
+            switch (varValOrRef) {
+                .ref => |dataNTy| {
+                    if (vm.refs == 0) {
+                        @memcpy(dataNTy.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                    } else {
+                        var varVal = dataNTy.data.ptr.toValuePtr();
+                        for (1..vm.refs) |_| {
+                            varVal = varVal.data.ptr.toValuePtr();
+                        }
+                        varVal.header = exprVal.header;
+                        @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                    }
+                },
+                .v => |vv| {
+                    var varVal = vv;
+                    for (0..vm.refs) |_| {
+                        varVal = varVal.data.ptr.toValuePtr();
+                    }
+                    varVal.header = exprVal.header;
+                    @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                },
+            }
         },
         .Function => |fun| {
             try self.addEnvSnapshot(fun);
@@ -134,7 +157,7 @@ fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
         envSnapshot[i] = switch (ei.v) {
             .Var => |v| .{ .Snap = .{
                 .v = v,
-                .vv = self.scope.getVar(v),
+                .vv = try self.getVar(v),
             } },
             .Fun => |envfun| .{ .Snap = .{
                 .v = envfun.name,
@@ -161,7 +184,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool
     switch (decon.d) {
         .None => return true,
         .Var => |vn| {
-            try self.scope.vars.put(vn, try self.copyValue(v, decon.t));
+            try self.scope.vars.put(vn, .{ .ref = .{ .data = v, .t = decon.t } });
             return true;
         },
         .Con => |con| {
@@ -231,7 +254,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
         .Var => |v| {
             switch (v.v) {
                 .Var => |vv| {
-                    return self.scope.getVar(vv);
+                    return self.getVar(vv);
                 },
 
                 .Fun => |fun| {
@@ -394,17 +417,17 @@ fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value) Err!*Value 
     const env = funAndEnv.env;
     for (env) |e| {
         switch (e) {
-            .Snap => |ee| try self.scope.vars.put(ee.v, ee.vv),
+            .Snap => |ee| try self.scope.putVar(ee.v, ee.vv),
             .AssocID => |id| {
                 const efun = self.tymap.tryGetFunctionByID(id).?;
                 const efunv = try self.initFunction(efun.fun, efun.m);
-                try self.scope.vars.put(efun.fun.name, efunv);
+                try self.scope.putVar(efun.fun.name, efunv);
             },
         }
     }
 
     for (fun.params, args) |p, a| {
-        try self.scope.vars.put(p.pn, a);
+        try self.scope.putVar(p.pn, a);
     }
     self.stmts(fun.body) catch |err| switch (err) {
         error.Return => {
@@ -423,14 +446,15 @@ fn evaluateString(self: *const Self, s: Str) ![:0]u8 {
 
 // values n shit
 // note, that we must preserve the inner representation for compatibility with external functions.
-const ValRef = *align(1) Value; // basically, because we don't know *where* the basic data might be, we must assume its offfest can be whatever (imagine: struct with  three chars and getting a reference to one of them)
+// note about alignments: in C structs the alignments are variable (because we might represent different structs), so everything must be align(1)
+const ValRef = *align(1) Value; // basically, because we don't know *where* the basic data might be, we must assume its offset can be whatever (imagine: struct with  three chars and getting a reference to one of them)
 const DataRef = *align(1) Value.Type;
 const Value = extern struct {
     header: Header align(1), // TEMP align(1)
 
     // This is where we store actual data. This must be compatible with C shit.
     data: Type align(1),
-    const Type = extern union { // NTE: I might change it so that `data` only contains stuff that should be accessible by C.
+    const Type = extern union { // NOTE: I might change it so that `data` only contains stuff that should be accessible by C.
         int: i64,
         extptr: *anyopaque,
         ptr: *align(1) Type,
@@ -463,14 +487,14 @@ const Value = extern struct {
             const offp = p[off..];
             return @alignCast(@ptrCast(offp));
         }
-    };
 
-    fn dataSlice(self: *@This(), sz: usize) []u8 {
-        var slice: []u8 = undefined;
-        slice.len = sz;
-        slice.ptr = @ptrCast(&self.data);
-        return slice;
-    }
+        fn slice(self: *align(1) @This(), sz: usize) []u8 {
+            var sl: []u8 = undefined;
+            sl.len = sz;
+            sl.ptr = @ptrCast(self);
+            return sl;
+        }
+    };
 
     fn toTypePtr(self: *@This()) *align(1) Type {
         return &self.data;
@@ -569,7 +593,7 @@ fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr) !*Value {
         const v = try self.expr(a);
         const sz = self.sizeOf(ty);
         try pad(w, sz.alignment);
-        try w.writeAll(v.dataSlice(sz.size));
+        try w.writeAll(v.data.slice(sz.size));
 
         maxAlignment = @max(maxAlignment, sz.alignment);
     }
@@ -685,14 +709,23 @@ fn sizeOfCon(self: *Self, con: *const ast.Con, beginOff: usize) Sizes {
     };
 }
 
+fn getVar(self: *Self, v: ast.Var) !ValRef {
+    return switch (self.scope.getVar(v)) {
+        .v => |val| val,
+        .ref => |tyNt| try self.copyValue(tyNt.data, tyNt.t), // oh man
+    };
+}
+
 const Scope = struct {
     prev: ?*@This(),
     vars: Vars,
     funs: Funs,
 
-    const Vars = std.HashMap(ast.Var, *Value, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
+    const Vars = std.HashMap(ast.Var, ValOrRef, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 
     const Funs = std.HashMap(ast.Var, []Value.Type.Fun.EnvSnapshot, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
+
+    const ValOrRef = union(enum) { v: *Value, ref: struct { data: *align(1) Value.Type, t: ast.Type } };
 
     fn init(prev: ?*@This(), al: std.mem.Allocator) @This() {
         return .{
@@ -702,7 +735,12 @@ const Scope = struct {
         };
     }
 
-    fn getVar(self: *const @This(), v: ast.Var) ValRef {
+    // the inner datatype might change (since I'm not sure if I should keep Value/Type or just keep refs)
+    fn putVar(self: *@This(), v: ast.Var, val: *Value) !void {
+        try self.vars.put(v, .{ .v = val });
+    }
+
+    fn getVar(self: *const @This(), v: ast.Var) ValOrRef {
         return self.vars.get(v) orelse (self.prev orelse unreachable).getVar(v);
     }
 

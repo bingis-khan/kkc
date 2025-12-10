@@ -41,9 +41,6 @@ inst Iter Drop
 	next (self)
 		case self&
 			Drop(it, i)
-				# WTF
-				miau = Drop(it, 0)
-				self <&= miau
 				while i > 0
 					_ = next(&it)
 					i <= i - 1

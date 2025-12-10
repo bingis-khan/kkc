@@ -331,7 +331,18 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
     }
 
     const stmtVal: ?AST.Stmt = b: {
-        if (self.check(.RETURN)) {
+        if (self.check(.PASS)) {
+            // pass here is a half debug statement. it can also take an integer, which should be printed at runtime (this is for matching in a debugger.)
+            var label: ?i64 = null;
+            if (self.consume(.INTEGER)) |sint| {
+                label = std.fmt.parseInt(i64, sint.literal(self.lexer.source), 10) catch unreachable;
+            }
+
+            try self.endStmt();
+
+            break :b .{ .Pass = label };
+        } // pass
+        else if (self.check(.RETURN)) {
             const expr = if (!self.isEndStmt()) bb: {
                 const pm = self.foldFromHere();
                 const e = try self.expression();

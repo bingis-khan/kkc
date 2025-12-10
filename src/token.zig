@@ -39,6 +39,7 @@ pub const TokenType = enum {
     TYPE,
     INTEGER,
     STRING,
+    PASS,
 
     EQUALS,
     EQEQ,

@@ -124,6 +124,7 @@ pub const Lexer = struct {
                     @"while",
                     @"fn",
                     use,
+                    pass,
                 };
                 const keyword = std.meta.stringToEnum(Keyword, self.scanned(from)) orelse {
                     break :b .IDENTIFIER;
@@ -141,6 +142,7 @@ pub const Lexer = struct {
                     .@"while" => .WHILE,
                     .@"fn" => .FN,
                     .use => .USE,
+                    .pass => .PASS,
                 };
             },
 

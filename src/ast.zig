@@ -82,7 +82,10 @@ pub const Ctx = struct {
             if (comptime std.meta.hasMethod(field.type, "print")) {
                 arg.print(self);
             } else {
-                self.s(@as(Str, arg)); // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
+                switch (@typeInfo(@TypeOf(arg))) {
+                    .Int, .Float, .ComptimeInt, .ComptimeFloat => self.sp("{}", .{arg}),
+                    else => self.s(@as(Str, arg)), // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
+                }
             }
         }
     }
@@ -225,6 +228,7 @@ pub const Stmt = union(enum) {
     Return: *Expr,
     Function: *Function,
     Instance: *Instance,
+    Pass: ?i64,
     Expr: *Expr,
 
     const Rec = *@This();
@@ -232,6 +236,13 @@ pub const Stmt = union(enum) {
 
     fn print(self: @This(), c: Ctx) void {
         switch (self) {
+            .Pass => |mlbl| {
+                c.s("pass");
+                if (mlbl) |lbl| {
+                    c.print(.{ " ", lbl });
+                }
+                c.s("\n");
+            },
             .VarDec => |vd| {
                 vd.varDef.print(c);
                 c.s(" = ");
