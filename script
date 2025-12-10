@@ -1,19 +1,8 @@
 #!./zig-out/bin/kkc
 use Term
 
-fn const(a)
-	fn inner(b)
-		return a
-	return inner
+fn miau(s a) -> Unit <= Str a
+	Term.println(s)
+	return
 
-fn each(it, fun): for-each(it, fun)
-
-1 to (2) map(const('all the things she said')) each(Term.println)
-1 to (3) map(const('running through my head')) each(Term.println)
-
-1 to (2) map(const('all the things she said')) each(Term.println)
-1 to (3) map(const('running through my head')) each(Term.println)
-
-Term.println('this is not enough')
-'aah ah' Term.println()
-'THIS IS NOT ENOUGH' Term.println()
+miau('miau')

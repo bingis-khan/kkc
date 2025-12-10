@@ -519,12 +519,27 @@ pub const TVar = struct {
     uid: Unique,
     name: Str,
     binding: ?Binding, // null value for placeholder values.
+    inferred: bool, // funny. it means if this tvar was made from a tyvar.
 
     pub const Binding = union(enum) {
         Data: Unique,
         Function: Unique,
         ClassFunction: Unique,
     };
+
+    pub fn comparator() type {
+        return struct {
+            pub fn eql(ctx: @This(), a: TVar, b: TVar) bool {
+                _ = ctx;
+                return a.uid == b.uid;
+            }
+
+            pub fn hash(ctx: @This(), k: TVar) u64 {
+                _ = ctx;
+                return k.uid;
+            }
+        };
+    }
 
     pub fn eq(l: @This(), r: @This()) bool {
         return l.uid == r.uid;

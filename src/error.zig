@@ -67,6 +67,20 @@ pub const Error = union(enum) {
         class: *ast.Class,
     },
 
+    ConstraintsLeft: struct {
+        module: Str,
+        numConstraints: usize,
+    },
+
+    TVarDoesNotImplementClass: struct {
+        tv: ast.TVar,
+        class: *ast.Class,
+    },
+
+    ConstrainedNonExistentTVar: struct {
+        tvname: Str,
+    },
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -104,6 +118,9 @@ pub const Error = union(enum) {
             .DataDoesNotExportThing => p("DataDoesNotExportThing", .{}),
             .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),
             .CouldNotFindInstanceForType => |e| p("could not find instance of class {s} for type {s}", .{ e.class.name, e.data.name }),
+            .ConstraintsLeft => |e| p("num constraints left in module '{s}': {}", .{ e.module, e.numConstraints }),
+            .TVarDoesNotImplementClass => |e| p("tvar {s} does not implement class {s}", .{ e.tv.name, e.class.name }),
+            .ConstrainedNonExistentTVar => |e| p("constrained non existent tvar {s}", .{e.tvname}),
         }
     }
 };

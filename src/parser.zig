@@ -23,6 +23,7 @@ const Modules = @import("Modules.zig");
 arena: std.mem.Allocator,
 
 errors: *Errors,
+name: Str,
 
 // parser zone
 lexer: Lexer,
@@ -46,10 +47,11 @@ importedModules: Imports,
 const Imports = std.HashMap(Module.Path, ?Module, Module.PathCtx, std.hash_map.default_max_load_percentage);
 
 const Self = @This();
-pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, modules: *Modules, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
+pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str, modules: *Modules, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
     var parser = Self{
         .arena = arena,
         .errors = errors, // TODO: use GPA
+        .name = moduleName,
 
         // parser
         .lexer = l,
@@ -96,7 +98,10 @@ pub fn parse(self: *Self) !Module {
     try self.solveAvailableConstraints();
 
     if (self.associations.items.len > 0) {
-        std.debug.print("ERROR! constraints left: {}\n", .{self.associations.items.len});
+        try self.errors.append(.{ .ConstraintsLeft = .{
+            .module = self.name,
+            .numConstraints = self.associations.items.len,
+        } });
     }
 
     // std.debug.print("parsing success\n", .{});
@@ -181,7 +186,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
             var tys = std.ArrayList(AST.Type).init(self.arena);
             while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                 // TODO: for now, no complicated types!
-                const ty = try Type(.Type).typ(self);
+                const ty = try Type.init(self, .{ .Data = data.uid }).typ();
                 try tys.append(ty);
             }
             self.consumeSeps();
@@ -216,7 +221,10 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
             const v = try self.newVar(pnt);
             const nextTok = self.peek().type;
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
-                const pt = try Type(.Decl).sepTyo(self);
+                const pt = try Type.init(
+                    self,
+                    .{ .Function = fun.name.uid },
+                ).sepTyo();
                 try self.typeContext.unify(v.t, pt);
             }
             try params.append(.{
@@ -236,10 +244,42 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
         paramTs[i] = et.pt;
     }
 
+    // -> ty
     const ret = try self.typeContext.fresh();
     if (self.check(.RIGHT_ARROW)) {
-        const retTy = try Type(.Decl).sepTyo(self);
+        const retTy = try Type.init(self, .{ .Function = fun.name.uid }).sepTyo();
         try self.typeContext.unify(ret, retTy);
+    }
+
+    // <= constraint (, constraint)*
+    var constraints = std.HashMap(AST.TVar, std.ArrayList(*AST.Class), AST.TVar.comparator(), std.hash_map.default_max_load_percentage).init(self.arena); // maybe I should just use pointers to vars?
+    if (self.check(.LTEQ)) {
+        while (true) {
+            const classTok = try self.expect(.TYPE);
+            const tvt = try self.expect(.IDENTIFIER);
+
+            if (self.maybeLookupType(classTok.literal(self.lexer.source))) |dataOrClass| b: {
+                switch (dataOrClass) {
+                    .Class => |class| {
+                        const tvarName = tvt.literal(self.lexer.source);
+                        const tvar = self.scope.currentScope().tvars.get(tvarName) orelse {
+                            // NOTE: we're looking only at current scope, so we won't find any named tvars from other functions.
+                            try self.errors.append(.{ .ConstrainedNonExistentTVar = .{ .tvname = tvarName } });
+                            break :b;
+                        };
+
+                        const e = try constraints.getOrPutValue(tvar, std.ArrayList(*AST.Class).init(self.arena)); // NOTE: source says it's not allocating anything until an element is inserted.
+
+                        try e.value_ptr.append(class);
+                    },
+                    .Data => unreachable,
+                }
+            } else {
+                unreachable; // TODO: error
+            }
+
+            if (!self.check(.COMMA)) break;
+        }
     }
 
     const fnBody = if (self.check(.COLON)) b: {
@@ -267,7 +307,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
     const definedTVars = self.scope.currentScope().tvars;
     self.scope.endScope(); // finish env.
 
-    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items, fun.name.uid);
+    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items, fun.name.uid, &constraints);
 
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
@@ -478,6 +518,24 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 break :b .{ .VarDec = .{
                     .varDef = vt.v,
                     .varValue = expr,
+                } };
+            } else if (self.check(.LTEQ)) { // basic mutation (different token.)
+                // COPYPASTA
+                const e = try self.expression();
+                try self.endStmt();
+
+                const vtsc = try self.lookupVar(&.{}, v);
+                const vv = switch (vtsc.vorf) {
+                    .Var => |vt| vt,
+                    else => bb: {
+                        try self.errors.append(.{ .TryingToMutateNonVar = .{} });
+                        break :bb try self.newVar(v);
+                    },
+                };
+                break :b .{ .VarMut = .{
+                    .varRef = vv.v,
+                    .refs = 0,
+                    .varValue = e,
                 } };
             } else if (self.check(.LT)) {
                 var refs: usize = 0;
@@ -724,6 +782,8 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             };
         } // instance
         else if (self.check(.EXTERNAL)) {
+            const uid = self.gen.vars.newUnique();
+
             const nameTok = try self.expect(.IDENTIFIER);
             const name = nameTok.literal(self.lexer.source);
             var env = Env.init(self.arena);
@@ -736,7 +796,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 while (true) {
                     const pname = try self.expect(.IDENTIFIER);
                     const v = try self.newVar(pname); // pointless fresh.
-                    const t = try Type(.Ext).sepTyo(self);
+                    const t = try Type.init(self, .{ .Function = uid }).sepTyo();
                     try params.append(.{ .pn = v.v, .pt = t });
 
                     if (self.check(.RIGHT_PAREN)) {
@@ -747,7 +807,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             }
 
             try self.devour(.RIGHT_ARROW);
-            const ret = try Type(.Ext).sepTyo(self);
+            const ret = try Type.init(self, .{ .Function = uid }).sepTyo();
 
             var definedTVars = std.ArrayList(AST.TVar).init(self.arena);
             var it = self.scope.currentScope().tvars.valueIterator();
@@ -765,7 +825,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             const extfun = try Common.allocOne(self.arena, AST.ExternalFunction{
                 .name = .{
                     .name = name,
-                    .uid = self.gen.vars.newUnique(),
+                    .uid = uid,
                 },
                 .params = params.items,
                 .ret = ret,
@@ -822,6 +882,7 @@ fn consumeSeps(self: *Self) void {
 
 fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type }, class: *AST.Class) !*AST.ClassFun {
     const funName = try self.expect(.IDENTIFIER);
+    const uid = self.gen.classFuns.newUnique();
 
     self.scope.beginScope(null); // let's capture all tvars.
     var params = std.ArrayList(AST.ClassFun.Param).init(self.arena);
@@ -830,7 +891,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         // consume identifier if possible.
         if (self.check(.IDENTIFIER)) {}
 
-        try params.append(.{ .t = try Type(.Class).sepTyo(self) });
+        try params.append(.{ .t = try Type.init(self, .{ .ClassFunction = uid }).sepTyo() });
 
         if (self.check(.RIGHT_PAREN)) {
             break;
@@ -840,7 +901,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     };
 
     // another new eye candy - default Unit
-    const ret = if (self.check(.RIGHT_ARROW)) try Type(.Class).sepTyo(self) else try self.definedType(.Unit);
+    const ret = if (self.check(.RIGHT_ARROW)) try Type.init(self, .{ .ClassFunction = uid }).sepTyo() else try self.definedType(.Unit);
     try self.endStmt();
     const tvarsMap = self.scope.currentScope().tvars;
     self.scope.endScope();
@@ -860,7 +921,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
-        .uid = self.gen.classFuns.newUnique(),
+        .uid = uid,
         .name = .{
             .name = funName.literal(self.lexer.source),
             .uid = self.gen.vars.newUnique(),
@@ -1368,124 +1429,129 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
     };
 }
 
-fn Type(comptime tyty: enum { Type, Decl, Class, Ext }) type {
-    const inDeclaration = tyty == .Decl or tyty == .Class or tyty == .Ext;
-    const Ty = AST.Type;
-    return struct {
-        // type-o
-        fn typ(self: *Self) ParserError!Ty {
-            // temp
-            if (self.consume(.TYPE)) |ty| {
-                const ity = try self.instantiateType(ty);
-                if (ity.tyArgs.len != 0) {
-                    try self.errors.append(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
-                }
-                return ity.t;
-            } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
-                return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv, inDeclaration) });
-            } else if (self.check(.LEFT_PAREN)) {
-                const ty = try sepTyo(self);
-                try self.devour(.RIGHT_PAREN);
-                return ty;
-            } else if (self.check(.UNDERSCORE)) {
-                if (self.selfType) |t| {
-                    return t;
-                } else {
-                    // TODO: signal error
-                    unreachable;
-                }
-            } else {
-                return try self.err(AST.Type, "Expect type", .{});
+const Type = struct {
+    binding: ?AST.TVar.Binding,
+    parser: *Self,
+
+    fn init(self: *Self, binding: ?AST.TVar.Binding) @This() {
+        return .{ .binding = binding, .parser = self };
+    }
+
+    // type-o
+    fn typ(this: *const @This()) ParserError!AST.Type {
+        const self = this.parser;
+        // temp
+        if (self.consume(.TYPE)) |ty| {
+            const ity = try self.instantiateType(ty);
+            if (ity.tyArgs.len != 0) {
+                try self.errors.append(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
             }
-            unreachable;
+            return ity.t;
+        } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
+            return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv, this.binding) });
+        } else if (self.check(.LEFT_PAREN)) {
+            const ty = try this.sepTyo();
+            try self.devour(.RIGHT_PAREN);
+            return ty;
+        } else if (self.check(.UNDERSCORE)) {
+            if (self.selfType) |t| {
+                return t;
+            } else {
+                // TODO: signal error
+                unreachable;
+            }
+        } else {
+            return try self.err(AST.Type, "Expect type", .{});
         }
+        unreachable;
+    }
 
-        fn sepTyo(self: *Self) !Ty {
-            if (self.consume(.TYPE)) |tyName| {
-                var tyArgs = std.ArrayList(Ty).init(self.arena);
-                while (true) {
-                    const tokType = self.peek().type;
-                    if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE)) { // bad bad works
-                        break;
-                    }
-
-                    try tyArgs.append(try typ(self));
+    fn sepTyo(this: *const @This()) !AST.Type {
+        const self = this.parser;
+        if (self.consume(.TYPE)) |tyName| {
+            var tyArgs = std.ArrayList(AST.Type).init(self.arena);
+            while (true) {
+                const tokType = self.peek().type;
+                if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE)) { // bad bad works
+                    break;
                 }
 
-                const ty = try self.instantiateType(tyName);
+                try tyArgs.append(try this.typ());
+            }
 
-                // simply check arity.
-                try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
+            const ty = try self.instantiateType(tyName);
 
-                // there's a possibility it's a function!
-                if (self.check(.RIGHT_ARROW)) {
-                    const args = try self.arena.alloc(AST.Type, 1);
-                    args[0] = ty.t;
-                    const ret = try sepTyo(self);
-                    return try self.typeContext.newType(.{
-                        .Fun = .{
-                            .args = args,
-                            .ret = ret,
-                            .env = if (tyty != .Ext)
-                                // in general case
-                                try self.typeContext.newEnv(null)
-                            else
-                                // in external functions, assume no environment.
-                                try self.typeContext.newEnv(&.{}),
-                        },
-                    });
-                } else {
-                    return ty.t;
-                }
-            } else if (self.check(.LEFT_PAREN)) {
-                // try parse function (but it can also be an extra paren!)
-                var args = std.ArrayList(Ty).init(self.arena);
-                while (!self.check(.RIGHT_PAREN)) {
-                    try args.append(try sepTyo(self));
-                    if (self.peek().type != .RIGHT_PAREN) {
-                        try self.devour(.COMMA);
-                    }
-                }
+            // simply check arity.
+            try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
 
-                if (self.check(.RIGHT_ARROW)) {
-                    const ret = try typ(self);
-                    return try self.typeContext.newType(.{ .Fun = .{
-                        .ret = ret,
-                        .args = args.items,
-                        .env = try self.typeContext.newEnv(null),
-                    } });
-                } else if (args.items.len == 1) { // just parens!
-                    return args.items[0];
-                } else if (args.items.len == 0) {
-                    // only Unit tuple is supported.
-                    return try self.definedType(.Unit);
-                } else { // this LOOKS like a tuple, but we don't support tuples yet!
-                    try self.errors.append(.{ .TuplesNotYetSupported = .{} });
-                    return self.typeContext.fresh();
-                }
-            } else if (self.consume(.IDENTIFIER)) |tv| {
-                const tvt = try self.typeContext.newType(.{
-                    .TVar = try self.lookupTVar(tv, inDeclaration),
-                });
-                if (self.check(.RIGHT_ARROW)) {
-                    const args = try self.arena.alloc(AST.Type, 1);
-                    args[0] = tvt;
-                    const ret = try sepTyo(self);
-                    return self.typeContext.newType(.{ .Fun = .{
+            // there's a possibility it's a function!
+            if (self.check(.RIGHT_ARROW)) {
+                const args = try self.arena.alloc(AST.Type, 1);
+                args[0] = ty.t;
+                const ret = try this.sepTyo();
+                return try self.typeContext.newType(.{
+                    .Fun = .{
                         .args = args,
                         .ret = ret,
-                        .env = try self.typeContext.newEnv(null),
-                    } });
-                } else {
-                    return tvt;
-                }
+                        .env = if (this.binding != null)
+                            // in general case
+                            try self.typeContext.newEnv(null)
+                        else
+                            // in external functions, assume no environment.
+                            try self.typeContext.newEnv(&.{}),
+                    },
+                });
             } else {
-                return try typ(self);
+                return ty.t;
             }
-            unreachable;
+        } else if (self.check(.LEFT_PAREN)) {
+            // try parse function (but it can also be an extra paren!)
+            var args = std.ArrayList(AST.Type).init(self.arena);
+            while (!self.check(.RIGHT_PAREN)) {
+                try args.append(try this.sepTyo());
+                if (self.peek().type != .RIGHT_PAREN) {
+                    try self.devour(.COMMA);
+                }
+            }
+
+            if (self.check(.RIGHT_ARROW)) {
+                const ret = try this.typ();
+                return try self.typeContext.newType(.{ .Fun = .{
+                    .ret = ret,
+                    .args = args.items,
+                    .env = try self.typeContext.newEnv(null),
+                } });
+            } else if (args.items.len == 1) { // just parens!
+                return args.items[0];
+            } else if (args.items.len == 0) {
+                // only Unit tuple is supported.
+                return try self.definedType(.Unit);
+            } else { // this LOOKS like a tuple, but we don't support tuples yet!
+                try self.errors.append(.{ .TuplesNotYetSupported = .{} });
+                return self.typeContext.fresh();
+            }
+        } else if (self.consume(.IDENTIFIER)) |tv| {
+            const tvt = try self.typeContext.newType(.{
+                .TVar = try self.lookupTVar(tv, this.binding),
+            });
+            if (self.check(.RIGHT_ARROW)) {
+                const args = try self.arena.alloc(AST.Type, 1);
+                args[0] = tvt;
+                const ret = try this.sepTyo();
+                return self.typeContext.newType(.{ .Fun = .{
+                    .args = args,
+                    .ret = ret,
+                    .env = try self.typeContext.newEnv(null),
+                } });
+            } else {
+                return tvt;
+            }
+        } else {
+            return try this.typ();
         }
-    };
-}
+        unreachable;
+    }
+};
 
 // resolver zone
 fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
@@ -1740,6 +1806,8 @@ fn getInstancesForClass(self: *Self, class: *AST.Class) !Module.DataInstance {
     return foundInsts;
 }
 
+const Constraints = std.HashMap(AST.TVar, std.ArrayList(*AST.Class), AST.TVar.comparator(), std.hash_map.default_max_load_percentage);
+
 fn solveAvailableConstraints(self: *Self) !void {
     var hadChanges = true; // true, because we need to enter the loop at least once.
     while (hadChanges) {
@@ -1787,7 +1855,27 @@ fn solveAvailableConstraints(self: *Self) !void {
                     hadChanges = true;
                 },
                 .Fun => unreachable, // error!
-                .TVar => {}, // right now, ignore. should probably merge it with getting constraints for tvars for perf. also, it would decrease iterations.
+                .TVar => |tv| { // what should i do here?
+                    // const targetClass = assoc.classFun.class;
+                    // // for (tv.classes.items) |class| {
+                    // //     if (targetClass == class) break;
+                    // // } else {
+                    // // }
+
+                    // if (currentFunction) |funId| {
+                    //     if (std.meta.eql(tv.binding, AST.TVar.Binding{ .Function = funId })) {
+                    //         continue;
+                    //     }
+                    // }
+                    _ = tv;
+
+                    // unreachable; // should this happen?
+
+                    // assoc.ref.* = null;
+                    // _ = self.associations.orderedRemove(i);
+                    // try self.errors.append(.{ .TVarDoesNotImplementClass = .{ .tv = tv, .class = targetClass } });
+                    // NOTE: don't assign to hadChanges, because this doesn't impact anything.
+                },
                 .TyVar => {},
             }
         }
@@ -1906,13 +1994,14 @@ fn newTVar(self: *@This(), tvname: Str, binding: ?AST.TVar.Binding) !AST.TVar {
         .uid = self.gen.tvars.newUnique(),
         .name = tvname,
         .binding = binding,
+        .inferred = false,
     };
     try self.scope.currentScope().tvars.put(tvname, tv);
     return tv;
 }
 
 // basically, sometimes when we look up tvars in declarations, we want to define them. slightly hacky, but makes stuff easier.
-fn lookupTVar(self: *Self, tvTok: Token, inDeclaration: bool) !AST.TVar {
+fn lookupTVar(self: *Self, tvTok: Token, binding: ?AST.TVar.Binding) !AST.TVar {
     const tvname = tvTok.literal(self.lexer.source);
     var lastScopes = self.scope.scopes.iterateFromTop();
     while (lastScopes.next()) |cursc| {
@@ -1921,7 +2010,7 @@ fn lookupTVar(self: *Self, tvTok: Token, inDeclaration: bool) !AST.TVar {
         }
     } else {
         // create a new var then.
-        if (!inDeclaration) {
+        if (binding == null) {
             try self.errors.append(.{ .UndefinedTVar = .{
                 .tvname = tvname,
                 .loc = .{
@@ -1931,7 +2020,7 @@ fn lookupTVar(self: *Self, tvTok: Token, inDeclaration: bool) !AST.TVar {
                 },
             } });
         }
-        return try self.newTVar(tvTok.literal(self.lexer.source), null);
+        return try self.newTVar(tvTok.literal(self.lexer.source), binding);
     }
 }
 
@@ -2081,7 +2170,7 @@ const FTVs = struct {
     }
 };
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env, functionId: Unique) !AST.Scheme {
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env, functionId: Unique, constraints: *const Constraints) !AST.Scheme {
     const expectedBinding = AST.TVar.Binding{
         .Function = functionId,
     };
@@ -2122,7 +2211,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     funftvs.difference(&envftvs);
 
     // make tvars out of them
-    // TDO: assign pretty names ('a, 'b, etc.).
+    // TODO: assign pretty names ('a, 'b, etc.).
     var tvars = std.ArrayList(AST.TVar).init(self.arena);
 
     // add defined tvars in this function.
@@ -2138,6 +2227,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             .name = name,
             .uid = self.gen.tvars.newUnique(),
             .binding = expectedBinding,
+            .inferred = true,
         };
         try tvars.append(tv);
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
@@ -2163,7 +2253,23 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             defer i +%= 1;
             switch (self.typeContext.getType(assoc.from)) {
                 .TVar => |assocTV| { // TODO: associate tvars with places they are declared. this can be a tvar of an outside function.
-                    if (!std.meta.eql(assocTV.binding, expectedBinding)) continue;
+                    if (!std.meta.eql(assocTV.binding, expectedBinding)) unreachable; // Since we added errors for TVars (in constraint solving), this should be unreachable.
+
+                    if (!assocTV.inferred) b: {
+                        const assocClass = assoc.classFun.class;
+                        if (constraints.get(assocTV)) |constrs| {
+                            for (constrs.items) |class| {
+                                if (class.uid == assocClass.uid) {
+                                    // OKAY!
+                                    break :b;
+                                }
+                            }
+                        }
+
+                        // here, it's "bruh"
+                        try self.errors.append(.{ .TVarDoesNotImplementClass = .{ .class = assocClass, .tv = assocTV } });
+                    }
+
                     // mkae sure to check it's actually bound to a function.
                     var assocFTVs = FTVs.init(self.arena); // TODO: this is kinda fugly. I should reuse the general ftvs.
                     defer assocFTVs.deinit();
@@ -2176,6 +2282,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .name = name,
                             .uid = self.gen.tvars.newUnique(),
                             .binding = .{ .Function = functionId },
+                            .inferred = true,
                         };
                         try tvars.append(tv);
                         const tvt = try self.typeContext.newType(.{ .TVar = tv });

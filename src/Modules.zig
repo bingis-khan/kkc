@@ -177,7 +177,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     var parser = try Parser.init(lexer, self.prelude, switch (pathtype) {
         .ByModulePath => |modpath| modpath.base,
         .ByFilename => |filename| .{ .isSTD = filename.isSTD, .path = &.{} },
-    }, self, self.errors, self.typeContext, self.al);
+    }, fullPath.path[fullPath.path.len - 1], self, self.errors, self.typeContext, self.al);
     for (self.defaultExports.items) |xports| {
         try parser.addExports(&xports);
     }

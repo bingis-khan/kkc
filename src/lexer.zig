@@ -86,13 +86,22 @@ pub const Lexer = struct {
             '[' => .LEFT_SQBR,
             ']' => .RIGHT_SQBR,
             '&' => .REF,
-            '<' => .LT,
-            '>' => .GT,
+            '<' => b: {
+                if (self.check('=')) {
+                    break :b .LTEQ;
+                }
+                break :b .LT;
+            },
+            '>' => b: {
+                if (self.check('=')) {
+                    break :b .GTEQ;
+                }
+                break :b .GT;
+            },
             ',' => .COMMA,
             '.' => .DOT,
             '=' => b: {
-                if (self.curChar() == '=') {
-                    _ = self.nextChar();
+                if (self.check('=')) {
                     break :b .EQEQ;
                 }
 
@@ -100,8 +109,7 @@ pub const Lexer = struct {
             },
             '+' => .PLUS,
             '-' => b: {
-                if (self.curChar() == '>') {
-                    _ = self.nextChar();
+                if (self.check('>')) {
                     break :b .RIGHT_ARROW;
                 }
 
@@ -215,7 +223,16 @@ pub const Lexer = struct {
             self.source[self.currentIndex + 1];
     }
 
-    fn curChar(self: Self) u8 {
+    fn check(self: *Self, c: u8) bool {
+        if (self.curChar() == c) {
+            _ = self.nextChar();
+            return true;
+        }
+
+        return false;
+    }
+
+    fn curChar(self: *const Self) u8 {
         return self.source[self.currentIndex];
     }
 
