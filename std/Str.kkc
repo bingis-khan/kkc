@@ -23,6 +23,14 @@ inst Str StrConcat
 				print-str(r)
 				return
 
+inst Str Bool
+	print-str (self Bool) -> Unit
+		if self
+			print-str('True')
+		else
+			print-str('False')
+		return
+
 
 inst Str Ptr
 	print-str (self _)

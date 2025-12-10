@@ -5,4 +5,9 @@ fn miau(s a) -> Unit <= Str a
 	Term.println(s)
 	return
 
-miau('miau')
+fn miau-both(l a, r b) <= Str a, Str b
+	Term.println('miau one: \(l)')
+	Term.println('miau two: \(r)')
+	return
+
+miau-both('miau', Tuple2(False, True))
