@@ -125,22 +125,11 @@ pub fn print(self: @This(), c: Ctx) void {
 
 pub const Function = struct {
     name: Var,
-    params: []Param,
+    params: []*Decon,
     ret: Type,
     body: []*Stmt,
     scheme: Scheme,
     env: Env,
-
-    pub const Param = struct {
-        pn: Var,
-        pt: Type,
-
-        fn print(param: @This(), c: Ctx) void {
-            param.pn.print(c);
-            c.s(" ");
-            param.pt.print(c);
-        }
-    };
 
     fn print(self: @This(), c: Ctx) void {
         c.sp("{s} (", .{self.name.name});
@@ -822,12 +811,23 @@ pub const Instance = struct {
 
 pub const ExternalFunction = struct {
     name: Var,
-    params: []Function.Param, // kinda cringe, but whatever. I assume tvars won't come through.
+    params: []Param, // kinda cringe, but whatever. I assume tvars won't come through.
     ret: Type,
 
     scheme: Scheme,
 
     anns: []Annotation,
+
+    pub const Param = struct {
+        pn: Var,
+        pt: Type,
+
+        fn print(param: @This(), c: Ctx) void {
+            param.pn.print(c);
+            c.s(" ");
+            param.pt.print(c);
+        }
+    };
 };
 
 pub const Annotation = struct {

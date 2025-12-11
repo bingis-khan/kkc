@@ -14,14 +14,12 @@ inst IntoIter Map
 		return self
 
 inst Iter Map
-	next (self)
-		case self&
-			Map(it, fun)
-				case next(&it)
-					None
-						return None
-					Just(x)
-						return Just(fun(x))
+	next (Ptr(Map(it, fun)))
+		case next(&it)
+			None
+				return None
+			Just(x)
+				return Just(fun(x))
 
 
 fn map (iterable, fun)
@@ -38,13 +36,11 @@ inst IntoIter Drop
 	into-iter (self Drop it) -> Drop it: self
 
 inst Iter Drop
-	next (self)
-		case self&
-			Drop(it, i)
-				while i > 0
-					_ = next(&it)
-					i <= i - 1
-				return next(&it)
+	next (Ptr(Drop(it, i)))
+		while i > 0
+			_ = next(&it)
+			i <= i - 1
+		return next(&it)
 
 
 fn drop (iterable, i)
@@ -62,10 +58,7 @@ fn to (from, to): Range(from, to)
 fn range (from, to): Range(from, to)
 
 inst IntoIter Range
-	into-iter (self)
-		case self
-			Range(from, to)
-				return RangeIter(self, from)
+	into-iter (Range(from, to)): RangeIter(Range(from, to), from)
 
 inst IntoIter RangeIter
 	into-iter (self RangeIter): self

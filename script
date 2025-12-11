@@ -1,13 +1,18 @@
 #!./zig-out/bin/kkc
 use Term
 
-fn no-return ()
-	pass
+1 to (10)
+	drop(4)
+	drop(2)
+	for-each(Term.println)
 
-fn return-before ()
-	if False
-		return
-	else
-		return
+fn mut(p, x)
+	p <&= x
 
-return 2
+x =& 1
+case x
+	Ptr(n)
+		Term.println(n)
+		mut(&n, 2)
+		Term.println(n)
+Term.println(x)

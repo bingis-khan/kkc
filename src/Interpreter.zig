@@ -16,10 +16,10 @@ scope: *Scope,
 tymap: *const TypeMap,
 funLoader: DyLibLoader,
 typeContext: *const TypeContext,
+prelude: Prelude,
 
 // right now a very simple interpreter where we don't free.
 pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
-    _ = prelude;
     var scope = Scope.init(null, al);
     const scheme = ast.Scheme.empty();
     const tymap = TypeMap{
@@ -33,6 +33,7 @@ pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, al
         .tymap = &tymap,
         .arena = al,
         .funLoader = DyLibLoader.init(al),
+        .prelude = prelude,
     };
     for (modules) |module| {
         self.stmts(module.toplevel) catch |err| switch (err) {
@@ -188,39 +189,45 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool
             return true;
         },
         .Con => |con| {
-            switch (con.con.data.structureType()) {
-                .Opaque => unreachable,
-                .EnumLike => return v.enoom == con.con.tagValue,
-                .RecordLike => {
-                    var off: usize = 0;
-                    for (con.decons) |d| {
-                        const sz = self.sizeOf(d.t);
-                        off += calculatePadding(off, sz.alignment);
-                        if (!try self.tryDeconstruct(d, v.offset(off))) {
-                            return false;
+            // deref
+            if (con.con.data.eq(self.prelude.defined(.Ptr))) {
+                return try self.tryDeconstruct(con.decons[0], v.ptr);
+                //
+            } else {
+                switch (con.con.data.structureType()) {
+                    .Opaque => unreachable,
+                    .EnumLike => return v.enoom == con.con.tagValue,
+                    .RecordLike => {
+                        var off: usize = 0;
+                        for (con.decons) |d| {
+                            const sz = self.sizeOf(d.t);
+                            off += calculatePadding(off, sz.alignment);
+                            if (!try self.tryDeconstruct(d, v.offset(off))) {
+                                return false;
+                            }
+
+                            off += sz.size;
                         }
 
-                        off += sz.size;
-                    }
+                        return true;
+                    },
+                    .ADT => {
+                        if (v.adt.tag != con.con.tagValue) return false;
 
-                    return true;
-                },
-                .ADT => {
-                    if (v.adt.tag != con.con.tagValue) return false;
+                        var off: usize = @sizeOf(Value.Tag);
+                        for (con.decons) |d| {
+                            const sz = self.sizeOf(d.t);
+                            off += calculatePadding(off, sz.alignment);
+                            if (!try self.tryDeconstruct(d, v.offset(off))) {
+                                return false;
+                            }
 
-                    var off: usize = @sizeOf(Value.Tag);
-                    for (con.decons) |d| {
-                        const sz = self.sizeOf(d.t);
-                        off += calculatePadding(off, sz.alignment);
-                        if (!try self.tryDeconstruct(d, v.offset(off))) {
-                            return false;
+                            off += sz.size;
                         }
 
-                        off += sz.size;
-                    }
-
-                    return true;
-                },
+                        return true;
+                    },
+                }
             }
         },
         // else => unreachable,
@@ -426,8 +433,10 @@ fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value) Err!*Value 
         }
     }
 
-    for (fun.params, args) |p, a| {
-        try self.scope.putVar(p.pn, a);
+    for (fun.params, args) |decon, a| {
+        if (!try self.tryDeconstruct(decon, &a.data)) {
+            return error.CaseNotMatched;
+        }
     }
     self.stmts(fun.body) catch |err| switch (err) {
         error.Return => {

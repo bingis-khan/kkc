@@ -250,23 +250,19 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
 
     self.scope.beginScope(&env);
 
-    var params = std.ArrayList(AST.Function.Param).init(self.arena);
+    var params = std.ArrayList(*AST.Decon).init(self.arena);
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
-            const pnt = try self.expect(.IDENTIFIER);
-            const v = try self.newVar(pnt);
+            const decon = try self.deconstruction();
             const nextTok = self.peek().type;
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
                 const pt = try Type.init(
                     self,
                     .{ .Function = fun.name.uid },
                 ).sepTyo();
-                try self.typeContext.unify(v.t, pt);
+                try self.typeContext.unify(decon.t, pt);
             }
-            try params.append(.{
-                .pn = v.v,
-                .pt = v.t,
-            });
+            try params.append(decon);
 
             if (!self.check(.COMMA)) break;
         }
@@ -277,7 +273,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
     // prepare params for a function type.
     const paramTs = try self.arena.alloc(AST.Type, params.items.len);
     for (params.items, 0..) |et, i| {
-        paramTs[i] = et.pt;
+        paramTs[i] = et.t;
     }
 
     // -> ty
@@ -846,7 +842,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
             try self.devour(.LEFT_PAREN);
 
-            var params = std.ArrayList(AST.Function.Param).init(self.arena);
+            var params = std.ArrayList(AST.ExternalFunction.Param).init(self.arena);
             if (!self.check(.RIGHT_PAREN)) {
                 while (true) {
                     const pname = try self.expect(.IDENTIFIER);
@@ -1876,7 +1872,7 @@ fn instantiateFunction(self: *Self, fun: *AST.Function) !struct { t: AST.Type, m
     // mk normal, uninstantiated type.
     var params = std.ArrayList(AST.Type).init(self.arena);
     for (fun.params) |p| {
-        try params.append(p.pt);
+        try params.append(p.t);
     }
 
     const funTy = try self.typeContext.newType(.{
@@ -2273,7 +2269,7 @@ const FTVs = struct {
     }
 };
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []*AST.Decon, ret: AST.Type, env: AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
     const expectedBinding = AST.TVar.Binding{
         .Function = functionId,
     };
@@ -2282,7 +2278,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     var funftvs = FTVs.init(self.arena);
     try self.ftvs(&funftvs, ret);
     for (params) |p| {
-        try self.ftvs(&funftvs, p.pt);
+        try self.ftvs(&funftvs, p.t);
     }
 
     // environment stuff.
@@ -2293,7 +2289,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             .Var => try self.ftvs(&envftvs, inst.t),
             .Fun => |fun| {
                 for (fun.params) |p| {
-                    try self.ftvs(&envftvs, p.pt);
+                    try self.ftvs(&envftvs, p.t);
                 }
 
                 try self.ftvs(&envftvs, fun.ret);
