@@ -1345,16 +1345,27 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         return expr;
     } // grouping
     else if (self.check(.LEFT_BRACE)) {
-        // const t = self.typeContext.fresh();
-        // var definitions = std.ArrayList(AST.Expr.Field).init(self.arena);
-        // while (true) {
-        //     const asd = try self.expect(.IDENTIFIER);
-        //     if (!self.check(.COMMA)) break;
-        // }
-        // try self.devour(.RIGHT_BRACE);
+        var definitions = std.ArrayList(AST.Expr.Field).init(self.arena);
+        while (true) {
+            const name = try self.expect(.IDENTIFIER);
+            try self.devour(.COLON);
+            const expr = try self.expression();
+            try definitions.append(.{ .field = name.literal(self.lexer.source), .value = expr });
 
-        // return self.allocExpr(.{ .e = definitions.items, .t = t });
-        unreachable;
+            if (!self.check(.COMMA)) break;
+        }
+        try self.devour(.RIGHT_BRACE);
+
+        // TODO: deduplicate (and, in this case, error out)
+        const typeFields = try self.arena.alloc(AST.TypeF(AST.Type).Field, definitions.items.len);
+        for (definitions.items, 0..) |def, i| {
+            typeFields[i] = .{ .t = def.value.t, .field = def.field };
+        }
+        const t = try self.typeContext.newType(.{
+            .Anon = typeFields,
+        });
+
+        return self.allocExpr(.{ .e = .{ .AnonymousRecord = definitions.items }, .t = t });
     } // anonymous struct.
     else {
         return self.err(*AST.Expr, "Unexpected term", .{});
@@ -1991,6 +2002,7 @@ fn solveAvailableConstraints(self: *Self) !void {
                     }
                     hadChanges = true;
                 },
+                .Anon => unreachable, // ??? i dunno
                 .Fun => unreachable, // error!
                 .TVar => |tv| { // what should i do here?
                     // const targetClass = assoc.classFun.class;
@@ -2464,6 +2476,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                     i -%= 1;
                     assocsChanged = true;
                 },
+                .Anon => unreachable, // ???
                 .TyVar => {},
                 .Con => unreachable, // should be handled earlier
                 .Fun => unreachable, // -//-
@@ -2481,6 +2494,11 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
     const t = self.typeContext.getType(tref);
     switch (t) {
+        .Anon => |fields| {
+            for (fields) |field| {
+                try self.ftvs(store, field.t);
+            }
+        },
         .TyVar => |tyv| {
             try store.tyvars.insert(.{ .tyv = tyv, .t = tref });
             if (self.typeContext.getFieldsForTVar(tyv)) |fields| {
@@ -2551,6 +2569,17 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
                 .ret = ret,
                 .env = env,
             } });
+        },
+        .Anon => |recs| b: {
+            const mapped = try self.arena.alloc(AST.TypeF(AST.Type).Field, recs.len);
+            for (recs, 0..) |rec, i| {
+                mapped[i] = .{
+                    .t = try self.mapType(match, rec.t),
+                    .field = rec.field,
+                };
+            }
+
+            break :b undefined;
         },
         .TVar => |tv| match.mapTVar(tv) orelse ty,
         .TyVar => ty,

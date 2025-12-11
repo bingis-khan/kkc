@@ -110,6 +110,7 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
     const tt2 = self.getType(t2);
     switch (tt1) {
         .TyVar => unreachable,
+        .Anon => unreachable, // TODO
         .Con => |lcon| {
             switch (tt2) {
                 .Con => |rcon| {
@@ -156,6 +157,19 @@ pub fn getFieldsForTVar(self: *const Self, tyv: ast.TyVar) ?[]ast.Record {
 
 pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
     switch (self.getType(t)) {
+        .Anon => |recs| {
+            for (recs) |rec| {
+                if (common.streq(rec.field, mem)) {
+                    return rec.t;
+                }
+            } else {
+                try self.errors.append(.{ .TypeDoesNotHaveField = .{
+                    .t = t,
+                    .field = mem,
+                } });
+                return try self.fresh();
+            }
+        },
         .TVar => |tv| {
             for (tv.fields) |f| {
                 if (common.streq(f.name, mem)) {

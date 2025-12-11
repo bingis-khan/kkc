@@ -344,7 +344,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                 },
 
                 .ConstructorFunction => {
-                    return self.initRecord(nunbox(fun.data.confun).ptr, c.args);
+                    return self.initRecord(nunbox(fun.data.confun).ptr, c.args, e.t);
                 },
 
                 .None => unreachable,
@@ -377,11 +377,47 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                         .ogPtr = null,
                     },
                 }),
-                .Access => unreachable,
+                .Access => |mem| b: {
+                    switch (self.typeContext.getType(uop.e.t)) {
+                        .Anon => |fields| {
+                            var size: usize = 0;
+                            for (fields) |field| {
+                                const sz = self.sizeOf(field.t);
+                                size += calculatePadding(size, sz.alignment);
+                                if (common.streq(field.field, mem)) {
+                                    break :b try self.copyValue(v.data.offset(size), field.t);
+                                }
+
+                                size += sz.size;
+                            } else {
+                                unreachable;
+                            }
+                        },
+                        else => unreachable,
+                    }
+                },
             };
         },
 
-        else => unreachable,
+        .AnonymousRecord => |recs| {
+            // THIS ASSUMES THAT RECORDS GET THAT `setType` TREATMENT
+            // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
+            const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(e.t).size);
+            var stream = std.io.fixedBufferStream(buf);
+            const w = stream.writer();
+
+            try w.writeByteNTimes(undefined, @sizeOf(Header));
+            try pad(w, @alignOf(Header));
+
+            for (recs) |rec| {
+                _ = try self.writeExpr(w, rec.value);
+            }
+
+            const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
+            vptr.header.functionType = .None;
+
+            return vptr;
+        },
     }
 
     unreachable;
@@ -530,6 +566,8 @@ const Header = extern struct {
         ConstructorFunction,
         None,
     };
+
+    const PaddedSize = @sizeOf(Header) + calculatePadding(@sizeOf(Header), @alignOf(Header));
 };
 
 fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
@@ -576,15 +614,16 @@ fn initValue(self: *const Self, v: Value) !*Value {
     return try common.allocOne(self.arena, v);
 }
 
-fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr) !*Value {
+fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !*Value {
     // alignment:
     // https://youtu.be/E0QhZ6tNoR  <= "alignment" is actually a place where values can live.
     // I get it, but why (in the video example) the trailing padding is aligned to 8? because of last member?
     // I think it gets padded to the largest struct.
     //   (watch out: it's incomplete, because from some Zig issue I've seen, i128 padding might be 8)
     //  nested structs do not create "big alignments". If the struct's max alignment was 8, it gets carred to the outer struct.
-    var buf = std.ArrayList(u8).init(self.arena);
-    var w = buf.writer();
+    const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(t).size);
+    var stream = std.io.fixedBufferStream(buf);
+    var w = stream.writer();
 
     // preallocate stuff for Value and align to 8 to make sure the payload will be correctly aligned.
     try w.writeByteNTimes(undefined, @sizeOf(Header));
@@ -599,26 +638,32 @@ fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr) !*Value {
 
     // remember: check bytes written with `w.context.items.len`
     for (args) |a| {
-        const ty = a.t;
-        const v = try self.expr(a);
-        const sz = self.sizeOf(ty);
-        try pad(w, sz.alignment);
-        try w.writeAll(v.data.slice(sz.size));
+        const alignment = try self.writeExpr(w, a);
 
-        maxAlignment = @max(maxAlignment, sz.alignment);
+        maxAlignment = @max(maxAlignment, alignment);
     }
 
     // write ending padding (from experiments it's based on max padding.)
     try pad(w, maxAlignment);
 
-    const vptr: *Value = @alignCast(@ptrCast(w.context.items.ptr));
+    const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
     vptr.header.functionType = .None;
 
     return vptr;
 }
 
-fn pad(w: std.ArrayList(u8).Writer, alignment: usize) !void {
-    const i = w.context.items.len;
+fn writeExpr(self: *Self, w: anytype, a: *ast.Expr) !usize {
+    const ty = a.t;
+    const v = try self.expr(a);
+    const sz = self.sizeOf(ty);
+    try pad(w, sz.alignment);
+    try w.writeAll(v.data.slice(sz.size));
+
+    return sz.alignment;
+}
+
+fn pad(w: anytype, alignment: usize) !void {
+    const i = w.context.pos;
     const padding = calculatePadding(i, alignment);
     if (padding != 0) { // no padding needed when padding == alignment
         try w.writeByteNTimes(undefined, padding);
@@ -637,6 +682,9 @@ fn calculatePadding(cur: usize, alignment: usize) usize {
 const Sizes = struct { size: usize, alignment: usize };
 fn sizeOf(self: *Self, t: ast.Type) Sizes {
     switch (self.typeContext.getType(t)) {
+        .Anon => |fields| {
+            return self.sizeOfAnon(fields, 0);
+        },
         .Con => |c| {
             const oldTyMap = self.tymap;
             const tymap = TypeMap{
@@ -706,6 +754,26 @@ fn sizeOfCon(self: *Self, con: *const ast.Con, beginOff: usize) Sizes {
     // SMELL: duplicate logic with initRecord
     var maxAlignment: usize = 1;
     for (con.tys) |ty| {
+        const sz = self.sizeOf(ty);
+        const padding = calculatePadding(off, sz.alignment);
+        off += padding + sz.size;
+        maxAlignment = @max(maxAlignment, sz.alignment);
+    }
+
+    off += calculatePadding(off, maxAlignment);
+    return .{
+        .size = off,
+        .alignment = maxAlignment,
+    };
+}
+
+// stupid copy
+fn sizeOfAnon(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usize) Sizes {
+    var off = beginOff;
+    // SMELL: duplicate logic with initRecord
+    var maxAlignment: usize = 1;
+    for (fields) |field| {
+        const ty = field.t;
         const sz = self.sizeOf(ty);
         const padding = calculatePadding(off, sz.alignment);
         off += padding + sz.size;

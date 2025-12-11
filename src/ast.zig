@@ -340,7 +340,6 @@ pub const Expr = struct {
     e: union(enum) {
         BinOp: struct { l: Rec, op: BinOp, r: Rec },
         UnOp: struct { e: Rec, op: UnOp },
-        Access: struct { e: Rec, acc: Str },
         Call: struct { callee: Rec, args: []Rec },
         Var: struct { v: VarType, match: *Match(Type) }, // NOTE: Match is owned here!
         Con: *Con,
@@ -354,7 +353,7 @@ pub const Expr = struct {
         value: Rec,
 
         pub fn print(self: @This(), c: Ctx) void {
-            c.s(.{ self.field, ": ", self.value });
+            c.print(.{ self.field, ": ", self.value });
         }
     };
 
@@ -433,10 +432,6 @@ pub const Expr = struct {
                 }
                 c.s(")");
             },
-            .Access => |acc| {
-                acc.e.print(c);
-                c.sp(".{s}", .{acc.acc});
-            },
             .Call => |call| {
                 call.callee.print(c);
                 c.s("(");
@@ -444,7 +439,9 @@ pub const Expr = struct {
                 c.s(")");
             },
 
-            .AnonymousRecord => unreachable,
+            .AnonymousRecord => |fields| {
+                c.encloseSepBy(fields, ", ", "{", "}");
+            },
         }
         c.s(" :: ");
         self.t.print(c);
@@ -582,14 +579,26 @@ pub const TVar = struct {
 pub fn TypeF(comptime a: ?type) type {
     return union(enum) {
         const Rec = a orelse *@This();
+        pub const Field = struct {
+            t: Rec,
+            field: Str,
+
+            pub fn print(self: @This(), c: Ctx) void {
+                c.print(.{ self.field, ": ", self.t });
+            }
+        };
 
         Con: struct { type: *Data, application: *Match(Rec) },
         Fun: struct { args: []Rec, ret: Rec, env: EnvRef },
         TVar: TVar,
         TyVar: TyVar,
+        Anon: []Field,
 
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
+                .Anon => |fields| {
+                    c.encloseSepBy(fields, ", ", "{ ", " }");
+                },
                 .Con => |con| {
                     if (con.application.tvars.len > 0) {
                         c.s("(");

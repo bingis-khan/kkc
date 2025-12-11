@@ -1,11 +1,11 @@
 #!./zig-out/bin/kkc
 use Term
 
-# x = { some-int: 1 }
-# return x.some-int
+# fn fun(x)
+# 	(x.miau + 0) Term.println()
+# 	(x.cock + 0) Term.println()
 
-fn fun(x)
-	(x.miau + 0) Term.println()
-	(x.cock + 0) Term.println()
+# fun(Unit)
 
-fun(Unit)
+x = { cock: True, miau: 'asd', some-int: 69 }
+return x.some-int
