@@ -1610,6 +1610,22 @@ const Type = struct {
                 // TODO: signal error
                 unreachable;
             }
+        } else if (self.check(.LEFT_BRACE)) {
+            var fields = std.ArrayList(AST.TypeF(AST.Type).Field).init(self.arena);
+            while (true) {
+                const field = try self.expect(.IDENTIFIER);
+                try self.devour(.COLON);
+                const t = try this.sepTyo();
+                try fields.append(.{
+                    .t = t,
+                    .field = field.literal(self.lexer.source),
+                });
+
+                if (!self.check(.COMMA)) break;
+            }
+            try self.devour(.RIGHT_BRACE);
+
+            return try self.typeContext.newType(.{ .Anon = fields.items });
         } else {
             return try self.err(AST.Type, "Expect type", .{});
         }

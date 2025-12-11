@@ -12,9 +12,12 @@ fn what(): { ok: 1}
 fn uni(l a, r a)
 	pass
 
-fn retanon(): { whatever: what }
+fn retanon() -> { whatever: { miau: Int } }: { whatever: { miau: 69 } }
+
+fn unicock(l { cock: Int}, r { cock: Int })
+	uni(l, r)
 
 x = { some-int: 123,cock: False }
 y = { cock: True, some-int: 55 }
 uni(x, y)
-return retanon().whatever().ok
+return retanon().whatever.miau
