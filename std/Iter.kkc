@@ -48,6 +48,25 @@ fn drop (iterable, i)
 	return Drop(it, i)
 
 
+# Takeeee
+Take it
+	Take it Int
+
+inst IntoIter Take
+	into-iter(self): self
+
+inst Iter Take
+	next(Ptr(Take(it, i)))
+		if i > 0
+			x = next(&it)
+			i <= i - 1
+			return x
+		else
+			return None
+
+fn take(it, i): Take(it into-iter(), i)
+
+
 Range
 	Range Int Int
 

@@ -11,4 +11,5 @@ use Iter
 	map
 	for-each
 	drop
+	take
 	
