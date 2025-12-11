@@ -653,11 +653,11 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     };
                 },
                 .RecordLike => {
-                    return self.sizeOfCon(&c.type.cons[0], 0);
+                    return self.sizeOfCon(&c.type.stuff.cons[0], 0);
                 },
                 .ADT => {
                     var max: ?Sizes = null;
-                    for (c.type.cons) |*con| {
+                    for (c.type.stuff.cons) |*con| {
                         const sz = self.sizeOfCon(con, @sizeOf(Value.Tag));
                         if (max) |*m| {
                             if (sz.size > m.size) {

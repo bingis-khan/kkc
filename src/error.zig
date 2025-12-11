@@ -81,6 +81,18 @@ pub const Error = union(enum) {
         tvname: Str,
     },
 
+    // TODO: make it a warning (unlike ziggers)
+    UnreachableCode: struct {}, // do something cool: take only lines and show:
+    // unreachable code
+    //     return 69  <- from here
+    // --- Term.println('owo')
+    // |   if miau
+    // |     do-sth()
+    // |   else
+    // ---   dupa()
+
+    MissingReturn: struct {},
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -121,6 +133,8 @@ pub const Error = union(enum) {
             .ConstraintsLeft => |e| p("num constraints left in module '{s}': {}", .{ e.module, e.numConstraints }),
             .TVarDoesNotImplementClass => |e| p("tvar {s} does not implement class {s}", .{ e.tv.name, e.class.name }),
             .ConstrainedNonExistentTVar => |e| p("constrained non existent tvar {s}", .{e.tvname}),
+            .UnreachableCode => p("unreachable code", .{}),
+            .MissingReturn => p("missing return", .{}),
         }
     }
 };

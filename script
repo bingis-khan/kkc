@@ -1,24 +1,13 @@
 #!./zig-out/bin/kkc
 use Term
 
-fn miau(s a) -> Unit <= Str a
-	Term.println(s)
-	return
+fn no-return ()
+	pass
 
-class Miau
-	dupsko (self _, ayo a) <= Str a
-
-inst Miau Int
-	dupsko (self _, ayo a)
+fn return-before ()
+	if False
+		return
+	else
 		return
 
-NoStr
-	NoStr
-x = dupsko(1, NoStr)
-
-fn miau-both(l a, r b) <= Str a, Str b
-	Term.println('miau one: \(l)')
-	Term.println('miau two: \(r)')
-	return
-
-miau-both('miau', Tuple2(False, True))
+return 2

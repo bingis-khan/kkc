@@ -620,7 +620,10 @@ pub const Data = struct {
     uid: Unique,
     name: Str,
     scheme: Scheme,
-    cons: []Con,
+    stuff: union(enum) {
+        cons: []Con,
+        recs: []Record,
+    },
 
     pub fn eq(l: *const @This(), r: *const @This()) bool {
         return l.uid == r.uid;
@@ -636,21 +639,30 @@ pub const Data = struct {
         RecordLike,
         ADT,
     } {
-        if (self.cons.len == 0) return .Opaque;
+        if (self.stuff.cons.len == 0) return .Opaque;
+
+        const cons = switch (self.stuff) {
+            .cons => |cons| cons,
+            .recs => return .RecordLike,
+        };
 
         var noTys = true;
-        for (self.cons) |c| {
+        for (cons) |c| {
             noTys = noTys and c.tys.len == 0;
         }
 
         if (noTys) {
             return .EnumLike;
-        } else if (self.cons.len == 1) {
+        } else if (cons.len == 1) {
             return .RecordLike;
         } else {
             return .ADT;
         }
     }
+};
+pub const Record = struct {
+    name: Str,
+    t: Type,
 };
 
 pub const Scheme = struct {

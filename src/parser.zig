@@ -38,12 +38,27 @@ base: Module.BasePath,
 // type zone
 typeContext: *TypeContext,
 prelude: ?Prelude,
+
 returnType: ?AST.Type,
+returned: ReturnStatus, // statement level check if something was returned.
+triedReturningAtAll: bool, // function level check if we even tried returning something. if this is true, returnType must not be null.
+
 selfType: ?AST.Type, // this is used in class and instance context. Whenever it's defined, the user is able to reference the instance type by '_'. In nested instances, obviously points to the innermost one.
 associations: std.ArrayList(Association),
 modules: *Modules,
 importedModules: Imports,
 
+const ReturnStatus = enum {
+    Nah,
+    Returned,
+    Errored,
+
+    fn alternative(self: @This(), other: @This()) @This() {
+        if (self == .Nah or other == .Nah) return .Nah;
+        if (self == .Errored or other == .Errored) return .Errored;
+        return .Returned;
+    }
+};
 const Imports = std.HashMap(Module.Path, ?Module, Module.PathCtx, std.hash_map.default_max_load_percentage);
 
 const Self = @This();
@@ -66,6 +81,8 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str,
         // typeshit
         .typeContext = context,
         .returnType = null,
+        .triedReturningAtAll = false,
+        .returned = .Nah,
         .selfType = null,
         .prelude = prelude,
 
@@ -161,7 +178,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
             break :b try Common.allocOne(self.arena, AST.Data{
                 .uid = uid,
                 .name = typename.literal(self.lexer.source),
-                .cons = &.{},
+                .stuff = .{ .cons = &.{} },
                 .scheme = .{
                     .tvars = tvars.items,
                     .envVars = &.{},
@@ -180,38 +197,57 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
         }; // TODO: check for repeating tvars and such.
 
         var cons = std.ArrayList(AST.Con).init(self.arena);
+        var recs = std.ArrayList(AST.Record).init(self.arena);
         var tag: u32 = 0;
         while (!self.check(.DEDENT)) {
-            const conName = try self.expect(.TYPE);
-            var tys = std.ArrayList(AST.Type).init(self.arena);
-            while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
-                // TODO: for now, no complicated types!
-                const ty = try Type.init(self, .{ .Data = data.uid }).typ();
-                try tys.append(ty);
-            }
-            self.consumeSeps();
+            if (self.consume(.IDENTIFIER)) |recname| {
+                // asd
+                const t = try Type.init(self, .{ .Data = data.uid }).sepTyo();
+                try recs.append(.{
+                    .name = recname.literal(self.lexer.source),
+                    .t = t,
+                });
+                try self.endStmt();
+            } else if (self.consume(.TYPE)) |conName| {
+                var tys = std.ArrayList(AST.Type).init(self.arena);
+                while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
+                    // TODO: for now, no complicated types!
+                    const ty = try Type.init(self, .{ .Data = data.uid }).typ();
+                    try tys.append(ty);
+                }
+                self.consumeSeps();
 
-            try cons.append(.{
-                .uid = self.gen.cons.newUnique(),
-                .name = conName.literal(self.lexer.source),
-                .tys = tys.items,
-                .data = data,
-                .tagValue = tag,
-            });
+                try cons.append(.{
+                    .uid = self.gen.cons.newUnique(),
+                    .name = conName.literal(self.lexer.source),
+                    .tys = tys.items,
+                    .data = data,
+                    .tagValue = tag,
+                });
 
-            tag += 1;
+                tag += 1;
+            } else unreachable;
         }
 
-        data.cons = cons.items;
+        data.stuff = .{ .cons = cons.items };
         break :b data;
     };
     try self.newData(data);
 }
 
 fn function(self: *Self, fun: *AST.Function) !*AST.Function {
+    const oldTriedReturningAtAll = self.triedReturningAtAll;
+    const oldReturned = self.returned;
+    defer {
+        self.triedReturningAtAll = oldTriedReturningAtAll;
+        self.returned = oldReturned;
+    }
+    self.triedReturningAtAll = false;
+    self.returned = .Nah;
 
     // already begin env
     var env = Env.init(self.arena);
+
     self.scope.beginScope(&env);
 
     var params = std.ArrayList(AST.Function.Param).init(self.arena);
@@ -265,11 +301,31 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
         // set return and parse body
         const oldReturnType = self.returnType;
         self.returnType = ret;
-        const fnBody = try self.body();
+        const fnBodyAndReturnStatus = try self.body();
+        var fnBody = fnBodyAndReturnStatus.stmts;
+        const returnStatus = fnBodyAndReturnStatus.returnStatus;
+
+        if (!self.triedReturningAtAll) {
+            try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn()));
+        } else if (returnStatus == .Nah) retcheck: {
+            switch (self.typeContext.getType(self.returnType.?)) {
+                .Con => |c| if (c.type.uid == (try self.defined(.Unit)).data.uid) {
+                    try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn()));
+                    break :retcheck;
+                },
+                else => {},
+            }
+
+            // otherwise
+            try self.errors.append(.{ .MissingReturn = .{} });
+        }
+
         self.returnType = oldReturnType;
 
-        break :b fnBody;
+        break :b fnBody.items;
     };
+
+    // const lastStmt = fnBody[fnBody.len - 1];
 
     try self.solveAvailableConstraints();
 
@@ -293,7 +349,11 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
     return fun;
 }
 
-fn body(self: *Self) ![]*AST.Stmt {
+fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: ReturnStatus } {
+    std.debug.assert(self.returned != .Returned);
+    const oldReturned = self.returned;
+    defer self.returned = oldReturned;
+
     try self.devour(.INDENT);
 
     self.scope.beginScope(null);
@@ -306,10 +366,15 @@ fn body(self: *Self) ![]*AST.Stmt {
     }
     self.scope.endScope();
 
-    return stmts.items;
+    return .{ .stmts = stmts, .returnStatus = self.returned };
 }
 
 fn statement(self: *Self) ParserError!?*AST.Stmt {
+    if (self.returned == .Returned) {
+        try self.errors.append(.{ .UnreachableCode = .{} });
+        self.returned = .Errored;
+    }
+
     // try parse annotations.
     // It's possible to divide annotations in multiple lines:
     //  #[linkname 'printf']
@@ -360,14 +425,17 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 try self.finishFold(pm);
                 break :bb e;
             } else bb: {
-                const t = try self.definedType(.Unit);
                 try self.endStmt();
-                const con = &self.typeContext.getType(t).Con.type.cons[0]; // WARNING: funny casts
+                const t = try self.definedType(.Unit);
+                const con = &self.typeContext.getType(t).Con.type.stuff.cons[0]; // WARNING: funny casts
                 break :bb try self.allocExpr(.{
                     .t = t,
                     .e = .{ .Con = con },
                 });
             };
+
+            self.triedReturningAtAll = true;
+            if (self.returned != .Errored) self.returned = .Returned;
 
             try self.typeContext.unify(expr.t, try self.getReturnType());
 
@@ -437,7 +505,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                                     if (dataOrClass) |doc| {
                                         switch (doc) {
                                             .Data => |d| {
-                                                for (d.cons) |*con| {
+                                                for (d.stuff.cons) |*con| {
                                                     if (Common.streq(con.name, cname)) {
                                                         try self.scope.currentScope().cons.put(cname, con);
                                                         break;
@@ -607,20 +675,29 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         else if (self.check(.IF)) {
             const cond = try self.expression();
             try self.typeContext.unify(cond.t, try self.definedType(.Bool));
-            const bTrue = try self.body();
+            const bTrueBod = try self.body();
+            const bTrue = bTrueBod.stmts.items;
+            var returnStatus = bTrueBod.returnStatus;
 
             var elifs = std.ArrayList(AST.Stmt.Elif).init(self.arena);
             while (self.check(.ELIF)) {
                 const elifCond = try self.expression();
                 try self.typeContext.unify(elifCond.t, try self.definedType(.Bool));
-                const elifBody = try self.body();
-                try elifs.append(AST.Stmt.Elif{ .cond = elifCond, .body = elifBody });
+                const elifBodyAndStatus = try self.body();
+                returnStatus = returnStatus.alternative(elifBodyAndStatus.returnStatus);
+                try elifs.append(AST.Stmt.Elif{ .cond = elifCond, .body = elifBodyAndStatus.stmts.items });
             }
 
-            const elseBody = if (self.check(.ELSE))
-                try self.body()
-            else
-                null;
+            const elseBody = if (self.check(.ELSE)) els: {
+                const bod = try self.body();
+                returnStatus = returnStatus.alternative(bod.returnStatus);
+                break :els bod.stmts.items;
+            } else els: {
+                returnStatus = .Nah;
+                break :els null;
+            };
+
+            self.returned = returnStatus;
 
             // incomplete
             break :b .{ .If = .{
@@ -635,24 +712,31 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             const boolTy = try self.definedType(.Bool);
             try self.typeContext.unify(cond.t, boolTy);
             const bod = try self.body();
+            self.returned = bod.returnStatus;
             break :b .{ .While = .{
                 .cond = cond,
-                .body = bod,
+                .body = bod.stmts.items,
             } };
         } // while
         else if (self.check(.CASE)) {
             const switchOn = try self.expression();
 
+            var returnStatus = ReturnStatus.Returned; // mempty-like
             var cases = std.ArrayList(AST.Case).init(self.arena);
             try self.devour(.INDENT);
             self.scope.beginScope(null);
             while (!self.check(.DEDENT)) {
                 const decon = try self.deconstruction();
                 try self.typeContext.unify(switchOn.t, decon.t);
-                const stmts = try self.body();
-                try cases.append(.{ .decon = decon, .body = stmts });
+                const bod = try self.body();
+                try cases.append(.{ .decon = decon, .body = bod.stmts.items });
+                returnStatus = returnStatus.alternative(bod.returnStatus);
             }
             self.scope.endScope();
+
+            self.returned = returnStatus;
+
+            // check here for exhaustiveness. If not exhaustive, add .Nah OR I disallow non-exhaustive cases.
 
             break :b .{
                 .Switch = .{
@@ -834,6 +918,15 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
     return null;
 }
 
+fn unitReturn(self: *Self) !AST.Stmt {
+    const t = try self.definedType(.Unit);
+    const con = &self.typeContext.getType(t).Con.type.stuff.cons[0]; // WARNING: funny casts
+    return .{ .Return = try self.allocExpr(.{
+        .t = t,
+        .e = .{ .Con = con },
+    }) };
+}
+
 // for single line statements that do not contain a body.
 // (why? in IF and such, a dedent is equivalent to STMTSEP, so we must accept both. it depends on the type of statement.)
 fn endStmt(self: *Self) !void {
@@ -893,7 +986,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     const scheme = AST.Scheme{
         .tvars = tvars.items,
         .envVars = &.{}, // TEMP
-        .associations = &.{}, // NOTE: this will change when class constraints are allowed on functions. EDIT: Or not??? We have no constraints to specify. I have to think about this more... later.
+        .associations = &.{}, // NOTE: this will change when class constraints are allowed on functions. EDIT: Or not??? We have no constraints to specify, because these constraints are not based on class function calls. Right now, I'll leave it alone because of our "broken" type system.
     };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
@@ -1391,7 +1484,7 @@ fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
                     .args = sci.tyArgs,
                     .env = try self.typeContext.newEnv(&.{}),
                 } }),
-                .e = .{ .Con = &sc.data.cons[0] },
+                .e = .{ .Con = &sc.data.stuff.cons[0] },
             }),
             .args = args,
         } },
@@ -1899,7 +1992,7 @@ fn newData(self: *@This(), data: *AST.Data) !void {
     try self.scope.currentScope().types.put(data.name, .{ .Data = data });
 
     // add constructors
-    for (data.cons) |*con| {
+    for (data.stuff.cons) |*con| {
         try self.scope.currentScope().cons.put(con.name, con);
     }
 }
@@ -1968,7 +2061,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
     const placeholderType = try Common.allocOne(self.arena, AST.Data{
         .name = typename,
         .uid = self.gen.vars.newUnique(),
-        .cons = &.{},
+        .stuff = .{ .cons = &.{} },
         .scheme = AST.Scheme.empty(),
     });
     try self.errors.append(.{
@@ -2071,8 +2164,8 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
         const data = try self.arena.create(AST.Data);
         data.uid = self.gen.types.newUnique();
         data.name = conName;
-        data.cons = try self.arena.alloc(AST.Con, 1);
-        data.cons[0] = .{
+        data.stuff.cons = try self.arena.alloc(AST.Con, 1);
+        data.stuff.cons[0] = .{
             .uid = self.gen.cons.newUnique(),
             .name = conName,
             .tys = &.{},
@@ -2089,7 +2182,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
         });
 
         // return placeholder var after an error.
-        return .{ .con = &data.cons[0], .t = try self.typeContext.fresh(), .tys = &.{} };
+        return .{ .con = &data.stuff.cons[0], .t = try self.typeContext.fresh(), .tys = &.{} };
     }
 }
 
@@ -2489,6 +2582,8 @@ fn addInstance(self: *Self, instance: *AST.Instance) !void {
 
 const Scope = struct {
     al: std.mem.Allocator,
+    // TODO: instead of this stack, we should just use the program stack!
+    //   But data locality is then scuffed...?
     scopes: stack.Fixed(CurrentScope, Common.MaxIndent),
 
     pub fn init(al: std.mem.Allocator) @This() {

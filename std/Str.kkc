@@ -8,12 +8,10 @@ class Str
 inst Str Int
 	print-str (self Int) -> Unit
 		Cnile.printf1('%d', self)
-		return
 
 inst Str ConstStr
 	print-str (self _) -> Unit
 		Cnile.printf1('%s', self)
-		return
 
 inst Str StrConcat
 	print-str (self _) -> Unit
@@ -21,7 +19,6 @@ inst Str StrConcat
 			StrConcat(l, r)
 				print-str(l)
 				print-str(r)
-				return
 
 inst Str Bool
 	print-str (self Bool) -> Unit
@@ -29,13 +26,11 @@ inst Str Bool
 			print-str('True')
 		else
 			print-str('False')
-		return
 
 
 inst Str Ptr
 	print-str (self _)
 		_ = print-str(self&)
-		return
 
 
 inst Str Maybe
@@ -46,7 +41,6 @@ inst Str Maybe
 
 			Just(x)
 				print-str('Just(\(x))')
-		return
 
 
 inst Str Tuple2
@@ -54,4 +48,3 @@ inst Str Tuple2
 		case tup
 			Tuple2(l, r)
 				print-str('(\(l), \(r))')
-				return
