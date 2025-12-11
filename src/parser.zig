@@ -251,36 +251,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
         try self.typeContext.unify(ret, retTy);
     }
 
-    // <= constraint (, constraint)*
-    var constraints = std.HashMap(AST.TVar, std.ArrayList(*AST.Class), AST.TVar.comparator(), std.hash_map.default_max_load_percentage).init(self.arena); // maybe I should just use pointers to vars?
-    if (self.check(.LTEQ)) {
-        while (true) {
-            const classTok = try self.expect(.TYPE);
-            const tvt = try self.expect(.IDENTIFIER);
-
-            if (self.maybeLookupType(classTok.literal(self.lexer.source))) |dataOrClass| b: {
-                switch (dataOrClass) {
-                    .Class => |class| {
-                        const tvarName = tvt.literal(self.lexer.source);
-                        const tvar = self.scope.currentScope().tvars.get(tvarName) orelse {
-                            // NOTE: we're looking only at current scope, so we won't find any named tvars from other functions.
-                            try self.errors.append(.{ .ConstrainedNonExistentTVar = .{ .tvname = tvarName } });
-                            break :b;
-                        };
-
-                        const e = try constraints.getOrPutValue(tvar, std.ArrayList(*AST.Class).init(self.arena)); // NOTE: source says it's not allocating anything until an element is inserted.
-
-                        try e.value_ptr.append(class);
-                    },
-                    .Data => unreachable,
-                }
-            } else {
-                unreachable; // TODO: error
-            }
-
-            if (!self.check(.COMMA)) break;
-        }
-    }
+    const constraints_ = try self.constraints();
 
     const fnBody = if (self.check(.COLON)) b: {
         const expr = try self.expression();
@@ -307,7 +278,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
     const definedTVars = self.scope.currentScope().tvars;
     self.scope.endScope(); // finish env.
 
-    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items, fun.name.uid, &constraints);
+    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items, fun.name.uid, &constraints_);
 
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
@@ -902,6 +873,11 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
 
     // another new eye candy - default Unit
     const ret = if (self.check(.RIGHT_ARROW)) try Type.init(self, .{ .ClassFunction = uid }).sepTyo() else try self.definedType(.Unit);
+
+    // constraints
+    const constraints_ = try self.constraints();
+    _ = constraints_;
+
     try self.endStmt();
     const tvarsMap = self.scope.currentScope().tvars;
     self.scope.endScope();
@@ -917,7 +893,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     const scheme = AST.Scheme{
         .tvars = tvars.items,
         .envVars = &.{}, // TEMP
-        .associations = &.{}, // NOTE: this will change when class constraints are allowed on functions.
+        .associations = &.{}, // NOTE: this will change when class constraints are allowed on functions. EDIT: Or not??? We have no constraints to specify. I have to think about this more... later.
     };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
@@ -932,6 +908,42 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         .self = classSelf.t,
         .class = class,
     });
+}
+
+// parse constraints <= constr (, constr)*
+const Constraints = std.HashMap(AST.TVar, std.ArrayList(*AST.Class), AST.TVar.comparator(), std.hash_map.default_max_load_percentage);
+fn constraints(self: *Self) !Constraints {
+    var constraints_ = Constraints.init(self.arena); // maybe I should just use pointers to vars?
+    if (self.check(.LTEQ)) {
+        while (true) {
+            const classTok = try self.expect(.TYPE);
+            const tvt = try self.expect(.IDENTIFIER);
+
+            if (self.maybeLookupType(classTok.literal(self.lexer.source))) |dataOrClass| b: {
+                switch (dataOrClass) {
+                    .Class => |class| {
+                        const tvarName = tvt.literal(self.lexer.source);
+                        const tvar = self.scope.currentScope().tvars.get(tvarName) orelse {
+                            // NOTE: we're looking only at current scope, so we won't find any named tvars from other functions.
+                            try self.errors.append(.{ .ConstrainedNonExistentTVar = .{ .tvname = tvarName } });
+                            break :b;
+                        };
+
+                        const e = try constraints_.getOrPutValue(tvar, std.ArrayList(*AST.Class).init(self.arena)); // NOTE: source says it's not allocating anything until an element is inserted.
+
+                        try e.value_ptr.append(class);
+                    },
+                    .Data => unreachable,
+                }
+            } else {
+                unreachable; // TODO: error
+            }
+
+            if (!self.check(.COMMA)) break;
+        }
+    }
+
+    return constraints_;
 }
 
 fn deconstruction(self: *Self) !*AST.Decon {
@@ -1806,8 +1818,6 @@ fn getInstancesForClass(self: *Self, class: *AST.Class) !Module.DataInstance {
     return foundInsts;
 }
 
-const Constraints = std.HashMap(AST.TVar, std.ArrayList(*AST.Class), AST.TVar.comparator(), std.hash_map.default_max_load_percentage);
-
 fn solveAvailableConstraints(self: *Self) !void {
     var hadChanges = true; // true, because we need to enter the loop at least once.
     while (hadChanges) {
@@ -2170,7 +2180,7 @@ const FTVs = struct {
     }
 };
 const FTV = struct { tyv: AST.TyVar, t: AST.Type };
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env, functionId: Unique, constraints: *const Constraints) !AST.Scheme {
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []AST.Function.Param, ret: AST.Type, env: AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
     const expectedBinding = AST.TVar.Binding{
         .Function = functionId,
     };
@@ -2257,7 +2267,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 
                     if (!assocTV.inferred) b: {
                         const assocClass = assoc.classFun.class;
-                        if (constraints.get(assocTV)) |constrs| {
+                        if (constraints_.get(assocTV)) |constrs| {
                             for (constrs.items) |class| {
                                 if (class.uid == assocClass.uid) {
                                     // OKAY!
