@@ -377,6 +377,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                         .ogPtr = null,
                     },
                 }),
+                .Access => unreachable,
             };
         },
 

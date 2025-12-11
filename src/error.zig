@@ -93,6 +93,18 @@ pub const Error = union(enum) {
 
     MissingReturn: struct {},
 
+    RecordsAndConstructorsPresent: struct {},
+
+    TypeDoesNotHaveField: struct {
+        t: ast.Type,
+        field: Str,
+    },
+
+    TypeIsNotARecord: struct {
+        t: ast.Type,
+        field: Str,
+    },
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -135,6 +147,13 @@ pub const Error = union(enum) {
             .ConstrainedNonExistentTVar => |e| p("constrained non existent tvar {s}", .{e.tvname}),
             .UnreachableCode => p("unreachable code", .{}),
             .MissingReturn => p("missing return", .{}),
+            .RecordsAndConstructorsPresent => p("records and constructors present", .{}),
+            .TypeDoesNotHaveField => |e| {
+                c.print(.{ "type ", e.t, " does not implement field ", e.field, "\n" });
+            },
+            .TypeIsNotARecord => |e| {
+                c.print(.{ "type ", e.t, " is not a record, so it cannot have a field ", e.field, "\n" });
+            },
         }
     }
 };

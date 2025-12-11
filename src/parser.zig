@@ -201,7 +201,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
         var tag: u32 = 0;
         while (!self.check(.DEDENT)) {
             if (self.consume(.IDENTIFIER)) |recname| {
-                // asd
+                // record
                 const t = try Type.init(self, .{ .Data = data.uid }).sepTyo();
                 try recs.append(.{
                     .name = recname.literal(self.lexer.source),
@@ -209,6 +209,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
                 });
                 try self.endStmt();
             } else if (self.consume(.TYPE)) |conName| {
+                // constructor
                 var tys = std.ArrayList(AST.Type).init(self.arena);
                 while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                     // TODO: for now, no complicated types!
@@ -229,7 +230,16 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
             } else unreachable;
         }
 
-        data.stuff = .{ .cons = cons.items };
+        if (cons.items.len > 0 and recs.items.len > 0) {
+            try self.errors.append(.{ .RecordsAndConstructorsPresent = .{} });
+        }
+
+        if (cons.items.len > 0) {
+            data.stuff = .{ .cons = cons.items };
+        } else {
+            data.stuff = .{ .recs = recs.items };
+        }
+
         break :b data;
     };
     try self.newData(data);
@@ -917,6 +927,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 fn unitReturn(self: *Self) !AST.Stmt {
     const t = try self.definedType(.Unit);
     const con = &self.typeContext.getType(t).Con.type.stuff.cons[0]; // WARNING: funny casts
+    try self.typeContext.unify(t, self.returnType.?);
     return .{ .Return = try self.allocExpr(.{
         .t = t,
         .e = .{ .Con = con },
@@ -1239,6 +1250,20 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             });
         }
 
+        if (binop == .RecordAccess) {
+            const mem = try self.expect(.IDENTIFIER);
+            const t = try self.typeContext.field(left.t, mem.literal(self.lexer.source));
+            return self.allocExpr(.{
+                .t = t,
+                .e = .{ .UnOp = .{
+                    .e = left,
+                    .op = .{
+                        .Access = mem.literal(self.lexer.source),
+                    },
+                } },
+            });
+        }
+
         const right = try self.precedenceExpression(nextPrec);
 
         const exprType = switch (binop) {
@@ -1319,6 +1344,18 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         try self.devour(.RIGHT_PAREN);
         return expr;
     } // grouping
+    else if (self.check(.LEFT_BRACE)) {
+        // const t = self.typeContext.fresh();
+        // var definitions = std.ArrayList(AST.Expr.Field).init(self.arena);
+        // while (true) {
+        //     const asd = try self.expect(.IDENTIFIER);
+        //     if (!self.check(.COMMA)) break;
+        // }
+        // try self.devour(.RIGHT_BRACE);
+
+        // return self.allocExpr(.{ .e = definitions.items, .t = t });
+        unreachable;
+    } // anonymous struct.
     else {
         return self.err(*AST.Expr, "Unexpected term", .{});
     }
@@ -1505,6 +1542,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .REF => .Deref,
         .IDENTIFIER => .PostfixCall,
         .TYPE => .PostfixCall,
+        .DOT => .RecordAccess,
         else => null,
     };
 }
@@ -1988,8 +2026,14 @@ fn newData(self: *@This(), data: *AST.Data) !void {
     try self.scope.currentScope().types.put(data.name, .{ .Data = data });
 
     // add constructors
-    for (data.stuff.cons) |*con| {
-        try self.scope.currentScope().cons.put(con.name, con);
+    switch (data.stuff) {
+        .cons => |cons| {
+            for (cons) |*con| {
+                try self.scope.currentScope().cons.put(con.name, con);
+            }
+        },
+
+        .recs => unreachable,
     }
 }
 
@@ -2094,6 +2138,7 @@ fn newTVar(self: *@This(), tvname: Str, binding: ?AST.TVar.Binding) !AST.TVar {
         .name = tvname,
         .binding = binding,
         .inferred = false,
+        .fields = &.{},
     };
     try self.scope.currentScope().tvars.put(tvname, tv);
     return tv;
@@ -2219,6 +2264,14 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
         });
     }
 
+    // now members fields
+    for (scheme.tvars, tvars) |tv, tyv| {
+        for (tv.fields) |field| {
+            const fieldTy = try self.typeContext.field(tyv, field.name);
+            try self.typeContext.unify(fieldTy, try self.mapType(&tvarMatch, field.t));
+        }
+    }
+
     return try Common.allocOne(self.arena, tvarMatch);
 }
 
@@ -2327,6 +2380,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             .uid = self.gen.tvars.newUnique(),
             .binding = expectedBinding,
             .inferred = true,
+            .fields = self.typeContext.getFieldsForTVar(e.tyv) orelse &.{},
         };
         try tvars.append(tv);
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
@@ -2382,6 +2436,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .uid = self.gen.tvars.newUnique(),
                             .binding = .{ .Function = functionId },
                             .inferred = true,
+                            .fields = self.typeContext.getFieldsForTVar(tyv.tyv) orelse &.{},
                         };
                         try tvars.append(tv);
                         const tvt = try self.typeContext.newType(.{ .TVar = tv });
@@ -2426,7 +2481,14 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
     const t = self.typeContext.getType(tref);
     switch (t) {
-        .TyVar => |tyv| try store.tyvars.insert(.{ .tyv = tyv, .t = tref }),
+        .TyVar => |tyv| {
+            try store.tyvars.insert(.{ .tyv = tyv, .t = tref });
+            if (self.typeContext.getFieldsForTVar(tyv)) |fields| {
+                for (fields) |field| {
+                    try self.ftvs(store, field.t);
+                }
+            }
+        },
         .Con => |con| {
             for (con.application.tvars) |mt| {
                 try self.ftvs(store, mt);

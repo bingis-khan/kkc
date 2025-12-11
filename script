@@ -1,18 +1,11 @@
 #!./zig-out/bin/kkc
 use Term
 
-fn stringu (s): 'miau \(s)'
-fn add2(x): x + 2
+# x = { some-int: 1 }
+# return x.some-int
 
-1 to (10)
-	drop(4)
-	drop(2)
-	map(stringu)
-	for-each(Term.println)
+fn fun(x)
+	(x.miau + 0) Term.println()
+	(x.cock + 0) Term.println()
 
-1 to (10)
-	map(add2)
-	take(2)
-	for-each(Term.println)
-
-
+fun(Unit)

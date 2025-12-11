@@ -5,6 +5,8 @@ const Unique = UniqueGen.Unique;
 const @"error" = @import("error.zig");
 const Errors = @"error".Errors;
 const common = @import("common.zig");
+const Str = common.Str;
+const Set = @import("Set.zig").Set;
 
 // Personal Note: bruh, I mean, an allocator for this would basically be the same.
 // I guess this is more local.
@@ -21,8 +23,17 @@ const EnvStore = std.ArrayList(union(enum) {
     Env: ?ast.Env,
 });
 
+// instead of putting it in tyvars, make a separate map (as only a minority of tyvars will have any fields.)
+const TyVarFields = std.HashMap(
+    ast.TyVar,
+    std.ArrayList(ast.Record),
+    ast.TyVar.comparator(),
+    std.hash_map.default_max_load_percentage,
+);
+
 context: TyStore,
 envContext: EnvStore,
+tyvarFields: TyVarFields,
 gen: UniqueGen,
 errors: *Errors, // pointer to the global error array (kinda bad design.)
 
@@ -33,6 +44,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
     return .{
         .context = context,
         .envContext = EnvStore.init(al),
+        .tyvarFields = TyVarFields.init(al),
         .gen = UniqueGen.init(),
         .errors = errors,
     };
@@ -40,7 +52,12 @@ pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
 
 pub fn fresh(self: *Self) !ast.Type {
     const tid = self.gen.newUnique();
-    return self.newType(.{ .TyVar = .{ .uid = tid, .classes = undefined } });
+    return self.newType(.{
+        .TyVar = .{
+            .uid = tid,
+            // .fields = std.ArrayList(ast.Record).init(self.arena),
+        },
+    });
 }
 
 pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
@@ -61,14 +78,27 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
     // handle tyvars, cuz it's easier.
     // TODO: occurs check
     switch (tt1) {
-        .TyVar => {
+        .TyVar => |tyv| {
+            if (self.getFieldsForTVar(tyv)) |fields| {
+                for (fields) |f| {
+                    const t2f = try self.field(t2, f.name);
+                    try self.unify(t2f, f.t);
+                }
+            }
             self.setType(t1, t2);
             return;
         },
         else => {
             const tt2 = self.getType(t2);
             switch (tt2) {
-                .TyVar => {
+                .TyVar => |tyv| {
+                    // COPYPASTA.
+                    if (self.getFieldsForTVar(tyv)) |fields| {
+                        for (fields) |f| {
+                            const t1f = try self.field(t1, f.name);
+                            try self.unify(t1f, f.t);
+                        }
+                    }
                     self.setType(t2, t1);
                     return;
                 },
@@ -114,6 +144,71 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
                 else => try self.errMismatch(t1, t2),
             }
         }, // TODO
+    }
+}
+
+pub fn getFieldsForTVar(self: *const Self, tyv: ast.TyVar) ?[]ast.Record {
+    return if (self.tyvarFields.get(tyv)) |fields|
+        fields.items
+    else
+        null;
+}
+
+pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
+    switch (self.getType(t)) {
+        .TVar => |tv| {
+            for (tv.fields) |f| {
+                if (common.streq(f.name, mem)) {
+                    return f.t;
+                }
+            } else {
+                try self.errors.append(.{ .TypeDoesNotHaveField = .{
+                    .t = t,
+                    .field = mem,
+                } });
+                return try self.fresh();
+            }
+        },
+        .TyVar => |tyv| {
+            const gpr = try self.tyvarFields.getOrPut(tyv);
+            if (!gpr.found_existing) {
+                gpr.value_ptr.* = std.ArrayList(ast.Record).init(self.tyvarFields.allocator);
+            }
+
+            // try put result
+            // if it exists, UNIFY!
+            const fields = gpr.value_ptr;
+            for (fields.items) |rec| {
+                if (common.streq(rec.name, mem)) {
+                    return rec.t;
+                }
+            } else {
+                const ft = try self.fresh();
+                try fields.append(.{ .name = mem, .t = ft });
+                return ft;
+            }
+        },
+
+        .Con => |con| {
+            const data = con.type;
+            switch (data.stuff) {
+                .cons => {
+                    try self.errors.append(.{ .TypeIsNotARecord = .{ .t = t, .field = mem } });
+                    return try self.fresh();
+                },
+                .recs => |recs| {
+                    for (recs) |rec| {
+                        if (common.streq(rec.name, mem)) {
+                            unreachable; // TODO: must map the type
+                        }
+                    } else {
+                        unreachable;
+                    }
+                },
+            }
+        },
+
+        .Fun => unreachable, // error
     }
 }
 

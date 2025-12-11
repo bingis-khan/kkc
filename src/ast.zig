@@ -62,7 +62,7 @@ pub const Ctx = struct {
         std.debug.print(fmt, args);
     }
 
-    fn print(self: Self, args: anytype) void {
+    pub fn print(self: Self, args: anytype) void {
         const fields = @typeInfo(@TypeOf(args)).Struct.fields;
         inline for (fields) |field| {
             // switch (@typeInfo(@TypeOf(arg))) {
@@ -138,7 +138,7 @@ pub const Function = struct {
         c.sepBy(self.env, ", ");
         c.s("] -> ");
         self.ret.print(c);
-        c.s(" ");
+        c.s(" ## ");
         self.scheme.print(c);
         c.s("\n");
 
@@ -346,7 +346,17 @@ pub const Expr = struct {
         Con: *Con,
         Int: i64, // obv temporary.
         Str: Str,
+        AnonymousRecord: []Field,
     },
+
+    pub const Field = struct {
+        field: Str,
+        value: Rec,
+
+        pub fn print(self: @This(), c: Ctx) void {
+            c.s(.{ self.field, ": ", self.value });
+        }
+    };
 
     pub const VarType = union(enum) {
         Fun: *Function,
@@ -416,6 +426,10 @@ pub const Expr = struct {
                         uop.e.print(c);
                         c.s("&");
                     },
+                    .Access => |acc| {
+                        uop.e.print(c);
+                        c.sp(".{s}", .{acc});
+                    },
                 }
                 c.s(")");
             },
@@ -429,6 +443,8 @@ pub const Expr = struct {
                 c.sepBy(call.args, ", ");
                 c.s(")");
             },
+
+            .AnonymousRecord => unreachable,
         }
         c.s(" :: ");
         self.t.print(c);
@@ -436,9 +452,10 @@ pub const Expr = struct {
     }
 };
 
-pub const UnOp = enum {
+pub const UnOp = union(enum) {
     Ref,
     Deref,
+    Access: Str,
 };
 
 pub const BinOp = enum {
@@ -498,10 +515,30 @@ pub const EnvRef = struct {
 };
 pub const TyVar = struct {
     uid: Unique,
-    classes: std.ArrayList(*Class),
 
     pub fn print(self: @This(), c: Ctx) void {
         c.sp("#{}", .{self.uid});
+
+        const mFields = c.typeContext.getFieldsForTVar(self);
+
+        if (mFields) |fields| {
+            std.debug.assert(fields.len > 0);
+            c.encloseSepBy(fields, ", ", " { ", " }");
+        }
+    }
+
+    pub fn comparator() type {
+        return struct {
+            pub fn eql(ctx: @This(), a: TyVar, b: TyVar) bool {
+                _ = ctx;
+                return a.uid == b.uid;
+            }
+
+            pub fn hash(ctx: @This(), k: TyVar) u64 {
+                _ = ctx;
+                return k.uid;
+            }
+        };
     }
 };
 pub const TVar = struct {
@@ -509,6 +546,7 @@ pub const TVar = struct {
     name: Str,
     binding: ?Binding, // null value for placeholder values.
     inferred: bool, // funny. it means if this tvar was made from a tyvar.
+    fields: []Record,
 
     pub const Binding = union(enum) {
         Data: Unique,
@@ -536,6 +574,9 @@ pub const TVar = struct {
 
     pub fn print(self: @This(), c: Ctx) void {
         c.sp("{s}#{}", .{ self.name, self.uid });
+        if (self.fields.len > 0) {
+            c.encloseSepBy(self.fields, ", ", " {", "}");
+        }
     }
 };
 pub fn TypeF(comptime a: ?type) type {
@@ -652,6 +693,10 @@ pub const Data = struct {
 pub const Record = struct {
     name: Str,
     t: Type,
+
+    pub fn print(self: @This(), c: Ctx) void {
+        c.print(.{ self.name, " ", self.t });
+    }
 };
 
 pub const Scheme = struct {
