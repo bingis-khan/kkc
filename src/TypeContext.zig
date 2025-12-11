@@ -110,7 +110,40 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
     const tt2 = self.getType(t2);
     switch (tt1) {
         .TyVar => unreachable,
-        .Anon => unreachable, // TODO
+        .Anon => |fields1| {
+            switch (tt2) {
+                .Anon => |fields2| {
+                    // TODO: unstupidify (look next)
+                    for (fields2) |f2| {
+                        // assume deduplicated.
+                        for (fields1) |f1| {
+                            if (common.streq(f2.field, f1.field)) {
+                                try self.unify(f1.t, f2.t);
+                                break;
+                            }
+                        } else {
+                            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = t1, .field = f2.field } });
+                        }
+                    }
+
+                    // BRUH
+                    for (fields1) |f1| {
+                        // assume deduplicated.
+                        for (fields2) |f2| {
+                            if (common.streq(f2.field, f1.field)) {
+                                try self.unify(f1.t, f2.t);
+                                break;
+                            }
+                        } else {
+                            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = t2, .field = f1.field } });
+                        }
+                    }
+                    self.setType(t2, t1);
+                },
+                .Con => unreachable,
+                else => unreachable, // error!
+            }
+        },
         .Con => |lcon| {
             switch (tt2) {
                 .Con => |rcon| {

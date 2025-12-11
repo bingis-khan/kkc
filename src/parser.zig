@@ -2572,14 +2572,23 @@ pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AS
         },
         .Anon => |recs| b: {
             const mapped = try self.arena.alloc(AST.TypeF(AST.Type).Field, recs.len);
+            var changed = false;
             for (recs, 0..) |rec, i| {
                 mapped[i] = .{
                     .t = try self.mapType(match, rec.t),
                     .field = rec.field,
                 };
+
+                if (!rec.t.eq(mapped[i].t)) {
+                    changed = true;
+                }
             }
 
-            break :b undefined;
+            if (changed) {
+                break :b try self.typeContext.newType(.{ .Anon = mapped });
+            } else {
+                break :b ty;
+            }
         },
         .TVar => |tv| match.mapTVar(tv) orelse ty,
         .TyVar => ty,

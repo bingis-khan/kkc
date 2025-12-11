@@ -7,5 +7,14 @@ use Term
 
 # fun(Unit)
 
-x = { cock: True, miau: 'asd', some-int: 69 }
-return x.some-int
+fn what(): { ok: 1}
+
+fn uni(l a, r a)
+	pass
+
+fn retanon(): { whatever: what }
+
+x = { some-int: 123,cock: False }
+y = { cock: True, some-int: 55 }
+uni(x, y)
+return retanon().whatever().ok

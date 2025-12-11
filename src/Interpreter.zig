@@ -409,8 +409,20 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             try w.writeByteNTimes(undefined, @sizeOf(Header));
             try pad(w, @alignOf(Header));
 
-            for (recs) |rec| {
-                _ = try self.writeExpr(w, rec.value);
+            switch (self.typeContext.getType(e.t)) {
+                .Anon => |fields| {
+                    // order fields according to type (SLOW)
+                    for (fields) |field| {
+                        for (recs) |rec| {
+                            if (common.streq(field.field, rec.field)) {
+                                _ = try self.writeExpr(w, rec.value);
+                                break;
+                            }
+                        } else unreachable;
+                    }
+                },
+                .Con => unreachable, // only do it for Record
+                else => unreachable,
             }
 
             const vptr: *Value = @alignCast(@ptrCast(buf.ptr));

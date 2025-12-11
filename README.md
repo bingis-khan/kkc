@@ -24,10 +24,9 @@ BUT, unifying envs is currently scuffed and I need to think more about how it sh
   - one pass: parsing, resolving, typechecking (that's the goal)
 
 
-## Differences with kc
-  - separate type for function-likes. (voldemort lambdas)
+## Todo
 
-  note, that I want kkc code to be a superset of kc.
+- instantiate anonymous structs. right now, they are not instantiated. to properly instantiate them, I would need to add them to scheme (so I'd have to assign an ID to an anon struct)
 
 
 ## Bugs
