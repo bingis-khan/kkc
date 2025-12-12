@@ -1,13 +1,12 @@
 #!./zig-out/bin/kkc
 use Term
 
-Record
-	boole Bool
-	some-rec Int
+Record a
+	cock Int
+	moo a
 
-fn uni(l a, r a)
-	pass
+fn miau(m)
+	Term.println(m.moo)
 
-x = Record { boole: True, some-rec: 3 }
-uni(x, { boole: False, some-rec: 1 })
-x.some-rec Term.println()
+gdzie = 'chodnikiem'
+miau(Record { cock: 420, moo: 'siuram pod \(gdzie)' })

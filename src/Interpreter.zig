@@ -378,11 +378,21 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     },
                 }),
                 .Access => |mem| b: {
-                    switch (self.typeContext.getType(uop.e.t)) {
+                    switch (self.getType(uop.e.t)) {
                         .Anon => |fields| {
                             break :b self.getFieldFromFields(v, fields, mem);
                         },
                         .Con => |con| {
+                            // map it like function or sizeOf for cons!
+                            const oldTyMap = self.tymap;
+                            var tymap = TypeMap{
+                                .prev = oldTyMap,
+                                .scheme = &con.type.scheme,
+                                .match = con.application,
+                            };
+                            self.tymap = &tymap;
+                            defer self.tymap = oldTyMap;
+
                             switch (con.type.stuff) {
                                 .recs => |recs| break :b self.getFieldFromFields(v, recs, mem),
                                 .cons => unreachable,
@@ -405,7 +415,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             try w.writeByteNTimes(undefined, @sizeOf(Header));
             try pad(w, @alignOf(Header));
 
-            switch (self.typeContext.getType(e.t)) {
+            switch (self.getType(e.t)) {
                 .Anon => |fields| {
                     // order fields according to type (SLOW)
                     for (fields) |field| {
@@ -653,7 +663,7 @@ fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
     const memptr: []u8 = try self.arena.alloc(u8, Value.headerSize() + sz.size);
     @memcpy(memptr[Value.headerSize() .. Value.headerSize() + sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
     const vptr: ValRef = @alignCast(@ptrCast(memptr.ptr));
-    switch (self.typeContext.getType(t)) {
+    switch (self.getType(t)) {
         .Fun => {
             const nbx = nunbox(vptr.data.fun); // any pointer is okay.
             vptr.header.functionType = nbx.fty;
@@ -749,7 +759,7 @@ fn calculatePadding(cur: usize, alignment: usize) usize {
 //  VERY SLOW, BECAUSE IT RECALCULATES ALIGNMENT EACH TIME.
 const Sizes = struct { size: usize, alignment: usize };
 fn sizeOf(self: *Self, t: ast.Type) Sizes {
-    switch (self.typeContext.getType(t)) {
+    switch (self.getType(t)) {
         .Anon => |fields| {
             return self.sizeOfRecord(fields, 0);
         },
@@ -810,7 +820,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                 },
             }
         },
-        .TVar => |tv| return self.sizeOf(self.tymap.getTVar(tv)),
+        .TVar => unreachable, // |tv| return self.sizeOf(self.tymap.getTVar(tv)),
 
         .Fun => return .{
             .size = @sizeOf(*Value.Type.Fun),
@@ -855,6 +865,13 @@ fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usiz
     return .{
         .size = off,
         .alignment = maxAlignment,
+    };
+}
+
+fn getType(self: *Self, ogt: ast.Type) ast.TypeF(ast.Type) {
+    return switch (self.typeContext.getType(ogt)) {
+        .TVar => |tv| self.getType(self.tymap.getTVar(tv)),
+        else => |t| t,
     };
 }
 
