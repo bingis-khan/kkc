@@ -105,6 +105,18 @@ pub const Error = union(enum) {
         field: Str,
     },
 
+    DataIsNotARecord: struct {
+        data: *ast.Data,
+    },
+
+    MissingField: struct {
+        field: Str,
+    },
+
+    DuplicateField: struct {
+        field: Str,
+    },
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -154,6 +166,9 @@ pub const Error = union(enum) {
             .TypeIsNotARecord => |e| {
                 c.print(.{ "type ", e.t, " is not a record, so it cannot have a field ", e.field, "\n" });
             },
+            .DataIsNotARecord => |e| c.print(.{ "data ", e.data, " is not a record\n" }),
+            .MissingField => |e| c.print(.{ "missing field '", e.field, "'\n" }),
+            .DuplicateField => |e| c.print(.{ "duplicate field '", e.field, "'\n" }),
         }
     }
 };

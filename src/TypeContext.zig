@@ -36,6 +36,7 @@ envContext: EnvStore,
 tyvarFields: TyVarFields,
 gen: UniqueGen,
 errors: *Errors, // pointer to the global error array (kinda bad design.)
+arena: std.mem.Allocator, // for `mapType` functions
 
 const Self = @This();
 pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
@@ -47,6 +48,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
         .tyvarFields = TyVarFields.init(al),
         .gen = UniqueGen.init(),
         .errors = errors,
+        .arena = al,
     };
 }
 
@@ -81,7 +83,7 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
         .TyVar => |tyv| {
             if (self.getFieldsForTVar(tyv)) |fields| {
                 for (fields) |f| {
-                    const t2f = try self.field(t2, f.name);
+                    const t2f = try self.field(t2, f.field);
                     try self.unify(t2f, f.t);
                 }
             }
@@ -95,7 +97,7 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
                     // COPYPASTA.
                     if (self.getFieldsForTVar(tyv)) |fields| {
                         for (fields) |f| {
-                            const t1f = try self.field(t1, f.name);
+                            const t1f = try self.field(t1, f.field);
                             try self.unify(t1f, f.t);
                         }
                     }
@@ -113,35 +115,19 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
         .Anon => |fields1| {
             switch (tt2) {
                 .Anon => |fields2| {
-                    // TODO: unstupidify (look next)
-                    for (fields2) |f2| {
-                        // assume deduplicated.
-                        for (fields1) |f1| {
-                            if (common.streq(f2.field, f1.field)) {
-                                try self.unify(f1.t, f2.t);
-                                break;
-                            }
-                        } else {
-                            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = t1, .field = f2.field } });
-                        }
-                    }
-
-                    // BRUH
-                    for (fields1) |f1| {
-                        // assume deduplicated.
-                        for (fields2) |f2| {
-                            if (common.streq(f2.field, f1.field)) {
-                                try self.unify(f1.t, f2.t);
-                                break;
-                            }
-                        } else {
-                            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = t2, .field = f1.field } });
-                        }
-                    }
-                    self.setType(t2, t1);
+                    try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = fields2 });
+                    self.setType(t1, t2);
                 },
-                .Con => unreachable,
-                else => unreachable, // error!
+                .Con => |rcon| {
+                    switch (rcon.type.stuff) {
+                        .recs => |recs| {
+                            try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = recs });
+                            self.setType(t1, t2);
+                        },
+                        .cons => unreachable, // error! (make it more specialized, explain that this constructor does not have fields)
+                    }
+                },
+                else => try self.errMismatch(t1, t2),
             }
         },
         .Con => |lcon| {
@@ -153,6 +139,16 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
                     }
 
                     try self.unifyMatch(lcon.application, rcon.application);
+                },
+
+                .Anon => |fields2| {
+                    switch (lcon.type.stuff) {
+                        .recs => |recs| {
+                            try self.matchFields(.{ .t = t1, .fields = recs }, .{ .t = t2, .fields = fields2 });
+                            self.setType(t2, t1);
+                        },
+                        .cons => unreachable, // explain
+                    }
                 },
                 else => try self.errMismatch(t1, t2),
             }
@@ -181,6 +177,37 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
     }
 }
 
+// BUG: because we later unify the type, we report an error on a type that later gets unified. make it better.
+// BUG: make the error better, make one type as "the one that overwrites" and report "extraenous field".
+// NOTE: maybe make a union type (if dealing with two anons)
+fn matchFields(self: *Self, rec1: struct { t: ast.Type, fields: []ast.Record }, rec2: struct { t: ast.Type, fields: []ast.Record }) !void {
+    // TODO: unstupidify (look next)
+    for (rec2.fields) |f2| {
+        // assume deduplicated.
+        for (rec1.fields) |f1| {
+            if (common.streq(f2.field, f1.field)) {
+                try self.unify(f1.t, f2.t);
+                break;
+            }
+        } else {
+            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = rec1.t, .field = f2.field } });
+        }
+    }
+
+    // BRUH
+    for (rec1.fields) |f1| {
+        // assume deduplicated.
+        for (rec2.fields) |f2| {
+            if (common.streq(f2.field, f1.field)) {
+                try self.unify(f1.t, f2.t);
+                break;
+            }
+        } else {
+            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = rec2.t, .field = f1.field } });
+        }
+    }
+}
+
 pub fn getFieldsForTVar(self: *const Self, tyv: ast.TyVar) ?[]ast.Record {
     return if (self.tyvarFields.get(tyv)) |fields|
         fields.items
@@ -205,7 +232,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
         },
         .TVar => |tv| {
             for (tv.fields) |f| {
-                if (common.streq(f.name, mem)) {
+                if (common.streq(f.field, mem)) {
                     return f.t;
                 }
             } else {
@@ -226,12 +253,12 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
             // if it exists, UNIFY!
             const fields = gpr.value_ptr;
             for (fields.items) |rec| {
-                if (common.streq(rec.name, mem)) {
+                if (common.streq(rec.field, mem)) {
                     return rec.t;
                 }
             } else {
                 const ft = try self.fresh();
-                try fields.append(.{ .name = mem, .t = ft });
+                try fields.append(.{ .field = mem, .t = ft });
                 return ft;
             }
         },
@@ -245,8 +272,8 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
                 },
                 .recs => |recs| {
                     for (recs) |rec| {
-                        if (common.streq(rec.name, mem)) {
-                            unreachable; // TODO: must map the type
+                        if (common.streq(rec.field, mem)) {
+                            return try self.mapType(con.application, rec.t);
                         }
                     } else {
                         unreachable;
@@ -370,6 +397,129 @@ pub fn getType(self: *const Self, t: TyRef) ast.TypeF(TyRef) {
             .Type => |actualType| return actualType,
         }
     }
+}
+
+pub fn mapType(self: *Self, match: *const ast.Match(ast.Type), ty: ast.Type) error{OutOfMemory}!ast.Type {
+    const t = self.getType(ty);
+    return switch (t) {
+        .Con => |con| b: {
+            const conMatch = try self.mapMatch(match, con.application) orelse {
+                break :b ty;
+            };
+
+            break :b try self.newType(.{ .Con = .{
+                .type = con.type,
+                .application = conMatch,
+            } });
+        },
+        .Fun => |fun| b: {
+            var changed = false;
+
+            var args = std.ArrayList(ast.Type).init(self.arena);
+            for (fun.args) |oldTy| {
+                const newTy = try self.mapType(match, oldTy);
+                changed = changed or !newTy.eq(oldTy);
+                try args.append(newTy);
+            }
+
+            const ret = try self.mapType(match, fun.ret);
+            changed = changed or !ret.eq(fun.ret);
+
+            // this obv. won't be necessary with Match
+            //   (I meant the recursively applying env part!)
+            const env = try self.mapEnv(match, fun.env);
+            changed = changed or env.id != fun.env.id;
+
+            if (!changed) {
+                args.deinit();
+                break :b ty;
+            }
+
+            break :b try self.newType(.{ .Fun = .{
+                .args = args.items,
+                .ret = ret,
+                .env = env,
+            } });
+        },
+        .Anon => |recs| b: {
+            const mapped = try self.arena.alloc(ast.TypeF(ast.Type).Field, recs.len);
+            var changed = false;
+            for (recs, 0..) |rec, i| {
+                mapped[i] = .{
+                    .t = try self.mapType(match, rec.t),
+                    .field = rec.field,
+                };
+
+                if (!rec.t.eq(mapped[i].t)) {
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                break :b try self.newType(.{ .Anon = mapped });
+            } else {
+                break :b ty;
+            }
+        },
+        .TVar => |tv| match.mapTVar(tv) orelse ty,
+        .TyVar => ty,
+    };
+}
+
+// null when match did not change (so we can keep the same data structure)
+fn mapMatch(self: *Self, match: *const ast.Match(ast.Type), mm: *const ast.Match(ast.Type)) !?*ast.Match(ast.Type) {
+    var changed = false;
+
+    var tvars = std.ArrayList(ast.Type).init(self.arena);
+    for (mm.tvars) |oldTy| {
+        const newTy = try self.mapType(match, oldTy);
+        changed = changed or !newTy.eq(oldTy);
+        try tvars.append(newTy);
+    }
+
+    var envs = std.ArrayList(ast.EnvRef).init(self.arena);
+    for (mm.envVars) |oldEnv| {
+        const nuEnv = try self.mapEnv(match, oldEnv);
+        changed = changed or oldEnv.id != nuEnv.id;
+        try envs.append(nuEnv);
+    }
+
+    if (!changed) {
+        tvars.deinit();
+        envs.deinit();
+        return null;
+    }
+
+    return try common.allocOne(self.arena, ast.Match(ast.Type){
+        .scheme = mm.scheme,
+        .tvars = tvars.items,
+        .envVars = envs.items,
+        .assocs = match.assocs,
+    });
+}
+
+fn mapEnv(self: *Self, match: *const ast.Match(ast.Type), envref: ast.EnvRef) !ast.EnvRef {
+    const envAndBase = self.getEnv(envref);
+    return if (envAndBase.env) |env| bb: {
+        var envChanged = false;
+        var nuenv = std.ArrayList(ast.VarInst).init(self.arena);
+        for (env) |inst| {
+            const newTy = try self.mapType(match, inst.t);
+            envChanged = envChanged or !newTy.eq(inst.t);
+            try nuenv.append(.{ .v = inst.v, .t = newTy, .m = inst.m });
+        }
+
+        break :bb if (envChanged) try self.newEnv(nuenv.items) else envref;
+    } else bb: {
+        if (match.mapEnv(envAndBase.base)) |nue| {
+            break :bb nue;
+        }
+
+        // i guess we just return the normal one? random choice.
+        break :bb envref;
+
+        // try self.newEnv(null); // IMPORTANT: must instantiate new env..
+    };
 }
 
 // copied from parser.zig until I solve how I should report errors (probably an Errors struct that can be passed down to various components.)

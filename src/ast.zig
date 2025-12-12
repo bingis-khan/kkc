@@ -345,6 +345,16 @@ pub const Expr = struct {
         Con: *Con,
         Int: i64, // obv temporary.
         Str: Str,
+        NamedRecord: struct {
+            data: *Data,
+            fields: []Field,
+
+            pub fn print(self: @This(), c: Ctx) void {
+                self.data.print(c);
+                c.s(" ");
+                c.encloseSepBy(self.fields, ", ", "{ ", " }");
+            }
+        },
         AnonymousRecord: []Field,
     },
 
@@ -441,6 +451,10 @@ pub const Expr = struct {
 
             .AnonymousRecord => |fields| {
                 c.encloseSepBy(fields, ", ", "{", "}");
+            },
+            .NamedRecord => |nrec| {
+                c.print(.{ nrec.data, " " });
+                c.encloseSepBy(nrec.fields, ", ", "{", "}");
             },
         }
         c.s(" :: ");
@@ -668,7 +682,7 @@ pub const Data = struct {
         return l.uid == r.uid;
     }
 
-    fn print(self: *const @This(), c: Ctx) void {
+    pub fn print(self: *const @This(), c: Ctx) void {
         c.sp("{s}@{}", .{ self.name, self.uid });
     }
 
@@ -678,11 +692,18 @@ pub const Data = struct {
         RecordLike,
         ADT,
     } {
-        if (self.stuff.cons.len == 0) return .Opaque;
-
         const cons = switch (self.stuff) {
-            .cons => |cons| cons,
-            .recs => return .RecordLike,
+            .cons => |cons| b: {
+                if (cons.len == 0) {
+                    return .Opaque;
+                }
+                break :b cons;
+            },
+            .recs => |fields| {
+                // empty datatypes should become "constructor-like"
+                std.debug.assert(fields.len > 0);
+                return .RecordLike;
+            },
         };
 
         var noTys = true;
@@ -699,14 +720,7 @@ pub const Data = struct {
         }
     }
 };
-pub const Record = struct {
-    name: Str,
-    t: Type,
-
-    pub fn print(self: @This(), c: Ctx) void {
-        c.print(.{ self.name, " ", self.t });
-    }
-};
+pub const Record = TypeF(Type).Field;
 
 pub const Scheme = struct {
     tvars: []TVar,

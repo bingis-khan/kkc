@@ -380,19 +380,15 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                 .Access => |mem| b: {
                     switch (self.typeContext.getType(uop.e.t)) {
                         .Anon => |fields| {
-                            var size: usize = 0;
-                            for (fields) |field| {
-                                const sz = self.sizeOf(field.t);
-                                size += calculatePadding(size, sz.alignment);
-                                if (common.streq(field.field, mem)) {
-                                    break :b try self.copyValue(v.data.offset(size), field.t);
-                                }
-
-                                size += sz.size;
-                            } else {
-                                unreachable;
+                            break :b self.getFieldFromFields(v, fields, mem);
+                        },
+                        .Con => |con| {
+                            switch (con.type.stuff) {
+                                .recs => |recs| break :b self.getFieldFromFields(v, recs, mem),
+                                .cons => unreachable,
                             }
                         },
+
                         else => unreachable,
                     }
                 },
@@ -421,8 +417,53 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                         } else unreachable;
                     }
                 },
-                .Con => unreachable, // only do it for Record
+                .Con => |cons| {
+                    switch (cons.type.stuff) {
+                        .recs => |fields| {
+                            // order fields according to type (SLOW)
+                            for (fields) |field| {
+                                for (recs) |rec| {
+                                    if (common.streq(field.field, rec.field)) {
+                                        _ = try self.writeExpr(w, rec.value);
+                                        break;
+                                    }
+                                } else unreachable;
+                            }
+                        },
+                        .cons => unreachable,
+                    }
+                },
                 else => unreachable,
+            }
+
+            const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
+            vptr.header.functionType = .None;
+
+            return vptr;
+        },
+
+        .NamedRecord => |nrec| {
+
+            // THIS ASSUMES THAT RECORDS GET THAT `setType` TREATMENT
+            // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
+            // SECOND GRADE COPYPASTA FROM `AnonymousRecord`
+            const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(e.t).size);
+            var stream = std.io.fixedBufferStream(buf);
+            const w = stream.writer();
+
+            try w.writeByteNTimes(undefined, @sizeOf(Header));
+            try pad(w, @alignOf(Header));
+
+            const fields = nrec.data.stuff.recs;
+
+            // order fields according to type (SLOW)
+            for (fields) |field| {
+                for (nrec.fields) |rec| {
+                    if (common.streq(field.field, rec.field)) {
+                        _ = try self.writeExpr(w, rec.value);
+                        break;
+                    }
+                } else unreachable;
             }
 
             const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
@@ -433,6 +474,21 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
     }
 
     unreachable;
+}
+
+fn getFieldFromFields(self: *Self, v: *Value, fields: []ast.Record, mem: Str) !*Value {
+    var size: usize = 0;
+    for (fields) |field| {
+        const sz = self.sizeOf(field.t);
+        size += calculatePadding(size, sz.alignment);
+        if (common.streq(field.field, mem)) {
+            return try self.copyValue(v.data.offset(size), field.t);
+        }
+
+        size += sz.size;
+    } else {
+        unreachable;
+    }
 }
 
 fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !*Value {
@@ -695,7 +751,7 @@ const Sizes = struct { size: usize, alignment: usize };
 fn sizeOf(self: *Self, t: ast.Type) Sizes {
     switch (self.typeContext.getType(t)) {
         .Anon => |fields| {
-            return self.sizeOfAnon(fields, 0);
+            return self.sizeOfRecord(fields, 0);
         },
         .Con => |c| {
             const oldTyMap = self.tymap;
@@ -723,7 +779,10 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     };
                 },
                 .RecordLike => {
-                    return self.sizeOfCon(&c.type.stuff.cons[0], 0);
+                    return switch (c.type.stuff) {
+                        .cons => |cons| self.sizeOfCon(&cons[0], 0),
+                        .recs => |recs| self.sizeOfRecord(recs, 0),
+                    };
                 },
                 .ADT => {
                     var max: ?Sizes = null;
@@ -780,7 +839,7 @@ fn sizeOfCon(self: *Self, con: *const ast.Con, beginOff: usize) Sizes {
 }
 
 // stupid copy
-fn sizeOfAnon(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usize) Sizes {
+fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usize) Sizes {
     var off = beginOff;
     // SMELL: duplicate logic with initRecord
     var maxAlignment: usize = 1;

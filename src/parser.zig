@@ -204,7 +204,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
                 // record
                 const t = try Type.init(self, .{ .Data = data.uid }).sepTyo();
                 try recs.append(.{
-                    .name = recname.literal(self.lexer.source),
+                    .field = recname.literal(self.lexer.source),
                     .t = t,
                 });
                 try self.endStmt();
@@ -1345,27 +1345,18 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         return expr;
     } // grouping
     else if (self.check(.LEFT_BRACE)) {
-        var definitions = std.ArrayList(AST.Expr.Field).init(self.arena);
-        while (true) {
-            const name = try self.expect(.IDENTIFIER);
-            try self.devour(.COLON);
-            const expr = try self.expression();
-            try definitions.append(.{ .field = name.literal(self.lexer.source), .value = expr });
-
-            if (!self.check(.COMMA)) break;
-        }
-        try self.devour(.RIGHT_BRACE);
+        const definitions = try self.someRecordDefinition();
 
         // TODO: deduplicate (and, in this case, error out)
-        const typeFields = try self.arena.alloc(AST.TypeF(AST.Type).Field, definitions.items.len);
-        for (definitions.items, 0..) |def, i| {
+        const typeFields = try self.arena.alloc(AST.TypeF(AST.Type).Field, definitions.len);
+        for (definitions, 0..) |def, i| {
             typeFields[i] = .{ .t = def.value.t, .field = def.field };
         }
         const t = try self.typeContext.newType(.{
             .Anon = typeFields,
         });
 
-        return self.allocExpr(.{ .e = .{ .AnonymousRecord = definitions.items }, .t = t });
+        return self.allocExpr(.{ .e = .{ .AnonymousRecord = definitions }, .t = t });
     } // anonymous struct.
     else {
         return self.err(*AST.Expr, "Unexpected term", .{});
@@ -1383,6 +1374,8 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
     else if (first.type == .TYPE) {
         if (self.check(.DOT)) {
             // fallthrough
+        } else if (self.check(.LEFT_BRACE)) {
+            return try self.namedRecordDefinition(&.{}, first);
         } else {
             return try self.constructorExpression(&.{}, first);
         }
@@ -1397,9 +1390,11 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
             if (self.check(.DOT)) {
                 try modpath.append(possibleCon.literal(self.lexer.source));
                 continue :loop;
+            } else if (self.check(.LEFT_BRACE)) {
+                return try self.namedRecordDefinition(modpath.items, possibleCon);
+            } else {
+                return try self.constructorExpression(modpath.items, possibleCon);
             }
-
-            return try self.constructorExpression(modpath.items, possibleCon);
         } else if (self.consume(.IDENTIFIER)) |v| {
             const dv = try self.instantiateVar(modpath.items, v);
             return self.allocExpr(.{
@@ -1410,6 +1405,135 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
             return self.err(*AST.Expr, "Unfinished module shit.\n", .{});
         }
     }
+}
+
+fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.Expr {
+    const definitions = try self.someRecordDefinition();
+
+    // instantiate it.
+    const mDataOrClass = try self.findQualifiedDataOrClass(modpath, name);
+    if (mDataOrClass) |dataOrClass| {
+        switch (dataOrClass) {
+            .Data => |data| {
+                switch (data.stuff) {
+                    .recs => |dataFields| {
+                        const dataInst = try self.instantiateData(data);
+                        const match = dataInst.match;
+
+                        // check if all fields were defined
+                        for (dataFields) |dataField| {
+                            for (definitions) |def| {
+                                if (Common.streq(dataField.field, def.field)) {
+                                    try self.typeContext.unify(def.value.t, try self.typeContext.mapType(match, dataField.t));
+                                    break;
+                                }
+                            } else {
+                                //missing field
+                                try self.errors.append(.{ .MissingField = .{ .field = dataField.field } });
+                            }
+                        }
+
+                        return self.allocExpr(.{ .t = dataInst.t, .e = .{
+                            .NamedRecord = .{
+                                .data = data,
+                                .fields = definitions,
+                            },
+                        } });
+                    },
+                    .cons => {
+                        try self.errors.append(.{ .DataIsNotARecord = .{ .data = data } });
+                        // fallthrough to return placeholder.
+                    },
+                }
+            },
+            .Class => {
+                // ~fallthrough and return placeholder.~
+                // I THOUGHT THIS WOULD BE AN ERROR.
+                // BUT SINCE WE WANT ANONYMOUS STRUCTS TO COERCE TO TYPES, MAYBE THIS SHOULD SPAWN A
+                //  - fresh type
+                //  - with class constraint
+                //  - with field constraints.
+                unreachable;
+            },
+        }
+    } else {
+        // error already reported.
+        // fall to add placeholder.
+    }
+    // self.instantiateCon(modpath: Module.Path, conTok: Token)
+    unreachable;
+}
+
+// either anonymous or normal :)
+// checks for duplicates.
+fn someRecordDefinition(self: *Self) ![]AST.Expr.Field {
+    var definitions = std.ArrayList(AST.Expr.Field).init(self.arena);
+    while (true) {
+        const fieldTok = try self.expect(.IDENTIFIER);
+        const fieldName = fieldTok.literal(self.lexer.source);
+        try self.devour(.COLON);
+        const expr = try self.expression();
+
+        // check for duplication.
+        for (definitions.items) |field| {
+            if (Common.streq(field.field, fieldName)) {
+                try self.errors.append(.{
+                    .DuplicateField = .{ .field = fieldName },
+                });
+                break;
+            }
+        } else {
+            // not a duplicate.
+            try definitions.append(.{ .field = fieldName, .value = expr });
+        }
+
+        if (!self.check(.COMMA)) break;
+    }
+    try self.devour(.RIGHT_BRACE);
+
+    return definitions.items;
+}
+
+// right now only used for records. In the future, will be used for qualifying types themselves.
+// ALSO, TODO we might abstract away the stuff about getting the module, because it's annoying and it's not immediately obvious how I should handle that error. So, a fn (modpath) -> ?Module (but also throw error when module == null)
+fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, tok: Token) !?Module.DataOrClass {
+    const name = tok.literal(self.lexer.source);
+    if (modpath.len == 0) {
+        if (self.maybeLookupType(name)) |dataOrClass| {
+            return dataOrClass;
+        } else {
+            try self.errors.append(.{ .UndefinedType = .{
+                .typename = name,
+                .loc = tok.toLocation(self.lexer.source),
+            } });
+            return null;
+        }
+    } else {
+        if (self.importedModules.get(modpath)) |mmod| {
+            if (mmod) |mod| {
+                if (mod.lookupData(name)) |data| {
+                    return data;
+                } else {
+                    try self.errors.append(.{
+                        .UndefinedType = .{
+                            .typename = name,
+                            .loc = tok.toLocation(self.lexer.source),
+                        },
+                    });
+                    return null;
+                }
+            } else {
+                // circular dep??
+                // return null;
+                unreachable;
+            }
+        } else {
+            try self.errors.append(.{ .UnimportedModule = .{} });
+            return null;
+        }
+    }
+
+    unreachable;
 }
 
 // properly instantiates a constructor expression. (remembers function types n shit)
@@ -1842,17 +1966,17 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
             // mk new, instantiated type
             var params = std.ArrayList(AST.Type).init(self.arena);
             for (cfun.params) |p| {
-                try params.append(try self.mapType(match, p.t));
+                try params.append(try self.typeContext.mapType(match, p.t));
             }
 
-            const ret = try self.mapType(match, cfun.ret);
+            const ret = try self.typeContext.mapType(match, cfun.ret);
             const funTy = try self.typeContext.newType(.{ .Fun = .{
                 .args = params.items,
                 .ret = ret,
                 .env = try self.typeContext.newEnv(null),
             } });
 
-            const classSelf = try self.mapType(match, cfun.self);
+            const classSelf = try self.typeContext.mapType(match, cfun.self);
 
             const instances = try self.getInstancesForClass(cfun.class);
 
@@ -1883,10 +2007,10 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
 
             var params = std.ArrayList(AST.Type).init(self.arena);
             for (extfun.params) |p| {
-                try params.append(try self.mapType(match, p.pt));
+                try params.append(try self.typeContext.mapType(match, p.pt));
             }
 
-            const ret = try self.mapType(match, extfun.ret);
+            const ret = try self.typeContext.mapType(match, extfun.ret);
             const funTy = try self.typeContext.newType(.{
                 .Fun = .{
                     .args = params.items,
@@ -1947,7 +2071,7 @@ fn instantiateFunction(self: *Self, fun: *AST.Function) !struct { t: AST.Type, m
             .env = try self.typeContext.newEnv(fun.env), // this is sussy. maybe we should also keep the "newEnv" still.
         },
     });
-    return .{ .t = try self.mapType(match, funTy), .m = match };
+    return .{ .t = try self.typeContext.mapType(match, funTy), .m = match };
 }
 
 // CURRENTLY VERY SLOW!
@@ -2061,7 +2185,9 @@ fn newData(self: *@This(), data: *AST.Data) !void {
             }
         },
 
-        .recs => unreachable,
+        .recs => {
+            // do nothing :)
+        },
     }
 }
 
@@ -2206,52 +2332,68 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
     t: AST.Type,
     tys: []AST.Type,
 } {
-    _ = modpath;
     const conName = conTok.literal(self.lexer.source);
-    var lastVars = self.scope.scopes.iterateFromTop();
-    while (lastVars.next()) |cursc| {
-        if (cursc.cons.get(conName)) |con| {
-            const dt = try self.instantiateData(con.data);
+    const con = if (modpath.len == 0) b: {
+        var lastVars = self.scope.scopes.iterateFromTop();
+        while (lastVars.next()) |cursc| {
+            if (cursc.cons.get(conName)) |con|
+                break :b con;
+        } else {
+            const data = try self.arena.create(AST.Data);
+            data.uid = self.gen.types.newUnique();
+            data.name = conName;
+            data.stuff = .{ .cons = try self.arena.alloc(AST.Con, 1) };
+            data.stuff.cons[0] = .{
+                .uid = self.gen.cons.newUnique(),
+                .name = conName,
+                .tys = &.{},
+                .data = data,
+                .tagValue = 0,
+            };
+            data.scheme = AST.Scheme.empty();
+            try self.errors.append(.{
+                .UndefinedCon = .{ .conname = conName, .loc = .{
+                    .from = conTok.from,
+                    .to = conTok.to,
+                    .source = self.lexer.source,
+                } },
+            });
 
-            // found con. now we instantiate it.
-            if (con.tys.len == 0) {
-                return .{ .con = con, .t = dt.t, .tys = &.{} };
-            } else {
-                // NOTE: function type making moved to .Con case in expression()
-                var args = std.ArrayList(AST.Type).init(self.arena);
-                for (con.tys) |ty| {
-                    try args.append(try self.mapType(dt.match, ty));
-                }
-                return .{
-                    .con = con,
-                    .t = dt.t,
-                    .tys = args.items,
-                };
-            }
+            // return placeholder var after an error.
+            return .{ .con = &data.stuff.cons[0], .t = try self.typeContext.fresh(), .tys = &.{} };
         }
-    } else {
-        const data = try self.arena.create(AST.Data);
-        data.uid = self.gen.types.newUnique();
-        data.name = conName;
-        data.stuff.cons = try self.arena.alloc(AST.Con, 1);
-        data.stuff.cons[0] = .{
-            .uid = self.gen.cons.newUnique(),
-            .name = conName,
-            .tys = &.{},
-            .data = data,
-            .tagValue = 0,
-        };
-        data.scheme = AST.Scheme.empty();
-        try self.errors.append(.{
-            .UndefinedCon = .{ .conname = conName, .loc = .{
-                .from = conTok.from,
-                .to = conTok.to,
-                .source = self.lexer.source,
-            } },
-        });
+    } else b: {
+        if (self.importedModules.get(modpath)) |mmod| {
+            if (mmod) |mod| {
+                if (mod.lookupCon(conName)) |con| {
+                    break :b con;
+                } else {
+                    unreachable; // TODO ERROR: could not find constructor.
+                }
+            } else {
+                unreachable; // this might be a circular dependency?
+            }
+        } else {
+            unreachable; // TODO ERROR: Module not imported.
+        }
+    };
 
-        // return placeholder var after an error.
-        return .{ .con = &data.stuff.cons[0], .t = try self.typeContext.fresh(), .tys = &.{} };
+    const dt = try self.instantiateData(con.data);
+
+    // found con. now we instantiate it.
+    if (con.tys.len == 0) {
+        return .{ .con = con, .t = dt.t, .tys = &.{} };
+    } else {
+        // NOTE: function type making moved to .Con case in expression()
+        var args = std.ArrayList(AST.Type).init(self.arena);
+        for (con.tys) |ty| {
+            try args.append(try self.typeContext.mapType(dt.match, ty));
+        }
+        return .{
+            .con = con,
+            .t = dt.t,
+            .tys = args.items,
+        };
     }
 }
 
@@ -2283,10 +2425,10 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
     for (scheme.associations, assocs) |assoc, *ref| {
         try self.addAssociation(.{
             .classFun = assoc.classFun,
-            .from = try self.mapType(&tvarMatch, try self.typeContext.newType(
+            .from = try self.typeContext.mapType(&tvarMatch, try self.typeContext.newType(
                 .{ .TVar = assoc.depends },
             )),
-            .to = try self.mapType(&tvarMatch, assoc.to),
+            .to = try self.typeContext.mapType(&tvarMatch, assoc.to),
             .instances = try self.getInstancesForClass(assoc.classFun.class),
             .ref = ref,
         });
@@ -2295,8 +2437,8 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
     // now members fields
     for (scheme.tvars, tvars) |tv, tyv| {
         for (tv.fields) |field| {
-            const fieldTy = try self.typeContext.field(tyv, field.name);
-            try self.typeContext.unify(fieldTy, try self.mapType(&tvarMatch, field.t));
+            const fieldTy = try self.typeContext.field(tyv, field.field);
+            try self.typeContext.unify(fieldTy, try self.typeContext.mapType(&tvarMatch, field.t));
         }
     }
 
@@ -2542,129 +2684,6 @@ fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
         },
         .TVar => {},
     }
-}
-
-pub fn mapType(self: *Self, match: *const AST.Match(AST.Type), ty: AST.Type) !AST.Type {
-    const t = self.typeContext.getType(ty);
-    return switch (t) {
-        .Con => |con| b: {
-            const conMatch = try self.mapMatch(match, con.application) orelse {
-                break :b ty;
-            };
-
-            break :b try self.typeContext.newType(.{ .Con = .{
-                .type = con.type,
-                .application = conMatch,
-            } });
-        },
-        .Fun => |fun| b: {
-            var changed = false;
-
-            var args = std.ArrayList(AST.Type).init(self.arena);
-            for (fun.args) |oldTy| {
-                const newTy = try self.mapType(match, oldTy);
-                changed = changed or !newTy.eq(oldTy);
-                try args.append(newTy);
-            }
-
-            const ret = try self.mapType(match, fun.ret);
-            changed = changed or !ret.eq(fun.ret);
-
-            // this obv. won't be necessary with Match
-            //   (I meant the recursively applying env part!)
-            const env = try self.mapEnv(match, fun.env);
-            changed = changed or env.id != fun.env.id;
-
-            if (!changed) {
-                args.deinit();
-                break :b ty;
-            }
-
-            break :b try self.typeContext.newType(.{ .Fun = .{
-                .args = args.items,
-                .ret = ret,
-                .env = env,
-            } });
-        },
-        .Anon => |recs| b: {
-            const mapped = try self.arena.alloc(AST.TypeF(AST.Type).Field, recs.len);
-            var changed = false;
-            for (recs, 0..) |rec, i| {
-                mapped[i] = .{
-                    .t = try self.mapType(match, rec.t),
-                    .field = rec.field,
-                };
-
-                if (!rec.t.eq(mapped[i].t)) {
-                    changed = true;
-                }
-            }
-
-            if (changed) {
-                break :b try self.typeContext.newType(.{ .Anon = mapped });
-            } else {
-                break :b ty;
-            }
-        },
-        .TVar => |tv| match.mapTVar(tv) orelse ty,
-        .TyVar => ty,
-    };
-}
-
-// null when match did not change (so we can keep the same data structure)
-fn mapMatch(self: *Self, match: *const AST.Match(AST.Type), mm: *const AST.Match(AST.Type)) ParserError!?*AST.Match(AST.Type) {
-    var changed = false;
-
-    var tvars = std.ArrayList(AST.Type).init(self.arena);
-    for (mm.tvars) |oldTy| {
-        const newTy = try self.mapType(match, oldTy);
-        changed = changed or !newTy.eq(oldTy);
-        try tvars.append(newTy);
-    }
-
-    var envs = std.ArrayList(AST.EnvRef).init(self.arena);
-    for (mm.envVars) |oldEnv| {
-        const newEnv = try self.mapEnv(match, oldEnv);
-        changed = changed or oldEnv.id != newEnv.id;
-        try envs.append(newEnv);
-    }
-
-    if (!changed) {
-        tvars.deinit();
-        envs.deinit();
-        return null;
-    }
-
-    return try Common.allocOne(self.arena, AST.Match(AST.Type){
-        .scheme = mm.scheme,
-        .tvars = tvars.items,
-        .envVars = envs.items,
-        .assocs = match.assocs,
-    });
-}
-
-fn mapEnv(self: *Self, match: *const AST.Match(AST.Type), envref: AST.EnvRef) ParserError!AST.EnvRef {
-    const envAndBase = self.typeContext.getEnv(envref);
-    return if (envAndBase.env) |env| bb: {
-        var envChanged = false;
-        var nuenv = std.ArrayList(AST.VarInst).init(self.arena);
-        for (env) |inst| {
-            const newTy = try self.mapType(match, inst.t);
-            envChanged = envChanged or !newTy.eq(inst.t);
-            try nuenv.append(.{ .v = inst.v, .t = newTy, .m = inst.m });
-        }
-
-        break :bb if (envChanged) try self.typeContext.newEnv(nuenv.items) else envref;
-    } else bb: {
-        if (match.mapEnv(envAndBase.base)) |nue| {
-            break :bb nue;
-        }
-
-        // i guess we just return the normal one? random choice.
-        break :bb envref;
-
-        // try self.typeContext.newEnv(null); // IMPORTANT: must instantiate new env..
-    };
 }
 
 // ASSOCIATION

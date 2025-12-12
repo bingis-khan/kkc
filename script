@@ -1,23 +1,13 @@
 #!./zig-out/bin/kkc
 use Term
 
-# fn fun(x)
-# 	(x.miau + 0) Term.println()
-# 	(x.cock + 0) Term.println()
-
-# fun(Unit)
-
-fn what(): { ok: 1}
+Record
+	boole Bool
+	some-rec Int
 
 fn uni(l a, r a)
 	pass
 
-fn retanon() -> { whatever: { miau: Int } }: { whatever: { miau: 69 } }
-
-fn unicock(l { cock: Int}, r { cock: Int })
-	uni(l, r)
-
-x = { some-int: 123,cock: False }
-y = { cock: True, some-int: 55 }
-uni(x, y)
-return retanon().whatever.miau
+x = Record { boole: True, some-rec: 3 }
+uni(x, { boole: False, some-rec: 1 })
+x.some-rec Term.println()
