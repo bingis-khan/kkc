@@ -199,7 +199,7 @@ fn printBody(stmts: []*Stmt, oldC: Ctx) void {
 
 pub const Stmt = union(enum) {
     VarDec: struct { varDef: Var, varValue: *Expr },
-    VarMut: struct { varRef: Var, refs: usize, varValue: *Expr },
+    VarMut: struct { varRef: Var, accessors: []Accessor, varValue: *Expr },
     If: struct {
         cond: *Expr,
         bTrue: []Rec,
@@ -222,6 +222,14 @@ pub const Stmt = union(enum) {
 
     const Rec = *@This();
     pub const Elif = struct { cond: *Expr, body: []Rec };
+    pub const Accessor = struct {
+        tBefore: Type, // ease our interpreter and compiler
+        acc: union(enum) {
+            Deref,
+            Access: Str,
+            // index
+        },
+    };
 
     fn print(self: @This(), c: Ctx) void {
         switch (self) {
@@ -240,8 +248,11 @@ pub const Stmt = union(enum) {
             },
             .VarMut => |vm| {
                 c.print(.{ vm.varRef, " <" });
-                for (0..vm.refs) |_| {
-                    c.s("&");
+                for (vm.accessors) |acc| {
+                    switch (acc.acc) {
+                        .Deref => c.s("&"),
+                        .Access => |field| c.sp(".{s}", .{field}),
+                    }
                 }
                 c.print(.{ "= ", vm.varValue, "\n" });
             },

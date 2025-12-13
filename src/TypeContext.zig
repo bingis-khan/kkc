@@ -276,7 +276,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
                             return try self.mapType(con.application, rec.t);
                         }
                     } else {
-                        unreachable;
+                        unreachable; // TODO USER ERROR
                     }
                 },
             }

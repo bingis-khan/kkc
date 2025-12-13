@@ -78,12 +78,19 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             const varValOrRef = self.scope.getVar(vm.varRef);
             switch (varValOrRef) {
                 .ref => |dataNTy| {
-                    if (vm.refs == 0) {
+                    if (vm.accessors.len == 0) {
                         @memcpy(dataNTy.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
                     } else {
                         var varVal = dataNTy.data.ptr.toValuePtr();
-                        for (1..vm.refs) |_| {
-                            varVal = varVal.data.ptr.toValuePtr();
+                        for (vm.accessors) |acc| {
+                            switch (acc.acc) {
+                                .Deref => {
+                                    varVal = varVal.data.ptr.toValuePtr();
+                                },
+                                .Access => |field| {
+                                    varVal = try self.getFieldFromType(varVal, acc.tBefore, field);
+                                },
+                            }
                         }
                         varVal.header = exprVal.header;
                         @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
@@ -91,8 +98,15 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                 },
                 .v => |vv| {
                     var varVal = vv;
-                    for (0..vm.refs) |_| {
-                        varVal = varVal.data.ptr.toValuePtr();
+                    for (vm.accessors) |acc| {
+                        switch (acc.acc) {
+                            .Deref => {
+                                varVal = varVal.data.ptr.toValuePtr();
+                            },
+                            .Access => |field| {
+                                varVal = try self.getFieldFromType(varVal, acc.tBefore, field);
+                            },
+                        }
                     }
                     varVal.header = exprVal.header;
                     @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
@@ -377,31 +391,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                         .ogPtr = null,
                     },
                 }),
-                .Access => |mem| b: {
-                    switch (self.getType(uop.e.t)) {
-                        .Anon => |fields| {
-                            break :b self.getFieldFromFields(v, fields, mem);
-                        },
-                        .Con => |con| {
-                            // map it like function or sizeOf for cons!
-                            const oldTyMap = self.tymap;
-                            var tymap = TypeMap{
-                                .prev = oldTyMap,
-                                .scheme = &con.type.scheme,
-                                .match = con.application,
-                            };
-                            self.tymap = &tymap;
-                            defer self.tymap = oldTyMap;
-
-                            switch (con.type.stuff) {
-                                .recs => |recs| break :b self.getFieldFromFields(v, recs, mem),
-                                .cons => unreachable,
-                            }
-                        },
-
-                        else => unreachable,
-                    }
-                },
+                .Access => |mem| try self.getFieldFromType(v, uop.e.t, mem),
             };
         },
 
@@ -447,7 +437,10 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             }
 
             const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
-            vptr.header.functionType = .None;
+            vptr.header = .{
+                .functionType = .None,
+                .ogPtr = null,
+            };
 
             return vptr;
         },
@@ -477,13 +470,42 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             }
 
             const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
-            vptr.header.functionType = .None;
+            vptr.header = .{
+                .functionType = .None,
+                .ogPtr = null,
+            };
 
             return vptr;
         },
     }
 
     unreachable;
+}
+
+fn getFieldFromType(self: *Self, v: *Value, t: ast.Type, mem: Str) !*Value {
+    switch (self.getType(t)) {
+        .Anon => |fields| {
+            return self.getFieldFromFields(v, fields, mem);
+        },
+        .Con => |con| {
+            // map it like function or sizeOf for cons!
+            const oldTyMap = self.tymap;
+            var tymap = TypeMap{
+                .prev = oldTyMap,
+                .scheme = &con.type.scheme,
+                .match = con.application,
+            };
+            self.tymap = &tymap;
+            defer self.tymap = oldTyMap;
+
+            switch (con.type.stuff) {
+                .recs => |recs| return self.getFieldFromFields(v, recs, mem),
+                .cons => unreachable,
+            }
+        },
+
+        else => unreachable,
+    }
 }
 
 fn getFieldFromFields(self: *Self, v: *Value, fields: []ast.Record, mem: Str) !*Value {

@@ -577,19 +577,15 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                         break :bb try self.newVar(v);
                     },
                 };
+
+                try self.typeContext.unify(vv.t, e.t);
                 break :b .{ .VarMut = .{
                     .varRef = vv.v,
-                    .refs = 0,
+                    .accessors = &.{},
                     .varValue = e,
                 } };
             } else if (self.check(.LT)) {
-                var refs: usize = 0;
-                while (self.check(.REF)) refs += 1;
-
                 const vtsc = try self.lookupVar(&.{}, v);
-                try self.devour(.EQUALS);
-                const e = try self.expression();
-
                 const vv = switch (vtsc.vorf) {
                     .Var => |vt| vt,
                     else => bb: {
@@ -599,12 +595,30 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 };
 
                 var innerTy = vv.t;
-                for (0..refs) |_| {
-                    const ptr = (try self.defined(.Ptr)).dataInst;
+                var accessors = std.ArrayList(AST.Stmt.Accessor).init(self.arena);
+                while (true) {
+                    if (self.check(.REF)) {
+                        try accessors.append(.{ .tBefore = innerTy, .acc = .Deref });
 
-                    try self.typeContext.unify(innerTy, ptr.t);
-                    innerTy = ptr.tyArgs[0];
+                        const ptr = (try self.defined(.Ptr)).dataInst;
+
+                        try self.typeContext.unify(innerTy, ptr.t);
+                        innerTy = ptr.tyArgs[0];
+                    } else if (self.check(.DOT)) {
+                        const name = try self.expect(.IDENTIFIER);
+                        const field = name.literal(self.lexer.source);
+                        try accessors.append(.{
+                            .tBefore = innerTy,
+                            .acc = .{ .Access = field },
+                        });
+
+                        const ft = try self.typeContext.field(innerTy, field);
+                        innerTy = ft;
+                    } else break;
                 }
+
+                try self.devour(.EQUALS);
+                const e = try self.expression();
 
                 try self.typeContext.unify(innerTy, e.t);
 
@@ -616,7 +630,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 try self.endStmt();
                 break :b .{ .VarMut = .{
                     .varRef = vv.v,
-                    .refs = refs,
+                    .accessors = accessors.items,
                     .varValue = e,
                 } };
             } // mutation

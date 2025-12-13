@@ -1,12 +1,16 @@
 #!./zig-out/bin/kkc
 use Term
 
-Record a
+Record
 	cock Int
-	moo a
 
-fn miau(m)
-	Term.println(m.moo)
+inst Str Record
+	print-str (self _)
+		r = self.cock
+		print-str('Record { cock: \(r) }')
 
-gdzie = 'chodnikiem'
-miau(Record { cock: 420, moo: 'siuram pod \(gdzie)' })
+
+x =& Record { cock: 2 }
+Term.println(x)
+x <&.cock= 79
+Term.println(x)
