@@ -1125,7 +1125,41 @@ fn deconstruction(self: *Self) !*AST.Decon {
                 },
             },
         };
-    } else {
+    } // con decon
+    else if (self.check(.LEFT_BRACE)) b: {
+        const t = try self.typeContext.fresh();
+
+        var fields = std.ArrayList(AST.Decon.Field).init(self.arena);
+        while (true) {
+            const fieldTok = try self.expect(.IDENTIFIER);
+            const fieldName = fieldTok.literal(self.lexer.source);
+
+            const fieldTy = try self.typeContext.field(t, fieldName);
+
+            if (self.check(.COLON)) {
+                const decon = try self.deconstruction();
+                try self.typeContext.unify(fieldTy, decon.t);
+                try fields.append(.{
+                    .field = fieldName,
+                    .decon = decon,
+                });
+            } else {
+                const vnt = try self.newVar(fieldTok);
+                try self.typeContext.unify(fieldTy, vnt.t);
+                try fields.append(.{ .field = fieldName, .decon = try Common.allocOne(self.arena, AST.Decon{ .t = fieldTy, .d = .{ .Var = vnt.v } }) });
+            }
+            if (!self.check(.COMMA)) break;
+        }
+        try self.devour(.RIGHT_BRACE);
+
+        // TODO: right now we only care that the deconstructed struct has all the fields defined. basically { <whatever we write>, ... }
+        // later expect the user to write `...` to ignore extra fields.
+        break :b .{
+            .t = t,
+            .d = .{ .Record = fields.items },
+        };
+    } // record deccon
+    else {
         return self.err(*AST.Decon, "Expect decon", .{});
     };
 

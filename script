@@ -23,9 +23,11 @@ inst Str Record
 	print-str (self _)
 		r = self.cock
 		print-str('Record { cock: \(r) }')
+
 ayo = Just(Record { cock: 1 })
+Term.println(ayo)
 case ayo
-	Just(x)
-		x <.cock= 2
-		Term.println(x.cock)
+	Just({ cock })
+		cock <= 2
+		Term.println(cock)
 Term.println(ayo)

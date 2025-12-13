@@ -328,9 +328,19 @@ pub const Decon = struct {
             con: *Con,
             decons: []*Decon,
         },
+        Record: []Field,
     },
 
-    fn print(self: *const @This(), c: Ctx) void {
+    pub const Field = struct {
+        field: Str,
+        decon: *Decon,
+
+        fn print(self: @This(), c: Ctx) void {
+            c.print(.{ self.field, ": ", self.decon });
+        }
+    };
+
+    pub fn print(self: *const @This(), c: Ctx) void {
         switch (self.d) {
             .Var => |v| v.print(c),
             .Con => |con| {
@@ -338,6 +348,9 @@ pub const Decon = struct {
                 if (con.decons.len > 0) {
                     c.encloseSepBy(con.decons, ", ", "(", ")");
                 }
+            },
+            .Record => |fields| {
+                c.encloseSepBy(fields, ", ", "{ ", " }");
             },
             .None => c.s("_"),
         }

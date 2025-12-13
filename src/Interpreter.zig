@@ -219,6 +219,16 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool
             try self.scope.vars.put(vn, .{ .ref = .{ .data = v, .t = decon.t } });
             return true;
         },
+        .Record => |fields| {
+            for (fields) |field| {
+                // TODO: BAD; see next
+                // TODO THIS IS BAD OMG. WE SHOULD NOT ALLOCATE ANYTHING HERE. I ALSO SEE A LOT OF REPETITION. I NEED A SMALL REFACTOR FOR EVERY FUNCTION TO USE THE SAME BASIS TO CALCULATE OFFSETS.
+                const nuv = try self.getFieldFromType(try self.copyValue(v, decon.t), decon.t, field.field);
+                if (!try self.tryDeconstruct(field.decon, nuv.header.ogPtr.?)) return false;
+            }
+
+            return true;
+        },
         .Con => |con| {
             // deref
             if (con.con.data.eq(self.prelude.defined(.Ptr))) {
