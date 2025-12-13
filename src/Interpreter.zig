@@ -81,8 +81,12 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                     if (vm.accessors.len == 0) {
                         @memcpy(dataNTy.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
                     } else {
-                        var varVal = dataNTy.data.ptr.toValuePtr();
-                        for (vm.accessors) |acc| {
+                        const firstAccess = vm.accessors[0];
+                        var varVal = switch (firstAccess.acc) {
+                            .Deref => dataNTy.data.ptr.toValuePtr(),
+                            .Access => |mem| try self.getFieldFromType(try self.copyValue(dataNTy.data, firstAccess.tBefore), firstAccess.tBefore, mem),
+                        };
+                        for (vm.accessors[1..]) |acc| {
                             switch (acc.acc) {
                                 .Deref => {
                                     varVal = varVal.data.ptr.toValuePtr();
@@ -92,8 +96,14 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                                 },
                             }
                         }
-                        varVal.header = exprVal.header;
-                        @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                        // hacky??? the scope type valOrRef basically does the same thing.
+                        if (vm.accessors.len > 0 and vm.accessors[vm.accessors.len - 1].acc == .Access) {
+                            std.debug.assert(varVal.header.ogPtr != null);
+                            @memcpy(varVal.header.ogPtr.?.slice(sz.size), exprVal.data.slice(sz.size));
+                        } else {
+                            varVal.header = exprVal.header;
+                            @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                        }
                     }
                 },
                 .v => |vv| {
@@ -108,8 +118,15 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                             },
                         }
                     }
-                    varVal.header = exprVal.header;
-                    @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+
+                    // hacky??? [TODO: COPYPASTA]
+                    if (vm.accessors.len > 0 and vm.accessors[vm.accessors.len - 1].acc == .Access) {
+                        std.debug.assert(varVal.header.ogPtr != null);
+                        @memcpy(varVal.header.ogPtr.?.slice(sz.size), exprVal.data.slice(sz.size));
+                    } else {
+                        varVal.header = exprVal.header;
+                        @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                    }
                 },
             }
         },
@@ -514,7 +531,8 @@ fn getFieldFromFields(self: *Self, v: *Value, fields: []ast.Record, mem: Str) !*
         const sz = self.sizeOf(field.t);
         size += calculatePadding(size, sz.alignment);
         if (common.streq(field.field, mem)) {
-            return try self.copyValue(v.data.offset(size), field.t);
+            const ptr = v.header.ogPtr orelse &v.data;
+            return try self.copyValue(ptr.offset(size), field.t);
         }
 
         size += sz.size;
@@ -647,7 +665,7 @@ const Value = extern struct {
     }
 
     fn headerSize() comptime_int {
-        return @sizeOf(@This()) - @sizeOf(Type);
+        return Header.PaddedSize; // @sizeOf(@This()) - @sizeOf(Type); // TODO: look at this. Prolly should be replaced with Header.PaddedSize
     }
 
     const Flexible = *anyopaque;
@@ -747,7 +765,10 @@ fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !*Value 
     try pad(w, maxAlignment);
 
     const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
-    vptr.header.functionType = .None;
+    vptr.header = .{
+        .functionType = .None,
+        .ogPtr = null,
+    };
 
     return vptr;
 }

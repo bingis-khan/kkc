@@ -1,16 +1,31 @@
 #!./zig-out/bin/kkc
 use Term
 
+
+# inst Str Record
+# 	print-str (self _)
+# 		r = self.cock
+# 		s = self.dupsko.miau
+# 		print-str('Record { dupsko: { miau: \(s) }, cock: \(r) }')
+
+
+# x = Record { dupsko: {miau: False }, cock: &2 }
+# Term.println(x)
+# x <.cock&= 79
+# Term.println(x)
+# x <.dupsko.miau= True
+# Term.println(x)
+
+
 Record
 	cock Int
-
 inst Str Record
 	print-str (self _)
 		r = self.cock
 		print-str('Record { cock: \(r) }')
-
-
-x =& Record { cock: 2 }
-Term.println(x)
-x <&.cock= 79
-Term.println(x)
+ayo = Just(Record { cock: 1 })
+case ayo
+	Just(x)
+		x <.cock= 2
+		Term.println(x.cock)
+Term.println(ayo)
