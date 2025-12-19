@@ -18,6 +18,7 @@ const Prelude = @import("Prelude.zig");
 const Set = @import("Set.zig").Set;
 const Module = @import("Module.zig");
 const Modules = @import("Modules.zig");
+const Intrinsic = @import("Intrinsic.zig");
 
 // fuck it. let's do it one pass.
 arena: std.mem.Allocator,
@@ -1398,6 +1399,37 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
         });
     } // var
+    else if (self.consume(.INTRINSIC)) |intrTok| {
+        // for intrinsics, we must IMMEDIATELY parse the call - we don't want to deal with them being passed around.
+        if (Intrinsic.findByName(intrTok.literal(self.lexer.source)[1..])) |intr| {
+            // parse any required arguments brah.
+            var args = std.ArrayList(*AST.Expr).init(self.arena);
+            if (intr.args > 0) {
+                try self.devour(.LEFT_PAREN);
+                for (0..intr.args) |i| {
+                    try args.append(try self.expression());
+                    if (i != intr.args - 1) {
+                        try self.devour(.COMMA);
+                    } else {
+                        try self.devour(.RIGHT_PAREN);
+                    }
+                }
+            }
+
+            return self.allocExpr(.{
+                .t = try self.typeContext.fresh(), // right now, puttin in "fresh" is good enough for all intrinsics.
+                .e = .{
+                    .Intrinsic = .{
+                        .intr = intr,
+                        .args = args.items,
+                    },
+                },
+            });
+        } else {
+            std.debug.print("{s}\n", .{intrTok.literal(self.lexer.source)[1..]});
+            unreachable; // Error!
+        }
+    } // intrinsic
     else if (self.consume(.TYPE)) |con| {
         return try self.qualified(con);
     } // con

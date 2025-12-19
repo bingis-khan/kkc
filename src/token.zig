@@ -36,6 +36,7 @@ pub const TokenType = enum {
     DEDENT,
 
     IDENTIFIER,
+    INTRINSIC,
     TYPE,
     INTEGER,
     STRING,

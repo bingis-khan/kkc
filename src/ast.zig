@@ -3,6 +3,7 @@ const std = @import("std");
 const Unique = @import("UniqueGen.zig").Unique;
 const TypeContext = @import("TypeContext.zig");
 const common = @import("common.zig");
+const Intrinsic = @import("Intrinsic.zig");
 
 toplevel: []*Stmt, // top level
 
@@ -367,6 +368,7 @@ pub const Expr = struct {
         Call: struct { callee: Rec, args: []Rec },
         Var: struct { v: VarType, match: *Match(Type) }, // NOTE: Match is owned here!
         Con: *Con,
+        Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: i64, // obv temporary.
         Str: Str,
         NamedRecord: struct {
@@ -438,6 +440,12 @@ pub const Expr = struct {
                 std.debug.lockStdErr();
                 defer std.debug.unlockStdErr();
                 std.zig.stringEscape(s, "'", .{}, std.io.getStdErr().writer()) catch unreachable;
+            },
+            .Intrinsic => |intr| {
+                std.debug.print("{}", .{intr.intr});
+                if (intr.args.len > 0) {
+                    c.encloseSepBy(intr.args, ", ", "(", ")");
+                }
             },
             .BinOp => |bop| {
                 c.s("(");

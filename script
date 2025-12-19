@@ -38,3 +38,10 @@ case ayo
 		Term.println(cock)
 Term.println(ayo)
 
+
+xxx = True
+yyy = @cast(xxx) + 0
+
+ptr =& @undefined
+ptr <&= { x: 420, y: 1337, z: Unit, b: Just(True)}
+Term.println(ptr&.b)

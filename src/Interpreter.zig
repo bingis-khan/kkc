@@ -286,6 +286,26 @@ fn exprs(self: *Self, es: []*ast.Expr) ![]*Value {
 
 fn expr(self: *Self, e: *ast.Expr) Err!*Value {
     switch (e.e) {
+        .Intrinsic => |intr| {
+            switch (intr.intr.ty) {
+                .cast => {
+                    const v = try self.expr(intr.args[0]);
+                    // just pass the value down :)
+                    return v;
+                },
+                .undefined => {
+                    // allocate some value but dont initialize any of it!
+                    // COPYPASTA AGAIN. Suggested interface: allocValue(Type)
+                    const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(e.t).size);
+                    const emptyValue: *Value = @alignCast(@ptrCast(buf.ptr));
+                    emptyValue.header = .{
+                        .ogPtr = null,
+                        .functionType = .None, // just in case!
+                    };
+                    return emptyValue;
+                },
+            }
+        },
         .Int => |x| {
             return self.intValue(x);
         },
