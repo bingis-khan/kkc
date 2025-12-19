@@ -7,11 +7,15 @@ args: u8,
 pub const Type = enum {
     undefined,
     cast,
+    @"offset-ptr",
+    @"size-of",
 };
 
 const List = [_]Self{
     .{ .ty = .undefined, .args = 0 },
     .{ .ty = .cast, .args = 1 },
+    .{ .ty = .@"offset-ptr", .args = 2 },
+    .{ .ty = .@"size-of", .args = 1 },
 };
 
 const Self = @This();

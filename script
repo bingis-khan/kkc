@@ -45,3 +45,11 @@ yyy = @cast(xxx) + 0
 ptr =& @undefined
 ptr <&= { x: 420, y: 1337, z: Unit, b: Just(True)}
 Term.println(ptr&.b)
+
+x =& Unit
+
+fn cast-int (x): @cast(x) + 0
+
+
+Term.println(cast-int(x))
+Term.println(cast-int(@offset-ptr(x, 12)))

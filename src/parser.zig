@@ -1416,8 +1416,25 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 }
             }
 
+            const t = switch (intr.ty) {
+                .cast => try self.typeContext.fresh(),
+                .undefined => try self.typeContext.fresh(),
+                .@"size-of" => try self.definedType(.Int),
+                .@"offset-ptr" => b: {
+                    // arg 1
+                    const ptr = (try self.defined(.Ptr)).dataInst;
+                    std.debug.assert(args.items.len == 2); // right now, we have a parse error that aborts execution if number of args is not correct. When it changes,must change this.
+                    try self.typeContext.unify(ptr.t, args.items[0].t);
+
+                    // arg 2
+                    try self.typeContext.unify(try self.definedType(.Int), args.items[1].t);
+
+                    break :b ptr.t;
+                },
+            };
+
             return self.allocExpr(.{
-                .t = try self.typeContext.fresh(), // right now, puttin in "fresh" is good enough for all intrinsics.
+                .t = t,
                 .e = .{
                     .Intrinsic = .{
                         .intr = intr,

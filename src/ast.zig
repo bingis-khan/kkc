@@ -442,7 +442,7 @@ pub const Expr = struct {
                 std.zig.stringEscape(s, "'", .{}, std.io.getStdErr().writer()) catch unreachable;
             },
             .Intrinsic => |intr| {
-                std.debug.print("{}", .{intr.intr});
+                std.debug.print("{}", .{intr.intr.ty});
                 if (intr.args.len > 0) {
                     c.encloseSepBy(intr.args, ", ", "(", ")");
                 }

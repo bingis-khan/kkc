@@ -233,7 +233,6 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool
             // deref
             if (con.con.data.eq(self.prelude.defined(.Ptr))) {
                 return try self.tryDeconstruct(con.decons[0], v.ptr);
-                //
             } else {
                 switch (con.con.data.structureType()) {
                     .Opaque => unreachable,
@@ -303,6 +302,19 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                         .functionType = .None, // just in case!
                     };
                     return emptyValue;
+                },
+                .@"size-of" => {
+                    return try self.intValue(@intCast(self.sizeOf(intr.args[0].t).size));
+                },
+                .@"offset-ptr" => {
+                    // Should I make offset-ptr relative to type (C) or not (basado)?
+                    // Nahhhhh
+                    const ogPtr = try self.expr(intr.args[0]);
+                    const amount = try self.expr(intr.args[1]);
+
+                    const ptr = try self.copyValue(&ogPtr.data, intr.args[0].t);
+                    ptr.data.ptr = @ptrFromInt(@intFromPtr(ptr.data.ptr) + @as(usize, @intCast(amount.data.int)));
+                    return ptr;
                 },
             }
         },
@@ -846,6 +858,11 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
             self.tymap = &tymap;
             defer self.tymap = oldTyMap;
 
+            // check if ptr
+            if (c.type.eq(self.prelude.defined(.Ptr))) {
+                return .{ .size = @sizeOf(*anyopaque), .alignment = @alignOf(*anyopaque) };
+            }
+
             switch (c.type.structureType()) {
                 // NOTE: not sure if it's correct, but assume pointer size, because that's what opaque types mostly are. I guess I should also use some annotations to check size.
                 //  I wonder if I should make sizes in annotations OR will the compiler just *know* about inbuilt types?
@@ -888,6 +905,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     }
 
                     var m = max orelse unreachable;
+                    m.size += @sizeOf(Value.Tag); // don't forget to add a tag. we don't need to change alignment tho, because we took care of it beforehand.
                     m.size += calculatePadding(m.size, m.alignment);
                     return m;
                 },
