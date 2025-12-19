@@ -1,5 +1,7 @@
 #!./zig-out/bin/kkc
 use Term
+use Cnile
+	Void
 
 
 # inst Str Record
@@ -16,6 +18,10 @@ use Term
 # x <.dupsko.miau= True
 # Term.println(x)
 
+x = 1 # asdasdasdas
+    # asd
+	   # asd
+
 
 Record
 	cock Int
@@ -31,3 +37,4 @@ case ayo
 		cock <= 2
 		Term.println(cock)
 Term.println(ayo)
+

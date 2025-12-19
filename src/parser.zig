@@ -381,36 +381,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         self.returned = .Errored;
     }
 
-    // try parse annotations.
-    // It's possible to divide annotations in multiple lines:
-    //  #[linkname 'printf']
-    //  #[dylib 'libc.so']
-    //  external printf(fmt Ptr Char, x a) -> Void
-    // TODO: check if statements make sense in context.
-    var annotations = std.ArrayList(AST.Annotation).init(self.arena); // nothing is allocated when there are no annotations.
-    while (self.check(.BEGIN_ANNOTATION)) {
-        if (!self.check(.RIGHT_SQBR)) while (true) {
-            const annName = try self.expect(.IDENTIFIER);
-
-            var annParams = std.ArrayList(Str).init(self.arena);
-            while (self.consume(.STRING)) |param| {
-                const litWithQuotes = param.literal(self.lexer.source);
-                const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
-                try annParams.append(lit);
-            }
-
-            try annotations.append(.{
-                .name = annName.literal(self.lexer.source),
-                .params = annParams.items,
-            });
-
-            if (self.check(.RIGHT_SQBR)) break;
-            try self.devour(.COMMA);
-        };
-
-        try self.endStmt();
-        self.consumeSeps();
-    }
+    const annotations = try self.parseAnnotation();
 
     const stmtVal: ?AST.Stmt = b: {
         if (self.check(.PASS)) {
@@ -857,58 +828,21 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             };
         } // instance
         else if (self.check(.EXTERNAL)) {
-            const uid = self.gen.vars.newUnique();
-
-            const nameTok = try self.expect(.IDENTIFIER);
-            const name = nameTok.literal(self.lexer.source);
-            var env = Env.init(self.arena);
-            self.scope.beginScope(&env);
-
-            try self.devour(.LEFT_PAREN);
-
-            var params = std.ArrayList(AST.ExternalFunction.Param).init(self.arena);
-            if (!self.check(.RIGHT_PAREN)) {
-                while (true) {
-                    const pname = try self.expect(.IDENTIFIER);
-                    const v = try self.newVar(pname); // pointless fresh.
-                    const t = try Type.init(self, .{ .Function = uid }).sepTyo();
-                    try params.append(.{ .pn = v.v, .pt = t });
-
-                    if (self.check(.RIGHT_PAREN)) {
-                        break;
-                    }
-                    try self.devour(.COMMA);
+            if (self.consume(.IDENTIFIER)) |nameTok| {
+                try self.externalFun(nameTok, annotations);
+                // single statement
+            } // single stmt
+            else if (self.check(.INDENT)) {
+                while (!self.check(.DEDENT)) {
+                    const funAnns = try self.parseAnnotation(); // this could be later freed.
+                    const allAnns = try std.mem.concat(self.arena, AST.Annotation, &[_][]const AST.Annotation{ annotations, funAnns });
+                    const nameTok = try self.expect(.IDENTIFIER);
+                    try self.externalFun(nameTok, allAnns);
                 }
+            } // multiple
+            else {
+                unreachable; // TODO: err
             }
-
-            try self.devour(.RIGHT_ARROW);
-            const ret = try Type.init(self, .{ .Function = uid }).sepTyo();
-
-            var definedTVars = std.ArrayList(AST.TVar).init(self.arena);
-            var it = self.scope.currentScope().tvars.valueIterator();
-            while (it.next()) |tvar| {
-                try definedTVars.append(tvar.*);
-            }
-            self.scope.endScope();
-
-            const scheme = AST.Scheme{
-                .tvars = definedTVars.items,
-                .associations = &.{},
-                .envVars = &.{},
-            };
-
-            const extfun = try Common.allocOne(self.arena, AST.ExternalFunction{
-                .name = .{
-                    .name = name,
-                    .uid = uid,
-                },
-                .params = params.items,
-                .ret = ret,
-                .scheme = scheme,
-                .anns = annotations.items,
-            });
-
-            try self.scope.currentScope().vars.put(name, .{ .Extern = extfun });
 
             break :b null;
         } // external function
@@ -936,6 +870,95 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
     }
 
     return null;
+}
+
+fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void {
+    const uid = self.gen.vars.newUnique();
+    const name = nameTok.literal(self.lexer.source);
+    var env = Env.init(self.arena);
+    self.scope.beginScope(&env);
+
+    try self.devour(.LEFT_PAREN);
+
+    var params = std.ArrayList(AST.ExternalFunction.Param).init(self.arena);
+    if (!self.check(.RIGHT_PAREN)) {
+        while (true) {
+            const pname = try self.expect(.IDENTIFIER);
+            const v = try self.newVar(pname); // pointless fresh.
+            const t = try Type.init(self, .{ .Function = uid }).sepTyo();
+            try params.append(.{ .pn = v.v, .pt = t });
+
+            if (self.check(.RIGHT_PAREN)) {
+                break;
+            }
+            try self.devour(.COMMA);
+        }
+    }
+
+    try self.devour(.RIGHT_ARROW);
+    const ret = try Type.init(self, .{ .Function = uid }).sepTyo();
+    try self.endStmt();
+
+    var definedTVars = std.ArrayList(AST.TVar).init(self.arena);
+    var it = self.scope.currentScope().tvars.valueIterator();
+    while (it.next()) |tvar| {
+        try definedTVars.append(tvar.*);
+    }
+    self.scope.endScope();
+
+    const scheme = AST.Scheme{
+        .tvars = definedTVars.items,
+        .associations = &.{},
+        .envVars = &.{},
+    };
+
+    const extfun = try Common.allocOne(self.arena, AST.ExternalFunction{
+        .name = .{
+            .name = name,
+            .uid = uid,
+        },
+        .params = params.items,
+        .ret = ret,
+        .scheme = scheme,
+        .anns = annotations,
+    });
+
+    try self.scope.currentScope().vars.put(name, .{ .Extern = extfun });
+}
+
+// try parse annotations.
+// It's possible to divide annotations in multiple lines:
+//  #[linkname 'printf']
+//  #[dylib 'libc.so']
+//  external printf(fmt Ptr Char, x a) -> Void
+// TODO: check if statements make sense in context.
+fn parseAnnotation(self: *Self) ![]AST.Annotation {
+    var annotations = std.ArrayList(AST.Annotation).init(self.arena); // nothing is allocated when there are no annotations.
+    while (self.check(.BEGIN_ANNOTATION)) {
+        if (!self.check(.RIGHT_SQBR)) while (true) {
+            const annName = try self.expect(.IDENTIFIER);
+
+            var annParams = std.ArrayList(Str).init(self.arena);
+            while (self.consume(.STRING)) |param| {
+                const litWithQuotes = param.literal(self.lexer.source);
+                const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
+                try annParams.append(lit);
+            }
+
+            try annotations.append(.{
+                .name = annName.literal(self.lexer.source),
+                .params = annParams.items,
+            });
+
+            if (self.check(.RIGHT_SQBR)) break;
+            try self.devour(.COMMA);
+        };
+
+        try self.endStmt();
+        self.consumeSeps();
+    }
+
+    return annotations.items;
 }
 
 fn unitReturn(self: *Self) !AST.Stmt {

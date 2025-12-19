@@ -28,12 +28,16 @@ pub fn main() !void {
     const aa = arena.allocator();
 
     // -|| MODULES ||-
+    const compilationStartTime = try std.time.Instant.now();
     var errors = Errors.init(aa);
     var typeContext = try TypeContext.init(aa, &errors);
     var modules = Modules.init(aa, &errors, &typeContext, "", &opts);
     const prelude = try modules.loadPrelude(&"prelude.kkc");
     _ = try modules.loadDefault(&"converged.kkc");
     _ = try modules.initialModule(&opts.filename);
+    const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
+    std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
+
     const fullAST = modules.getAST();
 
     var fakeNewline: bool = undefined;

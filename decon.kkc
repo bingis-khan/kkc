@@ -1,0 +1,3 @@
+range = 1 to (10)
+
+[x, y, ...z] = range
