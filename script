@@ -48,7 +48,7 @@ Term.println(ptr&.b)
 
 x =& Unit
 
-fn cast-int (x): @cast(x) + 0
+fn cast-int (x): @cast(x) as Int
 
 
 Term.println(cast-int(x))

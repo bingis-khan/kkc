@@ -471,6 +471,9 @@ pub const Expr = struct {
                         uop.e.print(c);
                         c.sp(".{s}", .{acc});
                     },
+                    .As => |t| {
+                        c.print(.{ uop.e, " as ", t });
+                    },
                 }
                 c.s(")");
             },
@@ -499,6 +502,7 @@ pub const UnOp = union(enum) {
     Ref,
     Deref,
     Access: Str,
+    As: Type,
 };
 
 pub const BinOp = enum {
@@ -520,6 +524,7 @@ pub const BinOp = enum {
     PostfixCall,
     RecordAccess,
     Deref,
+    As,
 
     fn print(self: @This(), c: Ctx) void {
         const sop = switch (self) {

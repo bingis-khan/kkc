@@ -140,6 +140,7 @@ pub const Lexer = struct {
                     @"fn",
                     use,
                     pass,
+                    as,
                 };
                 const keyword = std.meta.stringToEnum(Keyword, self.scanned(from)) orelse {
                     break :b .IDENTIFIER;
@@ -158,6 +159,7 @@ pub const Lexer = struct {
                     .@"fn" => .FN,
                     .use => .USE,
                     .pass => .PASS,
+                    .as => .AS,
                 };
             },
 

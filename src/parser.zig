@@ -1336,6 +1336,19 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             });
         }
 
+        if (binop == .As) {
+            const t = try Type.init(self, null).sepTyo();
+            try self.typeContext.unify(t, left.t);
+            return self.allocExpr(.{
+                .t = t,
+                // NOTE: we generate a new node only for error reporting. we don't really need it otherwise.
+                .e = .{ .UnOp = .{
+                    .e = left,
+                    .op = .{ .As = t },
+                } },
+            });
+        }
+
         const right = try self.precedenceExpression(nextPrec);
 
         const exprType = switch (binop) {
@@ -1798,6 +1811,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .IDENTIFIER => .PostfixCall,
         .TYPE => .PostfixCall,
         .DOT => .RecordAccess,
+        .AS => .As,
         else => null,
     };
 }
@@ -1806,6 +1820,8 @@ fn getBinOp(tok: Token) ?AST.BinOp {
 fn binOpPrecedence(op: AST.BinOp) u32 {
     return switch (op) {
         // 0 means it won't be consumed, like a sentinel value.
+        .As => 1,
+
         .Equals => 3,
         .LessThan => 3,
         .GreaterThan => 3,

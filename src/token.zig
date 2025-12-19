@@ -58,10 +58,12 @@ pub const TokenType = enum {
     LEFT_BRACE,
     RIGHT_BRACE,
 
+    // keywords
     RETURN,
     IF,
     ELIF,
     ELSE,
+    AS,
 
     WHILE,
     CASE,

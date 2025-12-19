@@ -451,6 +451,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     },
                 }),
                 .Access => |mem| try self.getFieldFromType(v, uop.e.t, mem),
+                .As => v,
             };
         },
 
