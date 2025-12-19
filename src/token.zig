@@ -51,6 +51,8 @@ pub const TokenType = enum {
     PLUS,
     MINUS,
     TIMES,
+    OR,
+    AND,
 
     REF, // &, both ref and deref
     DOT, // .member

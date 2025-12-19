@@ -297,7 +297,10 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
     const constraints_ = try self.constraints();
 
     const fnBody = if (self.check(.COLON)) b: {
+        const pm = self.foldFromHere();
         const expr = try self.expression();
+        try self.finishFold(pm);
+
         const stmts = try self.arena.alloc(*AST.Stmt, 1);
         stmts[0] = try Common.allocOne(self.arena, AST.Stmt{
             .Return = expr,
@@ -1375,6 +1378,15 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 break :b boolTy;
             },
 
+            .Or,
+            .And,
+            => b: {
+                const boolTy = try self.definedType(.Bool);
+                try self.typeContext.unify(left.t, boolTy);
+                try self.typeContext.unify(right.t, boolTy);
+                break :b boolTy;
+            },
+
             .Equals, .NotEquals => b: {
                 try self.typeContext.unify(left.t, right.t);
                 break :b try self.definedType(.Bool);
@@ -1700,9 +1712,6 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
             switch (og[i - 1]) {
                 '(' => {
                     const start = i;
-                    while (og[i] != ')') i += 1;
-                    const end = i;
-                    i += 1;
 
                     if (last != ci) {
                         const se = try self.allocExpr(.{
@@ -1721,9 +1730,10 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                         }
                     }
 
-                    const v = try self.instantiateVar(&.{}, .{ .from = st.from + start, .to = st.from + end, .type = .IDENTIFIER });
-
-                    const ve = try self.allocExpr(.{
+                    // BAD BAD BAD BAD
+                    while (og[i] != ')' and og[i] != '.' and og[i] != '&') i += 1;
+                    const v = try self.instantiateVar(&.{}, .{ .from = st.from + start, .to = st.from + i, .type = .IDENTIFIER });
+                    var varExpr = try self.allocExpr(.{
                         .e = .{ .Var = .{
                             .v = v.v,
                             .match = v.m,
@@ -1731,10 +1741,50 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                         .t = v.t,
                     });
 
+                    while (true) {
+                        switch (og[i]) {
+                            '.' => {
+                                i += 1;
+                                const lastLast = i;
+                                while (og[i] != ')' and og[i] != '.' and og[i] != '&') i += 1;
+                                const field = og[lastLast..i];
+                                const t = try self.typeContext.field(
+                                    varExpr.t,
+                                    field,
+                                );
+                                varExpr = try self.allocExpr(.{
+                                    .t = t,
+                                    .e = .{ .UnOp = .{
+                                        .e = varExpr,
+                                        .op = .{
+                                            .Access = field,
+                                        },
+                                    } },
+                                });
+                            },
+                            '&' => {
+                                i += 1;
+                                const ptr = (try self.defined(.Ptr)).dataInst;
+                                try self.typeContext.unify(ptr.t, varExpr.t);
+                                varExpr = try self.allocExpr(.{
+                                    .t = ptr.tyArgs[0],
+                                    .e = .{
+                                        .UnOp = .{ .op = .Deref, .e = varExpr },
+                                    },
+                                });
+                            },
+                            ')' => {
+                                i += 1;
+                                break;
+                            },
+                            else => unreachable, // error
+                        }
+                    }
+
                     if (e) |ee| {
-                        e = try self.strConcat(ee, ve);
+                        e = try self.strConcat(ee, varExpr);
                     } else {
-                        e = ve;
+                        e = varExpr;
                     }
                     last = i;
                 },
@@ -1806,6 +1856,10 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .EQEQ => .Equals,
         .LT => .LessThan,
         .GT => .GreaterThan,
+        .GTEQ => .GreaterEqualThan,
+        .OR => .Or,
+        .AND => .And,
+
         .LEFT_PAREN => .Call,
         .REF => .Deref,
         .IDENTIFIER => .PostfixCall,
@@ -1822,14 +1876,18 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
         // 0 means it won't be consumed, like a sentinel value.
         .As => 1,
 
-        .Equals => 3,
-        .LessThan => 3,
-        .GreaterThan => 3,
+        .Or => 2,
+        .And => 3,
 
-        .Plus => 4,
-        .Minus => 4,
-        .Times => 6,
-        .Divide => 6,
+        .Equals => 4,
+        .LessThan => 4,
+        .GreaterThan => 4,
+        .GreaterEqualThan => 4,
+
+        .Plus => 5,
+        .Minus => 5,
+        .Times => 7,
+        .Divide => 7,
 
         .Call => 10,
         .RecordAccess => 10,

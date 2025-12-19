@@ -518,6 +518,9 @@ pub const BinOp = enum {
     GreaterEqualThan,
     LessEqualThan,
 
+    Or,
+    And,
+
     // FAKE OPS
     // TODO: explain
     Call,

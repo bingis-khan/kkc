@@ -1,0 +1,27 @@
+
+fn undefined(): @undefined
+fn offset-ptr(x Ptr a, count Int):
+	@offset-ptr(x, count * @size-of(@undefined as a))
+
+
+TypeSize a
+	size Int
+
+fn get-typesize () -> TypeSize a
+	return TypeSize { size: @size-of(@undefined as a) }
+
+fn size-of (x a): @size-of(x)
+fn ptr-size-of (x Ptr a): (get-typesize() as TypeSize a).size
+
+# safe cast for pointers
+fn cast-ptr (p Ptr a) -> Ptr b: @cast(p)
+
+
+use Cnile
+fn zeroed() -> a
+	x = @undefined
+	Cnile.memset(cast-ptr(&x), 0, size-of(x))
+	return x
+
+# TODO: maybe make a module "Ptr"?
+fn null-ptr() -> Ptr a: zeroed()

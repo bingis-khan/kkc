@@ -313,7 +313,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     const amount = try self.expr(intr.args[1]);
 
                     const ptr = try self.copyValue(&ogPtr.data, intr.args[0].t);
-                    ptr.data.ptr = @ptrFromInt(@intFromPtr(ptr.data.ptr) + @as(usize, @intCast(amount.data.int)));
+                    if (amount.data.int > 0) { // if pointer is null, @ptrFromInt produces an error. Offseting the null pointer by 0 is correct tho.
+                        ptr.data.ptr = @ptrFromInt(@intFromPtr(ptr.data.ptr) + @as(usize, @intCast(amount.data.int)));
+                    }
                     return ptr;
                 },
             }
@@ -322,14 +324,47 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             return self.intValue(x);
         },
         .BinOp => |op| {
-            const l = try self.expr(op.l);
-            const r = try self.expr(op.r);
-            return switch (op.op) {
-                .Plus => try self.intValue(l.data.int + r.data.int),
-                .Minus => try self.intValue(l.data.int - r.data.int),
-                .GreaterThan => try self.boolValue(l.data.int > r.data.int),
-                else => unreachable,
-            };
+            // first, short circuiting ops.
+            switch (op.op) {
+                .Or => {
+                    const lv = try self.expr(op.l);
+                    if (isTrue(lv)) {
+                        return lv;
+                    } else {
+                        return try self.expr(op.r);
+                    }
+                },
+
+                .And => {
+                    const lv = try self.expr(op.l);
+                    if (isTrue(lv)) {
+                        return try self.expr(op.r);
+                    } else {
+                        return lv;
+                    }
+                },
+
+                // these ones don't short circuit, so we can simplify our structure.
+                else => {
+                    const l = try self.expr(op.l);
+                    const r = try self.expr(op.r);
+                    return switch (op.op) {
+                        .Plus => try self.intValue(l.data.int + r.data.int),
+                        .Minus => try self.intValue(l.data.int - r.data.int),
+                        .Times => try self.intValue(l.data.int * r.data.int),
+                        .LessThan => try self.boolValue(l.data.int < r.data.int),
+                        .GreaterThan => try self.boolValue(l.data.int > r.data.int),
+                        .GreaterEqualThan => try self.boolValue(l.data.int >= r.data.int),
+
+                        else => {
+                            std.debug.print("unimplemented op: {}\n", .{op.op});
+                            unreachable;
+                        },
+                    };
+                },
+            }
+
+            unreachable;
         },
         .Var => |v| {
             switch (v.v) {

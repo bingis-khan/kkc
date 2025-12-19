@@ -1,55 +1,67 @@
 #!./zig-out/bin/kkc
 use Term
-use Cnile
-	Void
+use Slice
+use Alloc
+	allocate
+
+al = Alloc.get-c-allocator()
+s = al allocate(3) as Slice Int
+
+s Slice.get(0) Term.println()
+s Slice.get(0) Term.println()
+s Slice.set(0, 1222)
+s Slice.set(1, 1)
+s Slice.set(2, 2)
+s Slice.get(0) Term.println()
 
 
-# inst Str Record
-# 	print-str (self _)
-# 		r = self.cock
-# 		s = self.dupsko.miau
-# 		print-str('Record { dupsko: { miau: \(s) }, cock: \(r) }')
+
+# inst Str Slice
+# 	print-str (self)
+# 		if self.count == 0
+# 			print-str('[]')
+# 		elif self.count == 1
+# 			one-elem = get(self, 0)
+# 			print-str('[\(one-elem)]')
+# 		else
+# 			print-str('[')
+# 			print-str(get(self, 0))
+# 			self
+# 				subslice(1, self.count)
+# 				for-each(elem: print-str(', \(elem)'))
+
+# 			print-str(']')
+
+# 	# i'll implement other stuff later...
+
+# SliceAddressIter a
+# 	slice Slice a
+# 	current-offset Int
 
 
-# x = Record { dupsko: {miau: False }, cock: &2 }
-# Term.println(x)
-# x <.cock&= 79
-# Term.println(x)
-# x <.dupsko.miau= True
-# Term.println(x)
-
-x = 1 # asdasdasdas
-    # asd
-	   # asd
+# fn addresses (slice Slice a):
+# 	SliceAddressIter { slice, current-offset: 0 }
 
 
-Record
-	cock Int
-inst Str Record
-	print-str (self _)
-		r = self.cock
-		print-str('Record { cock: \(r) }')
+# inst IntoIter SliceAddressIter a
+# 	into-iter (self): self
 
-ayo = Just(Record { cock: 1 })
-Term.println(ayo)
-case ayo
-	Just({ cock })
-		cock <= 2
-		Term.println(cock)
-Term.println(ayo)
+# inst Iter SliceAddressIter a
+# 	next (self Ptr (SliceAddressIter a)) -> Maybe (Ptr a)
+# 		off = self&.current-offset
+# 		if off + 1 > self&.slice.count
+# 			return None
+
+# 		elem = self&.slice.ptr offset-ptr(off)
+# 		self <&.current-offset= off + 1
+# 		return Just(elem)
 
 
-xxx = True
-yyy = @cast(xxx) + 0
 
-ptr =& @undefined
-ptr <&= { x: 420, y: 1337, z: Unit, b: Just(True)}
-Term.println(ptr&.b)
+# fn copy-to (from Slice a, to Slice a) -> Unit
+# 	if from.count > to.count
+# 		Error.critical('cannot copy to a slice that is smaller! (copying from \(from.count)-element slice to \(to.count)-element slice)')
 
-x =& Unit
-
-fn cast-int (x): @cast(x) as Int
-
-
-Term.println(cast-int(x))
-Term.println(cast-int(@offset-ptr(x, 12)))
+# 	from
+# 		zip(Iter.from(0))
+# 		for-each(uncurry((elem, i): set(to, i, elem)))

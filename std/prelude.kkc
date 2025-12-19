@@ -49,3 +49,7 @@ Tuple2 a b
 Maybe a
 	None
 	Just a
+
+Either e a
+	Left e
+	Right a

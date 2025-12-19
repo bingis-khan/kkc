@@ -1,5 +1,3 @@
-use Maybe
-	Maybe
 use Str
 	Str
 	print-str
@@ -13,3 +11,10 @@ use Iter
 	drop
 	take
 	
+use Error
+	or-fail
+	or-else
+
+use Slice
+	Slice
+	subslice

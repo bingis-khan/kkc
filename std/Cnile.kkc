@@ -16,3 +16,11 @@ external
 
 	#[cfunname 'rand']
 	rand() -> Int
+
+	memset (dest Ptr Void, byte Int, count Int) -> Ptr Void
+
+	exit (status Int) -> Void
+
+	malloc (bytes Int) -> Ptr Void
+	free (x Ptr Void) -> Void
+

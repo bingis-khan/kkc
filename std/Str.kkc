@@ -27,6 +27,10 @@ inst Str Bool
 		else
 			print-str('False')
 
+inst Str Unit
+	print-str (self Unit) -> Unit
+		print-str('()')
+
 
 inst Str Ptr
 	print-str (self _)

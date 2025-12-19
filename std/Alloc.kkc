@@ -1,0 +1,29 @@
+use Mem
+	get-typesize
+	TypeSize
+	cast-ptr
+use Cnile
+
+
+class Allocator
+	allocate (self _, count Int) -> Slice a
+	free (self _, slice Slice a) -> Unit
+
+
+# bogus datatype for the C allocator.
+CAllocator
+	CAllocator
+
+fn get-c-allocator (): CAllocator
+
+
+inst Allocator CAllocator
+	allocate (CAllocator CAllocator, count Int) -> Slice a
+		size = (get-typesize() as TypeSize a).size
+		ptr = Cnile.malloc(size * count) cast-ptr()
+
+		# TODO: right now we don't care about allocation failures.
+		return Slice { ptr: ptr, count: count }
+
+	free (CAllocator, slice Slice a) -> Unit
+		Cnile.free(slice.ptr cast-ptr())

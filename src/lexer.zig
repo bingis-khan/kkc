@@ -141,6 +141,8 @@ pub const Lexer = struct {
                     use,
                     pass,
                     as,
+                    @"or",
+                    @"and",
                 };
                 const keyword = std.meta.stringToEnum(Keyword, self.scanned(from)) orelse {
                     break :b .IDENTIFIER;
@@ -160,6 +162,8 @@ pub const Lexer = struct {
                     .use => .USE,
                     .pass => .PASS,
                     .as => .AS,
+                    .@"or" => .OR,
+                    .@"and" => .AND,
                 };
             },
 

@@ -1,0 +1,80 @@
+use Term
+use Mem
+	offset-ptr
+use Error
+	or-fail
+use Iter
+	IntoIter
+	Iter
+
+
+Slice a
+	ptr Ptr a
+	count Int
+
+fn empty ():
+	Slice { ptr: Mem.null-ptr(), count: 0 }
+
+
+fn elem-size-of (slice Slice a):
+	slice.ptr Mem.ptr-size-of()
+
+
+fn get-ptr (slice Slice a, i Int) -> Ptr a
+	if i < 0 or i >= slice.count
+		Error.critical('Access to slice at index \(i). (max: \(slice.count))')
+
+	elem-ptr = slice.ptr Mem.offset-ptr(i)
+	return elem-ptr
+
+fn try-get (slice Slice a, i Int) -> Maybe a
+	if i < 0 or i >= slice.count
+		return None
+	elem = slice.ptr Mem.offset-ptr(i)&
+	return Just(elem)
+
+fn get (slice Slice a, i Int) -> a:
+	slice
+	try-get(i)
+	or-fail('Access to slice at index \(i). (max: \(slice.count))')
+
+fn set (slice Slice a, i Int, x a)
+	ep = slice get-ptr(i)
+	ep <&= x
+
+
+fn subslice (slice Slice a, from Int, to Int) -> Slice a
+	if from > slice.count or to > slice.count
+		Error.critical('tried to sublice [\(from):\(to)], but slice has \(slice.count) elements')
+	
+
+	begin-ptr = slice.ptr Mem.offset-ptr(from)
+	count = to - from
+	if count < 0
+		count <= 0
+
+	return Slice { ptr: begin-ptr, count: count }
+
+
+
+SliceIter a
+	slice Slice a
+	current-offset Int
+
+inst IntoIter Slice
+	into-iter (self):
+		SliceIter { slice: self, current-offset: 0 }
+
+inst IntoIter SliceIter
+	into-iter (self): self
+
+inst Iter SliceIter
+	next (self Ptr (SliceIter a)) -> Maybe a
+		off = self&.current-offset
+		if off + 1 > self&.slice.count
+			return None
+
+		elem = self&.slice.ptr offset-ptr(off)&
+		self <&.current-offset= off + 1
+		return Just(elem)
+
