@@ -8,11 +8,10 @@ al = Alloc.get-c-allocator()
 s = al allocate(3) as Slice Int
 
 s Slice.get(0) Term.println()
-s Slice.get(0) Term.println()
 s Slice.set(0, 1222)
-s Slice.set(1, 1)
+s Slice.set(1, 69)
 s Slice.set(2, 2)
-s Slice.get(0) Term.println()
+s for-each(Term.println)
 
 
 

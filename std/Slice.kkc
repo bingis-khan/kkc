@@ -30,8 +30,8 @@ fn get-ptr (slice Slice a, i Int) -> Ptr a
 fn try-get (slice Slice a, i Int) -> Maybe a
 	if i < 0 or i >= slice.count
 		return None
-	elem = slice.ptr Mem.offset-ptr(i)&
-	return Just(elem)
+	elem-ptr = slice.ptr Mem.offset-ptr(i)
+	return Just(elem-ptr&)
 
 fn get (slice Slice a, i Int) -> a:
 	slice

@@ -124,7 +124,8 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                         std.debug.assert(varVal.header.ogPtr != null);
                         @memcpy(varVal.header.ogPtr.?.slice(sz.size), exprVal.data.slice(sz.size));
                     } else {
-                        varVal.header = exprVal.header;
+                        // varVal.header = exprVal.header;  // TODO: REMOVED BECAUSE I WAS ASSIGNING STUFF TO EXTERNAL POINTERS! This will prolly produce errors in the future. :(((
+                        // This about how I should handle such metadata.
                         @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
                     }
                 },
