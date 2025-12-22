@@ -183,10 +183,9 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     }
 }
 
-fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
-    // construct env for this function yo.
-    const envSnapshot = try self.arena.alloc(Value.Type.Fun.EnvSnapshot, fun.env.len);
-    for (fun.env, 0..) |ei, i| {
+fn initEnvSnapshot(self: *Self, env: ast.Env) ![]Value.Type.Fun.EnvSnapshot {
+    const envSnapshot = try self.arena.alloc(Value.Type.Fun.EnvSnapshot, env.len);
+    for (env, 0..) |ei, i| {
         envSnapshot[i] = switch (ei.v) {
             .Var => |v| .{ .Snap = .{
                 .v = v,
@@ -209,6 +208,12 @@ fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
         };
     }
 
+    return envSnapshot;
+}
+
+fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
+    // construct env for this function yo.
+    const envSnapshot = try self.initEnvSnapshot(fun.env);
     try self.scope.funs.put(fun.name, envSnapshot);
 }
 
@@ -456,6 +461,41 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     return self.initRecord(nunbox(fun.data.confun).ptr, c.args, e.t);
                 },
 
+                .Lambda => {
+                    const lamAndEnv = nunbox(fun.data.lam).ptr;
+
+                    // begin new scope
+                    const oldScope = self.scope;
+                    var scope = Scope.init(oldScope, self.arena);
+                    self.scope = &scope;
+                    defer self.scope = oldScope;
+
+                    // COPYPASTA WARNING
+                    const lam = lamAndEnv.lam;
+                    const env = lamAndEnv.env;
+                    for (env) |ee| {
+                        switch (ee) {
+                            .Snap => |eee| try self.scope.putVar(eee.v, eee.vv),
+                            .AssocID => |id| {
+                                const efun = self.tymap.tryGetFunctionByID(id).?;
+                                const efunv = try self.initFunction(efun.fun, efun.m);
+                                try self.scope.putVar(efun.fun.name, efunv);
+                            },
+                        }
+                    }
+
+                    const args = try self.exprs(c.args);
+                    for (lam.params, args) |decon, a| {
+                        if (!try self.tryDeconstruct(decon, &a.data)) {
+                            return error.CaseNotMatched;
+                        }
+                    }
+
+                    const ret = try self.expr(lam.expr);
+
+                    return ret;
+                },
+
                 .None => unreachable,
             }
         },
@@ -572,6 +612,20 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             };
 
             return vptr;
+        },
+
+        .Lam => |*l| {
+            const ptr = nanbox(try common.allocOne(self.arena, Value.Type.Lam{
+                .lam = l,
+                .env = try self.initEnvSnapshot(l.env),
+            }), .Lambda);
+            return try self.initValue(.{
+                .data = .{ .lam = ptr },
+                .header = .{
+                    .functionType = .Lambda,
+                    .ogPtr = null,
+                },
+            });
         },
     }
 
@@ -703,6 +757,7 @@ const Value = extern struct {
         ptr: *align(1) Type,
         fun: *Fun,
         confun: *ast.Con,
+        lam: *const Lam,
         enoom: u32, // for enum-like data structures
         record: Flexible, // one constructor / record type
         adt: extern struct {
@@ -710,12 +765,18 @@ const Value = extern struct {
             data: Flexible,
         },
 
+        const Lam = struct {
+            lam: *const ast.Expr.Lam,
+            env: []Fun.EnvSnapshot,
+        };
+
         const Fun = struct {
             fun: *ast.Function,
             env: []EnvSnapshot,
             match: *ast.Match(ast.Type),
 
             const EnvSnapshot = union(enum) {
+                // i forgot what it was gegegeg
                 Snap: struct { v: ast.Var, vv: *Value },
                 AssocID: ast.Association.ID,
             };
@@ -761,6 +822,7 @@ const Header = extern struct {
         ExternalFunction,
         LocalFunction,
         ConstructorFunction,
+        Lambda,
         None,
     };
 
@@ -1115,17 +1177,19 @@ const DyLibLoader = struct {
     }
 };
 
+// https://muxup.com/2023q4/storing-data-in-pointers
 fn nanbox(ptr: anytype, fty: Header.FunctionType) @TypeOf(ptr) {
     const choice: usize = switch (fty) {
         .None => unreachable, // we shouldn't call it on non-functions.
-        .ConstructorFunction => 0b001,
-        .LocalFunction => 0b010,
-        .ExternalFunction => 0b100,
+        .ConstructorFunction => 0b0001,
+        .LocalFunction => 0b0010,
+        .ExternalFunction => 0b0100,
+        .Lambda => 0b1000,
     };
 
     var pint = @intFromPtr(ptr);
     pint = @bitReverse(pint);
-    if ((pint & 0b111) > 0 and (pint & 0b111) != choice) unreachable; // check just in case - this would be a bug frfr.
+    if ((pint & 0b1111) > 0 and (pint & 0b1111) != choice) unreachable; // check just in case - this would be a bug frfr.
     pint |= choice;
     pint = @bitReverse(pint);
 
@@ -1135,10 +1199,11 @@ fn nanbox(ptr: anytype, fty: Header.FunctionType) @TypeOf(ptr) {
 fn nunbox(ptr: anytype) struct { ptr: @TypeOf(ptr), fty: Header.FunctionType } {
     var pint = @intFromPtr(ptr);
     pint = @bitReverse(pint);
-    const clearedPtr: @TypeOf(ptr) = @ptrFromInt(@bitReverse(pint & ~@as(usize, 0b111)));
+    // NOTE: WE DON'T NEED TO SIGN EXTEND AS A LINUX USERSPACE PROGRAM.
+    const clearedPtr: @TypeOf(ptr) = @ptrFromInt(@bitReverse(pint & ~@as(usize, 0b1111)));
     return .{
         .ptr = clearedPtr,
-        .fty = if ((pint & 0b100) > 0) .ExternalFunction else if ((pint & 0b010) > 0) .LocalFunction else if ((pint & 0b001) > 0) .ConstructorFunction else unreachable,
+        .fty = if ((pint & 0b1000) > 0) .Lambda else if ((pint & 0b0100) > 0) .ExternalFunction else if ((pint & 0b0010) > 0) .LocalFunction else if ((pint & 0b0001) > 0) .ConstructorFunction else unreachable,
     };
 }
 

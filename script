@@ -4,15 +4,32 @@ use Slice
 use Alloc
 	allocate
 
-al = Alloc.get-c-allocator()
-s = al allocate(3) as Slice Int
+Lazy a
+	AlreadyEvald a
+	ToEval (() -> a)
 
-s Slice.get(0) Term.println()
-s Slice.set(0, 1222)
-s Slice.set(1, 69)
-s Slice.set(2, 2)
-s for-each(Term.println)
+fn lazy-get (Ptr(l) Ptr (Lazy a)) -> a
+	case l
+		AlreadyEvald(x)
+			return x
+		ToEval(fnn)
+			x = fnn()
+			l <= AlreadyEvald(x)
+			return x
 
+fn lazy(fnn): ToEval(fnn)
+
+fn miau()
+	Term.println('miaaau')
+	return 69
+
+l =& lazy(miau)
+ll =& lazy(:420)
+l lazy-get() Term.println()
+l lazy-get() Term.println()
+
+1 to (5)
+	for-each(fn(x): Term.println(x))
 
 
 # inst Str Slice

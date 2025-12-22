@@ -64,29 +64,41 @@ pub const Ctx = struct {
     }
 
     pub fn print(self: Self, args: anytype) void {
-        const fields = @typeInfo(@TypeOf(args)).Struct.fields;
-        inline for (fields) |field| {
-            // switch (@typeInfo(@TypeOf(arg))) {
-            //     .Pointer => |ptrinfo| {
-            //         switch (ptrinfo.size) {
-            //             .Slice => std.debug.print("{s}", .{arg}),
-            //             .Many => std.debug.print("{s}", .{arg}),
-            //             .One => std.debug.print("{s}", .{arg}),
-            //             else => unreachable,
-            //         }
-            //     }, // only for this: assumme an array is a STRING. (because it's hard to check for one).
-            //     else => arg.print(self),
-            // }
-            // dumbest thing. const strings are a pointer to ONE(!), which means I can't call print on pointers if I proceed in this direction.
-
-            const arg = @field(args, field.name);
-            if (comptime std.meta.hasMethod(field.type, "print")) {
-                arg.print(self);
-            } else {
-                switch (@typeInfo(@TypeOf(arg))) {
-                    .Int, .Float, .ComptimeInt, .ComptimeFloat => self.sp("{}", .{arg}),
-                    else => self.s(@as(Str, arg)), // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
+        switch (@typeInfo(@TypeOf(args))) {
+            .Struct => {
+                const fields = @typeInfo(@TypeOf(args)).Struct.fields;
+                inline for (fields) |field| {
+                    // switch (@typeInfo(@TypeOf(arg))) {
+                    //     .Pointer => |ptrinfo| {
+                    //         switch (ptrinfo.size) {
+                    //             .Slice => std.debug.print("{s}", .{arg}),
+                    //             .Many => std.debug.print("{s}", .{arg}),
+                    //             .One => std.debug.print("{s}", .{arg}),
+                    //             else => unreachable,
+                    //         }
+                    //     }, // only for this: assumme an array is a STRING. (because it's hard to check for one).
+                    //     else => arg.print(self),
+                    // }
+                    // dumbest thing. const strings are a pointer to ONE(!), which means I can't call print on pointers if I proceed in this direction.
+                    const arg = @field(args, field.name);
+                    self.printArg(arg, field.type);
                 }
+            },
+
+            else => {
+                // assume it's a single arg!
+                self.printArg(args, @TypeOf(args));
+            },
+        }
+    }
+
+    fn printArg(self: Self, arg: anytype, t: anytype) void {
+        if (comptime std.meta.hasMethod(t, "print")) {
+            arg.print(self);
+        } else {
+            switch (@typeInfo(@TypeOf(arg))) {
+                .Int, .Float, .ComptimeInt, .ComptimeFloat => self.sp("{}", .{arg}),
+                else => self.s(@as(Str, arg)), // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
             }
         }
     }
@@ -382,7 +394,21 @@ pub const Expr = struct {
             }
         },
         AnonymousRecord: []Field,
+        Lam: Lam,
     },
+
+    pub const Lam = struct {
+        params: []*Decon,
+        expr: *Expr,
+        env: Env,
+
+        pub fn print(self: *const @This(), c: Ctx) void {
+            c.print("fn ");
+            c.encloseSepBy(self.params, ", ", "(", ")");
+            c.encloseSepBy(self.env, ", ", "[", "]");
+            c.print(.{ ": ", self.expr });
+        }
+    };
 
     pub const Field = struct {
         field: Str,
@@ -490,6 +516,9 @@ pub const Expr = struct {
             .NamedRecord => |nrec| {
                 c.print(.{ nrec.data, " " });
                 c.encloseSepBy(nrec.fields, ", ", "{", "}");
+            },
+            .Lam => |l| {
+                l.print(c);
             },
         }
         c.s(" :: ");

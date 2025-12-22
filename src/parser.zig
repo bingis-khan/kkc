@@ -632,13 +632,11 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 }
 
                 // can be a tvar or a postfix call.
-                const lexstate = self.lexer;
-                const curtok = self.currentToken;
+                const lexState = self.saveLexingState();
                 if (self.consume(.IDENTIFIER)) |mtv| {
                     if (self.peek().type == .LEFT_PAREN) {
                         // postfix call.
-                        self.lexer = lexstate; // AHH AHSDH FUCK I DID IT, NO!!
-                        self.currentToken = curtok;
+                        self.loadLexingState(lexState); // AHH AHSDH FUCK I DID IT, NO!!
                         // ITS OBVIOUS I SHOULD USE A `data` KEYWORD OR SOMETHING LIKE THIS BRUHHHH.
                         // BUT MUH QT SYNTAX :OOOOOOOO
                         const ce = try self.constructorExpression(&.{}, typename);
@@ -1417,7 +1415,61 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     }
 
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
-    if (self.consume(.IDENTIFIER)) |v| {
+    if (self.check(.FN) or self.peek().type == .COLON) { // smol hack to allow quick empty lambdas.
+        var params = std.ArrayList(*AST.Decon).init(self.arena);
+
+        var env = Env.init(self.arena);
+        self.scope.beginScope(&env);
+
+        // WARNING: (): whatever gets parsed as a lambda with no args. this might be incorrect behavior when we add tuples.
+        if (self.check(.LEFT_PAREN)) {
+            if (!self.check(.RIGHT_PAREN)) {
+                while (true) {
+                    const decon = try self.deconstruction();
+                    try params.append(decon);
+
+                    if (self.check(.RIGHT_PAREN)) break;
+                    try self.devour(.COMMA);
+                }
+            }
+
+            try self.devour(.COLON);
+        } else if (self.check(.COLON)) {
+            // no params
+        } else {
+            // single param
+            const decon = try self.deconstruction();
+            try params.append(decon);
+            try self.devour(.COLON);
+        }
+
+        const expr = try self.expression();
+        self.scope.endScope();
+
+        // do the types for function type.
+        const argTys = try self.arena.alloc(AST.Type, params.items.len);
+        for (params.items, 0..) |p, i| {
+            argTys[i] = p.t;
+        }
+
+        return self.allocExpr(.{
+            .t = try self.typeContext.newType(.{
+                .Fun = .{
+                    .args = argTys,
+                    .env = try self.typeContext.newEnv(env.items),
+                    .ret = expr.t,
+                },
+            }),
+            .e = .{
+                .Lam = .{
+                    .params = params.items,
+                    .expr = expr,
+                    .env = env.items,
+                },
+            },
+        });
+    } // lambda
+    else if (self.consume(.IDENTIFIER)) |v| {
         const dv = try self.instantiateVar(&.{}, v);
         return self.allocExpr(.{
             .t = dv.t,
@@ -3094,6 +3146,27 @@ const ParsingMode = union(enum) {
     Normal,
     CountIndent: u32,
 };
+
+const LexingState = struct {
+    lexer: Lexer,
+    currentToken: Token,
+    parsingMode: ParsingMode,
+};
+
+// backtracking!!
+fn saveLexingState(self: *const Self) LexingState {
+    return .{
+        .lexer = self.lexer,
+        .currentToken = self.currentToken,
+        .parsingMode = self.mode,
+    };
+}
+
+fn loadLexingState(self: *Self, state: LexingState) void {
+    self.lexer = state.lexer;
+    self.currentToken = state.currentToken;
+    self.mode = state.parsingMode;
+}
 
 // NOTE: later, we don't have to specify a return value. Just always follow it with "return unreachable".
 fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
