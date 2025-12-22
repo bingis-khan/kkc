@@ -1,9 +1,9 @@
 use Str
 	Str
-	print-str
 use Iter
 	Range
 
+	from
 	to
 
 	map

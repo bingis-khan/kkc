@@ -6,6 +6,11 @@ use Error
 use Iter
 	IntoIter
 	Iter
+	for-each
+	from
+use Str
+	Str
+	print-str
 
 
 Slice a
@@ -77,4 +82,53 @@ inst Iter SliceIter
 		elem = self&.slice.ptr offset-ptr(off)&
 		self <&.current-offset= off + 1
 		return Just(elem)
+
+
+
+SliceAddressIter a
+	slice Slice a
+	current-offset Int
+
+
+fn addresses (slice Slice a):
+	SliceAddressIter { slice: slice, current-offset: 0 }
+
+
+inst IntoIter SliceAddressIter
+	into-iter (self): self
+
+inst Iter SliceAddressIter
+	next (self Ptr (SliceAddressIter a)) -> Maybe (Ptr a)
+		off = self&.current-offset
+		if off + 1 > self&.slice.count
+			return None
+
+		elem = self&.slice.ptr offset-ptr(off)
+		self <&.current-offset= off + 1
+		return Just(elem)
+
+
+# fn copy-to (src Slice a, dest Slice a) -> Unit
+# 	if src.count > dest.count
+# 		Error.critical('cannot copy to a slice that is smaller! (copying from \(src.count)-element slice to \(dest.count)-element slice)')
+
+# 	src zip(Iter.from(0)) for-each(fn Tuple2(elem, i): set(dest, i, elem))
+
+
+inst Str Slice
+	print-str (self)
+		if self.count == 0
+			print-str('[]')
+		elif self.count == 1
+			one-elem = get(self, 0)
+			print-str('[\(one-elem)]')
+		else
+			print-str('[')
+			print-str(get(self, 0))
+			self
+				subslice(1, self.count)
+				for-each(fn elem: print-str(', \(elem)'))
+
+			print-str(']')
+
 

@@ -13,6 +13,9 @@ fn get-typesize () -> TypeSize a
 fn size-of (x a): @size-of(x)
 fn ptr-size-of (x Ptr a): (get-typesize() as TypeSize a).size
 
+# wrapper for intrinsic.
+fn cast (x): @cast(x)
+
 # safe cast for pointers
 fn cast-ptr (p Ptr a) -> Ptr b: @cast(p)
 
@@ -25,3 +28,5 @@ fn zeroed() -> a
 
 # TODO: maybe make a module "Ptr"?
 fn null-ptr() -> Ptr a: zeroed()
+
+fn ptr-to-int(p Ptr a) -> Int: @cast(p)

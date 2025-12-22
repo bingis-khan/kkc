@@ -213,7 +213,7 @@ pub const Lexer = struct {
 
     fn identifier(self: *Self) void {
         while (switch (self.curChar()) {
-            'a'...'z', 'A'...'Z', '0'...'9' => true,
+            'a'...'z', 'A'...'Z', '0'...'9', '\'' => true,
             '-' => std.ascii.isAlphanumeric(self.peekChar()), // a-b ok, a- b minus, etc.
             else => false,
         }) : (self.currentIndex += 1) {}

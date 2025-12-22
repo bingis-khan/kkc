@@ -9,6 +9,7 @@ printTokens: bool = false,
 printRootTokens: bool = false,
 printAST: bool = false,
 printRootAST: bool = false,
+printExports: bool = false,
 
 pub fn parse(args: std.process.ArgIterator) !@This() {
     var opts = @This(){ .filename = undefined };
@@ -22,6 +23,7 @@ pub fn parse(args: std.process.ArgIterator) !@This() {
             switch (option) {
                 .tokens => opts.printTokens = true,
                 .ast => opts.printAST = true,
+                .exports => opts.printExports = true,
                 .@"!tokens" => opts.printRootTokens = true,
                 .@"!ast" => opts.printRootAST = true,
             }
@@ -42,6 +44,7 @@ pub fn parse(args: std.process.ArgIterator) !@This() {
 const ProgramOption = enum {
     tokens,
     ast,
+    exports,
     @"!tokens",
     @"!ast",
 };

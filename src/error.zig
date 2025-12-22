@@ -3,6 +3,7 @@ const Common = @import("common.zig");
 const Str = Common.Str;
 const Loc = Common.Location;
 const ast = @import("ast.zig");
+const Module = @import("Module.zig");
 
 pub const Error = union(enum) {
     UndefinedVariable: struct {
@@ -65,6 +66,7 @@ pub const Error = union(enum) {
     CouldNotFindInstanceForType: struct {
         data: *ast.Data,
         class: *ast.Class,
+        possibilities: Module.DataInstance,
     },
 
     ConstraintsLeft: struct {
@@ -153,7 +155,15 @@ pub const Error = union(enum) {
 
             .DataDoesNotExportThing => p("DataDoesNotExportThing", .{}),
             .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),
-            .CouldNotFindInstanceForType => |e| p("could not find instance of class {s} for type {s}", .{ e.class.name, e.data.name }),
+            .CouldNotFindInstanceForType => |e| {
+                c.print(.{ "Could not find instance of ", e.class, " for type ", e.data, ". Possible instances: " });
+                var it = e.possibilities.iterator();
+                while (it.next()) |ee| {
+                    ee.key_ptr.*.print(c);
+                    c.s(", ");
+                }
+                // p("could not find instance of class {s} for type {s}", .{ e.class.name, e.data.name })
+            },
             .ConstraintsLeft => |e| p("num constraints left in module '{s}': {}", .{ e.module, e.numConstraints }),
             .TVarDoesNotImplementClass => |e| p("tvar {s} does not implement class {s}", .{ e.tv.name, e.class.name }),
             .ConstrainedNonExistentTVar => |e| p("constrained non existent tvar {s}", .{e.tvname}),

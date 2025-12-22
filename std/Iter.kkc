@@ -67,6 +67,7 @@ inst Iter Take
 fn take(it, i): Take(it into-iter(), i)
 
 
+# Bounded range
 Range
 	Range Int Int
 
@@ -105,3 +106,50 @@ fn for-each (iterable, fun)
 			Just(x)
 				_ = fun(x)
 
+
+# Unbounded range
+FromIter
+	from Int
+
+fn from(f): FromIter { from: f }
+
+inst IntoIter FromIter
+	into-iter(it): it
+
+inst Iter FromIter
+	next (Ptr(self) Ptr FromIter) -> Maybe Int
+		v = self.from
+		self <.from= self.from + 1
+		return Just(v)
+
+	
+# Zip it it'
+# 	left-it it
+# 	right-it it'
+
+
+# inst IntoIter Zip
+# 	into-iter (self Zip it it'): self
+
+# inst Iter Zip
+# 	next (self Ptr (Zip it it')) -> Maybe (Tuple2 item item') <= Iter it, Iter it'
+# 		copy = self&  # kind of stupid but it works. we should not consume elements if we can't. i mean, the user should probably take care of his iter not having side effects. i guess.
+# 		while True
+# 			case next(&copy.left-it)
+# 				None
+# 					return None
+# 				Just(left-x)
+# 					case next(&copy.right-it)
+# 						None
+# 							return None
+# 						Just(right-x)
+# 							# consume the two (yeah, kinda funny)
+# 							next(&self&.left-it)
+# 							next(&self&.right-it)
+# 							return Just(Tuple2(left-x, right-x))
+
+
+# fn zip(left, right)
+# 	left-it = left into-iter()
+# 	right-it = right into-iter()
+# 	return Zip { left-it: left-it, right-it: right-it }

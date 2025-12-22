@@ -69,7 +69,10 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         },
         .VarDec => |vd| {
             const v = try self.expr(vd.varValue);
-            try self.scope.putVar(vd.varDef, v);
+            const vc = try self.copyValue(&v.data, vd.varValue.t); // Okay, we actually need to copy it here bruv.
+            // NOTE TODO: RIPE FOR REFACTOR (for refs, we copy the value, but in this case... i need to copy the value and clear the ogPtr metadata..? (copyValue is actually a sort of reference... bruh......))
+            vc.header.ogPtr = null;
+            try self.scope.putVar(vd.varDef, vc);
         },
         .VarMut => |vm| {
             const exprVal = try self.expr(vm.varValue);
@@ -101,7 +104,8 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                             std.debug.assert(varVal.header.ogPtr != null);
                             @memcpy(varVal.header.ogPtr.?.slice(sz.size), exprVal.data.slice(sz.size));
                         } else {
-                            varVal.header = exprVal.header;
+                            // incorrect write!
+                            // varVal.header = exprVal.header;
                             @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
                         }
                     }
@@ -355,9 +359,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     const l = try self.expr(op.l);
                     const r = try self.expr(op.r);
                     return switch (op.op) {
+                        .Equals => try self.boolValue(l.data.int == r.data.int), // TEMP!!!
+
                         .Plus => try self.intValue(l.data.int + r.data.int),
                         .Minus => try self.intValue(l.data.int - r.data.int),
                         .Times => try self.intValue(l.data.int * r.data.int),
+
                         .LessThan => try self.boolValue(l.data.int < r.data.int),
                         .GreaterThan => try self.boolValue(l.data.int > r.data.int),
                         .GreaterEqualThan => try self.boolValue(l.data.int >= r.data.int),

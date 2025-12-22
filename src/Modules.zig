@@ -174,10 +174,11 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         }
     }
 
+    const moduleName = fullPath.path[fullPath.path.len - 1];
     var parser = try Parser.init(lexer, self.prelude, switch (pathtype) {
         .ByModulePath => |modpath| modpath.base,
         .ByFilename => |filename| .{ .isSTD = filename.isSTD, .path = &.{} },
-    }, fullPath.path[fullPath.path.len - 1], self, self.errors, self.typeContext, self.al);
+    }, moduleName, self, self.errors, self.typeContext, self.al);
     for (self.defaultExports.items) |xports| {
         try parser.addExports(&xports);
     }
@@ -189,6 +190,14 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         var hadNewline: bool = undefined;
         const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
         module.ast.print(ctx);
+    }
+
+    // module exports
+    if (self.opts.printExports) {
+        var hadNewline: bool = undefined;
+        const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+        ctx.print(.{ "Exports for module ", moduleName, "\n" });
+        module.exports.print(ctx);
     }
 
     return module;

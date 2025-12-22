@@ -24,6 +24,26 @@ pub const Exports = struct {
     types: std.StringHashMap(DataOrClass),
     cons: std.StringHashMap(*ast.Con),
     instances: std.AutoHashMap(*ast.Class, DataInstance),
+
+    pub fn print(self: *const @This(), cc: ast.Ctx) void {
+        cc.s("Instances:\n");
+        var c = cc;
+        c.indent += 1;
+
+        var it = self.instances.iterator();
+        while (it.next()) |e| {
+            c.print(.{ e.key_ptr.*, ":\n" });
+
+            var ec = c;
+            ec.indent += 1;
+
+            var itt = e.value_ptr.iterator();
+            while (itt.next()) |ee| {
+                ec.print(.{ ee.key_ptr.*, ": ", ee.value_ptr.*.uid, "\n" });
+            }
+        }
+        cc.s("End Instances\n");
+    }
 };
 
 pub const Path = []const Str;

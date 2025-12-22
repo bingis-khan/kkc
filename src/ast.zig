@@ -905,6 +905,10 @@ pub const Class = struct {
     name: Str,
     classFuns: []*ClassFun,
     selfType: TVar,
+
+    pub fn print(self: *const @This(), c: Ctx) void {
+        c.print(.{ self.name, "@", self.uid });
+    }
 };
 
 pub const ClassFun = struct {

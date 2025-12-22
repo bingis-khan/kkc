@@ -102,7 +102,7 @@ pub fn parse(self: *Self) !Module {
     self.consumeSeps();
     while (self.consume(.EOF) == null) {
         const dec = self.statement() catch |e| {
-            std.debug.print("Err.\n", .{});
+            std.debug.print("Err {s}.\n", .{self.name});
             sync_to_next_toplevel();
             return e;
         };
@@ -149,6 +149,7 @@ fn scopeToExports(self: *Self) Module.Exports {
     std.debug.assert(self.scope.scopes.current == 1);
 
     const scope = self.scope.currentScope();
+
     return .{
         .vars = scope.vars,
         .types = scope.types,
@@ -611,9 +612,10 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             } // mutation
             else {
                 // try parsing expression yo as a variable n shiii
+                const pm = self.foldFromHere();
                 const vv = try self.instantiateVar(&.{}, v);
                 const e = try self.finishExpression(try self.allocExpr(.{ .t = vv.t, .e = .{ .Var = .{ .v = vv.v, .match = vv.m } } }));
-                try self.endStmt();
+                try self.finishFold(pm);
                 break :b .{ .Expr = e };
             }
         } // var or mut
@@ -624,46 +626,46 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             break :b .{ .Expr = e };
         } // assignment to nothing
         else if (self.consume(.TYPE)) |typename| {
-            const maybeExpr: ?AST.Stmt = funny: {
-                if (self.peek().type == .DOT) { // DON'T CONSUME!
-                    const qe = try self.qualified(typename);
-                    const e = try self.finishExpression(qe);
-                    break :funny .{ .Expr = e };
+            if (self.peek().type == .DOT) { // DON'T CONSUME!
+                const pm = self.foldFromHere();
+                const qe = try self.qualified(typename);
+                const e = try self.finishExpression(qe);
+                try self.finishFold(pm);
+                break :b .{ .Expr = e };
+            }
+
+            // can be a tvar or a postfix call.
+            const lexState = self.saveLexingState();
+            if (self.consume(.IDENTIFIER)) |mtv| {
+                if (self.peek().type == .LEFT_PAREN) {
+                    // postfix call.
+                    self.loadLexingState(lexState); // AHH AHSDH FUCK I DID IT, NO!!
+                    // ITS OBVIOUS I SHOULD USE A `data` KEYWORD OR SOMETHING LIKE THIS BRUHHHH.
+                    // BUT MUH QT SYNTAX :OOOOOOOO
+                    const pm = self.foldFromHere();
+                    const ce = try self.constructorExpression(&.{}, typename);
+                    try self.finishFold(pm);
+                    break :b .{ .Expr = try self.finishExpression(ce) };
                 }
 
-                // can be a tvar or a postfix call.
-                const lexState = self.saveLexingState();
-                if (self.consume(.IDENTIFIER)) |mtv| {
-                    if (self.peek().type == .LEFT_PAREN) {
-                        // postfix call.
-                        self.loadLexingState(lexState); // AHH AHSDH FUCK I DID IT, NO!!
-                        // ITS OBVIOUS I SHOULD USE A `data` KEYWORD OR SOMETHING LIKE THIS BRUHHHH.
-                        // BUT MUH QT SYNTAX :OOOOOOOO
-                        const ce = try self.constructorExpression(&.{}, typename);
-                        break :funny .{ .Expr = try self.finishExpression(ce) };
-                    }
+                try self.dataDef(typename, mtv);
+                break :b null;
+            }
 
-                    try self.dataDef(typename, mtv);
-                    break :funny null;
-                }
+            // BRITTLE AS HELL.
+            if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP) {
+                // TODO: parse non-qualified postfix expression alls.
+                try self.dataDef(typename, null);
+                break :b null;
+            }
 
-                // BRITTLE AS HELL.
-                if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP) {
-                    // TODO: parse non-qualified postfix expression alls.
-                    try self.dataDef(typename, null);
-                    break :funny null;
-                }
+            // actually, this is probably an expression, so parse it as one.
 
-                // actually, this is probably an expression, so parse it as one.
-                const ce = try self.constructorExpression(&.{}, typename);
-                const e = try self.finishExpression(ce);
-                break :funny .{ .Expr = e };
-            };
-
-            // NOTE: Experimental shit.
-            // It seems that if I'm parsing a real expression (so not null), I always terminate the statement. I might do the same thing for all cases, because I happen to forget them sometimes.
-            if (maybeExpr != null) try self.endStmt();
-            break :b maybeExpr;
+            const pm = self.foldFromHere();
+            const ce = try self.constructorExpression(&.{}, typename);
+            const e = try self.finishExpression(ce);
+            try self.finishFold(pm);
+            break :b .{ .Expr = e };
         } // type
         else if (self.check(.IF)) {
             const cond = try self.expression();
@@ -2097,8 +2099,11 @@ fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
     // automatically add instances (like muh haskells)
     if (mmod) |mod| {
         var it = mod.exports.instances.iterator();
-        while (it.next()) |inst| {
-            try self.scope.currentScope().instances.put(inst.key_ptr.*, inst.value_ptr.*);
+        while (it.next()) |insts| {
+            var iit = insts.value_ptr.iterator();
+            while (iit.next()) |inst| {
+                try self.addInstance(inst.value_ptr.*);
+            }
         }
     }
     return mmod;
@@ -2382,6 +2387,7 @@ fn solveAvailableConstraints(self: *Self) !void {
                         try self.errors.append(.{ .CouldNotFindInstanceForType = .{
                             .data = con.type,
                             .class = assoc.classFun.class,
+                            .possibilities = assoc.instances,
                         } });
                         assoc.ref.* = null;
                         _ = self.associations.orderedRemove(i);
@@ -2480,7 +2486,10 @@ fn instantiateType(self: *Self, tyTok: Token) !DataShit {
                 };
             },
 
-            .Class => unreachable,
+            .Class => |class| {
+                _ = class; // TODO: treat it as fresh tvar constrained. At the end, make sure it did not become a real type (must be finished as a tvar!)
+                unreachable;
+            },
         }
     } else {
         return try self.newPlaceholderType(typename, .{

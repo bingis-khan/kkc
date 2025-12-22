@@ -3,8 +3,6 @@ use Str
 
 fn print(s)
 	print-str(s)
-	return
 	
 fn println (s)
 	print-str('\(s)\n')
-	return
