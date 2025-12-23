@@ -1,3 +1,8 @@
 #!./zig-out/bin/kkc
 use Term
-Term.println(1)
+
+from (420)
+	zip(20 to (300))
+	drop(50)
+	take(10)
+	for-each(fn Tuple2(l, r): Term.println('\(l) <=> \(r)'))

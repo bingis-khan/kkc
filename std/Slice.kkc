@@ -8,6 +8,7 @@ use Iter
 	Iter
 	for-each
 	from
+	zip
 use Str
 	Str
 	print-str
@@ -108,11 +109,11 @@ inst Iter SliceAddressIter
 		return Just(elem)
 
 
-# fn copy-to (src Slice a, dest Slice a) -> Unit
-# 	if src.count > dest.count
-# 		Error.critical('cannot copy to a slice that is smaller! (copying from \(src.count)-element slice to \(dest.count)-element slice)')
+fn copy-to (src Slice a, dest Slice a) -> Unit
+	if src.count > dest.count
+		Error.critical('cannot copy to a slice that is smaller! (copying from \(src.count)-element slice to \(dest.count)-element slice)')
 
-# 	src zip(Iter.from(0)) for-each(fn Tuple2(elem, i): set(dest, i, elem))
+	src zip(Iter.from(0)) for-each(fn Tuple2(elem, i): set(dest, i, elem))
 
 
 inst Str Slice

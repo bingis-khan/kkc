@@ -10,6 +10,7 @@ use Iter
 	for-each
 	drop
 	take
+	zip
 	
 use Error
 	or-fail

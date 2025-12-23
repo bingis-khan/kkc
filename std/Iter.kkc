@@ -123,33 +123,33 @@ inst Iter FromIter
 		return Just(v)
 
 	
-# Zip it it'
-# 	left-it it
-# 	right-it it'
+Zip it it'
+	left-it it
+	right-it it'
 
 
-# inst IntoIter Zip
-# 	into-iter (self Zip it it'): self
+inst IntoIter Zip
+	into-iter (self Zip it it'): self
 
-# inst Iter Zip
-# 	next (self Ptr (Zip it it')) -> Maybe (Tuple2 item item') <= Iter it, Iter it'
-# 		copy = self&  # kind of stupid but it works. we should not consume elements if we can't. i mean, the user should probably take care of his iter not having side effects. i guess.
-# 		while True
-# 			case next(&copy.left-it)
-# 				None
-# 					return None
-# 				Just(left-x)
-# 					case next(&copy.right-it)
-# 						None
-# 							return None
-# 						Just(right-x)
-# 							# consume the two (yeah, kinda funny)
-# 							next(&self&.left-it)
-# 							next(&self&.right-it)
-# 							return Just(Tuple2(left-x, right-x))
+inst Iter Zip
+	next (self Ptr (Zip it it')) -> Maybe (Tuple2 item item') <= Iter it, Iter it'
+		copy = self&  # kind of stupid but it works. we should not consume elements if we can't. i mean, the user should probably take care of his iter not having side effects. i guess.
+		while True
+			case next(&copy.left-it)
+				None
+					return None
+				Just(left-x)
+					case next(&copy.right-it)
+						None
+							return None
+						Just(right-x)
+							# consume the two (yeah, kinda funny)
+							next(&self&.left-it)
+							next(&self&.right-it)
+							return Just(Tuple2(left-x, right-x))
 
 
-# fn zip(left, right)
-# 	left-it = left into-iter()
-# 	right-it = right into-iter()
-# 	return Zip { left-it: left-it, right-it: right-it }
+fn zip(left, right)
+	left-it = left into-iter()
+	right-it = right into-iter()
+	return Zip { left-it: left-it, right-it: right-it }

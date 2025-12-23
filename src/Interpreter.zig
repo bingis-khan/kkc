@@ -11,7 +11,7 @@ const Self = @This();
 // NOTE: I'll try to mark areas where something is SLOW due to laziness with `SLOW`.
 
 arena: std.mem.Allocator,
-returnValue: *Value = undefined, // default value is returned at the end of run()
+returnValue: ValueMeta = undefined, // default value is returned at the end of run()
 scope: *Scope,
 tymap: *const TypeMap,
 funLoader: DyLibLoader,
@@ -38,7 +38,7 @@ pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, al
     for (modules) |module| {
         self.stmts(module.toplevel) catch |err| switch (err) {
             error.Return => {
-                return self.returnValue.data.int;
+                return self.returnValue.ref.int;
             },
             else => return err,
         };
@@ -69,70 +69,35 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         },
         .VarDec => |vd| {
             const v = try self.expr(vd.varValue);
-            const vc = try self.copyValue(&v.data, vd.varValue.t); // Okay, we actually need to copy it here bruv.
-            // NOTE TODO: RIPE FOR REFACTOR (for refs, we copy the value, but in this case... i need to copy the value and clear the ogPtr metadata..? (copyValue is actually a sort of reference... bruh......))
-            vc.header.ogPtr = null;
-            try self.scope.putVar(vd.varDef, vc);
+            try self.putVar(vd.varDef, v, vd.varValue.t);
         },
         .VarMut => |vm| {
             const exprVal = try self.expr(vm.varValue);
             const sz = self.sizeOf(vm.varValue.t);
 
-            const varValOrRef = self.scope.getVar(vm.varRef);
-            switch (varValOrRef) {
-                .ref => |dataNTy| {
-                    if (vm.accessors.len == 0) {
-                        @memcpy(dataNTy.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
-                    } else {
-                        const firstAccess = vm.accessors[0];
-                        var varVal = switch (firstAccess.acc) {
-                            .Deref => dataNTy.data.ptr.toValuePtr(),
-                            .Access => |mem| try self.getFieldFromType(try self.copyValue(dataNTy.data, firstAccess.tBefore), firstAccess.tBefore, mem),
-                        };
-                        for (vm.accessors[1..]) |acc| {
-                            switch (acc.acc) {
-                                .Deref => {
-                                    varVal = varVal.data.ptr.toValuePtr();
-                                },
-                                .Access => |field| {
-                                    varVal = try self.getFieldFromType(varVal, acc.tBefore, field);
-                                },
-                            }
-                        }
-                        // hacky??? the scope type valOrRef basically does the same thing.
-                        if (vm.accessors.len > 0 and vm.accessors[vm.accessors.len - 1].acc == .Access) {
-                            std.debug.assert(varVal.header.ogPtr != null);
-                            @memcpy(varVal.header.ogPtr.?.slice(sz.size), exprVal.data.slice(sz.size));
-                        } else {
-                            // incorrect write!
-                            // varVal.header = exprVal.header;
-                            @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
-                        }
+            const v = self.getVar(vm.varRef);
+            if (vm.accessors.len == 0) {
+                @memcpy(v.ref.slice(sz.size), exprVal.ref.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+            } else {
+                const firstAccess = vm.accessors[0];
+                var varVal = switch (firstAccess.acc) {
+                    .Deref => v.ref.ptr,
+                    .Access => |mem| self.getFieldFromType(v.ref, firstAccess.tBefore, mem),
+                };
+                for (vm.accessors[1..]) |acc| {
+                    switch (acc.acc) {
+                        .Deref => {
+                            varVal = varVal.ptr;
+                        },
+                        .Access => |field| {
+                            varVal = self.getFieldFromType(varVal, acc.tBefore, field);
+                        },
                     }
-                },
-                .v => |vv| {
-                    var varVal = vv;
-                    for (vm.accessors) |acc| {
-                        switch (acc.acc) {
-                            .Deref => {
-                                varVal = varVal.data.ptr.toValuePtr();
-                            },
-                            .Access => |field| {
-                                varVal = try self.getFieldFromType(varVal, acc.tBefore, field);
-                            },
-                        }
-                    }
+                }
 
-                    // hacky??? [TODO: COPYPASTA]
-                    if (vm.accessors.len > 0 and vm.accessors[vm.accessors.len - 1].acc == .Access) {
-                        std.debug.assert(varVal.header.ogPtr != null);
-                        @memcpy(varVal.header.ogPtr.?.slice(sz.size), exprVal.data.slice(sz.size));
-                    } else {
-                        // varVal.header = exprVal.header;  // TODO: REMOVED BECAUSE I WAS ASSIGNING STUFF TO EXTERNAL POINTERS! This will prolly produce errors in the future. :(((
-                        // This about how I should handle such metadata.
-                        @memcpy(varVal.data.slice(sz.size), exprVal.data.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
-                    }
-                },
+                // incorrect write!
+                // varVal.header = exprVal.header;
+                @memcpy(varVal.slice(sz.size), exprVal.ref.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
             }
         },
         .Function => |fun| {
@@ -176,7 +141,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             const switchOn = try self.expr(sw.switchOn);
 
             for (sw.cases) |case| {
-                if (try self.tryDeconstruct(case.decon, switchOn.toTypePtr())) {
+                if (try self.tryDeconstruct(case.decon, switchOn.ref)) {
                     try self.stmts(case.body);
                     break;
                 }
@@ -187,17 +152,17 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     }
 }
 
-fn initEnvSnapshot(self: *Self, env: ast.Env) ![]Value.Type.Fun.EnvSnapshot {
-    const envSnapshot = try self.arena.alloc(Value.Type.Fun.EnvSnapshot, env.len);
+fn initEnvSnapshot(self: *Self, env: ast.Env) ![]RawValue.Fun.EnvSnapshot {
+    const envSnapshot = try self.arena.alloc(RawValue.Fun.EnvSnapshot, env.len);
     for (env, 0..) |ei, i| {
         envSnapshot[i] = switch (ei.v) {
             .Var => |v| .{ .Snap = .{
                 .v = v,
-                .vv = try self.getVar(v),
+                .vv = try self.copyValue(self.getVar(v).ref, ei.t),
             } },
             .Fun => |envfun| .{ .Snap = .{
                 .v = envfun.name,
-                .vv = try self.initFunction(envfun, ei.m),
+                .vv = (try self.initFunction(envfun, ei.m)).ref,
             } },
             .ClassFun => |cfr| b: {
                 const instfun = switch (cfr.ref.*.?) {
@@ -206,7 +171,7 @@ fn initEnvSnapshot(self: *Self, env: ast.Env) ![]Value.Type.Fun.EnvSnapshot {
                 };
                 break :b .{ .Snap = .{
                     .v = instfun.fun.name,
-                    .vv = try self.initFunction(instfun.fun, instfun.m),
+                    .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
                 } };
             },
         };
@@ -222,19 +187,17 @@ fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
 }
 
 // note that we are getting deep into structs. we must not convert that Value.Type pointer into *Value, because it might not have that header.
-fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool {
+fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
     switch (decon.d) {
         .None => return true,
         .Var => |vn| {
-            try self.scope.vars.put(vn, .{ .ref = .{ .data = v, .t = decon.t } });
+            try self.putRef(vn, v);
             return true;
         },
         .Record => |fields| {
             for (fields) |field| {
-                // TODO: BAD; see next
-                // TODO THIS IS BAD OMG. WE SHOULD NOT ALLOCATE ANYTHING HERE. I ALSO SEE A LOT OF REPETITION. I NEED A SMALL REFACTOR FOR EVERY FUNCTION TO USE THE SAME BASIS TO CALCULATE OFFSETS.
-                const nuv = try self.getFieldFromType(try self.copyValue(v, decon.t), decon.t, field.field);
-                if (!try self.tryDeconstruct(field.decon, nuv.header.ogPtr.?)) return false;
+                const nuv = self.getFieldFromType(v, decon.t, field.field);
+                if (!try self.tryDeconstruct(field.decon, nuv)) return false;
             }
 
             return true;
@@ -264,7 +227,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool
                     .ADT => {
                         if (v.adt.tag != con.con.tagValue) return false;
 
-                        var off: usize = @sizeOf(Value.Tag);
+                        var off: usize = @sizeOf(RawValue.Tag);
                         for (con.decons) |d| {
                             const sz = self.sizeOf(d.t);
                             off += calculatePadding(off, sz.alignment);
@@ -284,8 +247,8 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: *align(1) Value.Type) !bool
     }
 }
 
-fn exprs(self: *Self, es: []*ast.Expr) ![]*Value {
-    var args = try self.arena.alloc(*Value, es.len);
+fn exprs(self: *Self, es: []*ast.Expr) ![]ValueMeta {
+    var args = try self.arena.alloc(ValueMeta, es.len);
     for (es, 0..) |a, i| {
         args[i] = try self.expr(a);
     }
@@ -293,7 +256,7 @@ fn exprs(self: *Self, es: []*ast.Expr) ![]*Value {
     return args;
 }
 
-fn expr(self: *Self, e: *ast.Expr) Err!*Value {
+fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
     switch (e.e) {
         .Intrinsic => |intr| {
             switch (intr.intr.ty) {
@@ -305,11 +268,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                 .undefined => {
                     // allocate some value but dont initialize any of it!
                     // COPYPASTA AGAIN. Suggested interface: allocValue(Type)
-                    const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(e.t).size);
-                    const emptyValue: *Value = @alignCast(@ptrCast(buf.ptr));
-                    emptyValue.header = .{
-                        .ogPtr = null,
-                        .functionType = .None, // just in case!
+                    const buf = try self.arena.alloc(u8, self.sizeOf(e.t).size);
+                    const emptyValue: ValueMeta = .{
+                        // .header = .{
+                        //     .ogPtr = null,
+                        // },
+                        .ref = @alignCast(@ptrCast(buf.ptr)),
                     };
                     return emptyValue;
                 },
@@ -322,11 +286,11 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     const ogPtr = try self.expr(intr.args[0]);
                     const amount = try self.expr(intr.args[1]);
 
-                    const ptr = try self.copyValue(&ogPtr.data, intr.args[0].t);
-                    if (amount.data.int > 0) { // if pointer is null, @ptrFromInt produces an error. Offseting the null pointer by 0 is correct tho.
-                        ptr.data.ptr = @ptrFromInt(@intFromPtr(ptr.data.ptr) + @as(usize, @intCast(amount.data.int)));
+                    const ptr = try self.copyValue(ogPtr.ref, intr.args[0].t);
+                    if (amount.ref.int > 0) { // if pointer is null, @ptrFromInt produces an error. Offseting the null pointer by 0 is correct tho.
+                        ptr.ptr = @ptrFromInt(@intFromPtr(ptr.ptr) + @as(usize, @intCast(amount.ref.int)));
                     }
-                    return ptr;
+                    return valFromRef(ptr);
                 },
             }
         },
@@ -359,15 +323,15 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     const l = try self.expr(op.l);
                     const r = try self.expr(op.r);
                     return switch (op.op) {
-                        .Equals => try self.boolValue(l.data.int == r.data.int), // TEMP!!!
+                        .Equals => try self.boolValue(l.ref.int == r.ref.int), // TEMP!!!
 
-                        .Plus => try self.intValue(l.data.int + r.data.int),
-                        .Minus => try self.intValue(l.data.int - r.data.int),
-                        .Times => try self.intValue(l.data.int * r.data.int),
+                        .Plus => try self.intValue(l.ref.int + r.ref.int),
+                        .Minus => try self.intValue(l.ref.int - r.ref.int),
+                        .Times => try self.intValue(l.ref.int * r.ref.int),
 
-                        .LessThan => try self.boolValue(l.data.int < r.data.int),
-                        .GreaterThan => try self.boolValue(l.data.int > r.data.int),
-                        .GreaterEqualThan => try self.boolValue(l.data.int >= r.data.int),
+                        .LessThan => try self.boolValue(l.ref.int < r.ref.int),
+                        .GreaterThan => try self.boolValue(l.ref.int > r.ref.int),
+                        .GreaterEqualThan => try self.boolValue(l.ref.int >= r.ref.int),
 
                         else => {
                             std.debug.print("unimplemented op: {}\n", .{op.op});
@@ -411,27 +375,21 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                         extfun.name.name;
 
                     const fun = try self.funLoader.loadFunction(libName, funName);
-                    return try self.initValue(.{
-                        .data = .{ .extptr = nanbox(fun, .ExternalFunction) },
-                        .header = .{
-                            .functionType = .ExternalFunction,
-                            .ogPtr = null,
-                        },
-                    });
+                    return try self.val(.{ .extptr = nanbox(fun, .ExternalFunction) });
                 },
             }
         },
         .Str => |slit| {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit));
-            return try self.initValue(Value{
-                .data = .{ .extptr = s },
-                .header = .{ .functionType = .None, .ogPtr = null },
-            });
+            return try self.val(.{ .extptr = s });
         },
         .Call => |c| {
             const fun = try self.expr(c.callee);
+            const ptrAndfunType = nunbox(fun.ref.extptr); // funny, but in this case we *know* the inner value is a pointer, which just don't know what to. So, we use extptr (kind of incorrectly) as a "general pointer".
+            const funPtr: *align(1) const RawValue = @ptrCast(&ptrAndfunType.ptr); // and later get the address, so we can do the .<correct-type>
+            const funType = ptrAndfunType.fty;
 
-            switch (fun.header.functionType) {
+            switch (funType) {
                 .ExternalFunction => {
                     // INCORRECT. check https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf
                     //  (also just ask an LLM, this time it seems to know what it's talking about.)
@@ -439,7 +397,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     //   We can have a function type for each case, then beat it for it to make sense for our types.
                     //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
                     //   Nah, I should just use inline assembly in this case.
-                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(nunbox(fun.data.extptr).ptr);
+                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(funPtr.extptr);
 
                     const MaxExtArgs = 8;
                     if (c.args.len > MaxExtArgs) unreachable;
@@ -448,7 +406,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     inline for (0..MaxExtArgs) |i| {
                         if (i < c.args.len) {
                             const av = try self.expr(c.args[i]);
-                            interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(&av.data)))).*;
+                            interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(av.ref)))).*;
                         }
                     }
 
@@ -459,17 +417,15 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
 
                 .LocalFunction => {
                     const args = try self.exprs(c.args);
-                    const uf = nunbox(fun.data.fun);
-                    if (uf.fty != .LocalFunction) unreachable;
-                    return self.function(uf.ptr, args);
+                    return self.function(funPtr.fun, args);
                 },
 
                 .ConstructorFunction => {
-                    return self.initRecord(nunbox(fun.data.confun).ptr, c.args, e.t);
+                    return self.initRecord(funPtr.confun, c.args, e.t);
                 },
 
                 .Lambda => {
-                    const lamAndEnv = nunbox(fun.data.lam).ptr;
+                    const lamAndEnv = funPtr.lam;
 
                     // begin new scope
                     const oldScope = self.scope;
@@ -482,18 +438,18 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                     const env = lamAndEnv.env;
                     for (env) |ee| {
                         switch (ee) {
-                            .Snap => |eee| try self.scope.putVar(eee.v, eee.vv),
+                            .Snap => |eee| try self.putRef(eee.v, eee.vv),
                             .AssocID => |id| {
                                 const efun = self.tymap.tryGetFunctionByID(id).?;
                                 const efunv = try self.initFunction(efun.fun, efun.m);
-                                try self.scope.putVar(efun.fun.name, efunv);
+                                try self.putRef(efun.fun.name, efunv.ref);
                             },
                         }
                     }
 
                     const args = try self.exprs(c.args);
                     for (lam.params, args) |decon, a| {
-                        if (!try self.tryDeconstruct(decon, &a.data)) {
+                        if (!try self.tryDeconstruct(decon, a.ref)) {
                             return error.CaseNotMatched;
                         }
                     }
@@ -508,32 +464,20 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
         },
         .Con => |con| {
             if (con.tys.len == 0) {
-                return try self.initValue(.{
-                    .header = .{ .functionType = .None, .ogPtr = null },
-                    .data = .{ .enoom = con.tagValue },
-                });
+                return try self.val(.{ .enoom = con.tagValue });
             } else {
-                return try self.initValue(.{
-                    .header = .{ .functionType = .ConstructorFunction, .ogPtr = null }, // not needed, because it's in the type.
-                    .data = .{ .confun = nanbox(con, .ConstructorFunction) },
-                });
+                return try self.val(.{ .confun = nanbox(con, .ConstructorFunction) });
             }
         },
 
         .UnOp => |uop| {
             const v = try self.expr(uop.e);
             return switch (uop.op) {
-                .Deref => v.data.ptr.toValuePtr(),
-                .Ref => try self.initValue(.{
-                    .data = .{
-                        .ptr = if (v.header.ogPtr) |ogPtr| @alignCast(ogPtr) else @alignCast(&v.data),
-                    },
-                    .header = .{
-                        .functionType = .None,
-                        .ogPtr = null,
-                    },
+                .Deref => valFromRef(v.ref.ptr),
+                .Ref => try self.val(.{
+                    .ptr = v.ref,
                 }),
-                .Access => |mem| try self.getFieldFromType(v, uop.e.t, mem),
+                .Access => |mem| valFromRef(self.getFieldFromType(v.ref, uop.e.t, mem)),
                 .As => v,
             };
         },
@@ -541,12 +485,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
         .AnonymousRecord => |recs| {
             // THIS ASSUMES THAT RECORDS GET THAT `setType` TREATMENT
             // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
-            const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(e.t).size);
+            const buf = try self.arena.alloc(u8, self.sizeOf(e.t).size);
             var stream = std.io.fixedBufferStream(buf);
             const w = stream.writer();
-
-            try w.writeByteNTimes(undefined, @sizeOf(Header));
-            try pad(w, @alignOf(Header));
 
             switch (self.getType(e.t)) {
                 .Anon => |fields| {
@@ -579,13 +520,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                 else => unreachable,
             }
 
-            const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
-            vptr.header = .{
-                .functionType = .None,
-                .ogPtr = null,
-            };
-
-            return vptr;
+            const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
+            return valFromRef(vptr);
         },
 
         .NamedRecord => |nrec| {
@@ -593,12 +529,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
             // THIS ASSUMES THAT RECORDS GET THAT `setType` TREATMENT
             // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
             // SECOND GRADE COPYPASTA FROM `AnonymousRecord`
-            const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(e.t).size);
+            const buf = try self.arena.alloc(u8, self.sizeOf(e.t).size);
             var stream = std.io.fixedBufferStream(buf);
             const w = stream.writer();
-
-            try w.writeByteNTimes(undefined, @sizeOf(Header));
-            try pad(w, @alignOf(Header));
 
             const fields = nrec.data.stuff.recs;
 
@@ -612,34 +545,23 @@ fn expr(self: *Self, e: *ast.Expr) Err!*Value {
                 } else unreachable;
             }
 
-            const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
-            vptr.header = .{
-                .functionType = .None,
-                .ogPtr = null,
-            };
-
-            return vptr;
+            const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
+            return valFromRef(vptr);
         },
 
         .Lam => |*l| {
-            const ptr = nanbox(try common.allocOne(self.arena, Value.Type.Lam{
+            const ptr = nanbox(try common.allocOne(self.arena, RawValue.Lam{
                 .lam = l,
                 .env = try self.initEnvSnapshot(l.env),
             }), .Lambda);
-            return try self.initValue(.{
-                .data = .{ .lam = ptr },
-                .header = .{
-                    .functionType = .Lambda,
-                    .ogPtr = null,
-                },
-            });
+            return try self.val(.{ .lam = ptr });
         },
     }
 
     unreachable;
 }
 
-fn getFieldFromType(self: *Self, v: *Value, t: ast.Type, mem: Str) !*Value {
+fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValueRef {
     switch (self.getType(t)) {
         .Anon => |fields| {
             return self.getFieldFromFields(v, fields, mem);
@@ -665,14 +587,14 @@ fn getFieldFromType(self: *Self, v: *Value, t: ast.Type, mem: Str) !*Value {
     }
 }
 
-fn getFieldFromFields(self: *Self, v: *Value, fields: []ast.Record, mem: Str) !*Value {
+fn getFieldFromFields(self: *Self, v: RawValueRef, fields: []ast.Record, mem: Str) RawValueRef {
     var size: usize = 0;
     for (fields) |field| {
         const sz = self.sizeOf(field.t);
         size += calculatePadding(size, sz.alignment);
         if (common.streq(field.field, mem)) {
-            const ptr = v.header.ogPtr orelse &v.data;
-            return try self.copyValue(ptr.offset(size), field.t);
+            const ptr = v;
+            return ptr.offset(size);
         }
 
         size += sz.size;
@@ -681,23 +603,17 @@ fn getFieldFromFields(self: *Self, v: *Value, fields: []ast.Record, mem: Str) !*
     }
 }
 
-fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !*Value {
-    return try self.initValue(.{
-        .data = .{
-            .fun = nanbox(try common.allocOne(self.arena, Value.Type.Fun{
-                .fun = fun,
-                .env = self.scope.getFun(fun.name),
-                .match = m,
-            }), .LocalFunction),
-        },
-        .header = .{
-            .functionType = .LocalFunction,
-            .ogPtr = null,
-        },
+fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !ValueMeta {
+    return try self.val(.{
+        .fun = nanbox(try common.allocOne(self.arena, RawValue.Fun{
+            .fun = fun,
+            .env = self.scope.getFun(fun.name),
+            .match = m,
+        }), .LocalFunction),
     });
 }
 
-fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value) Err!*Value {
+fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueMeta {
     // begin new scope
     const oldScope = self.scope;
     var scope = Scope.init(oldScope, self.arena);
@@ -719,17 +635,17 @@ fn function(self: *Self, funAndEnv: *Value.Type.Fun, args: []*Value) Err!*Value 
     const env = funAndEnv.env;
     for (env) |e| {
         switch (e) {
-            .Snap => |ee| try self.scope.putVar(ee.v, ee.vv),
+            .Snap => |ee| try self.putRef(ee.v, ee.vv),
             .AssocID => |id| {
                 const efun = self.tymap.tryGetFunctionByID(id).?;
                 const efunv = try self.initFunction(efun.fun, efun.m);
-                try self.scope.putVar(efun.fun.name, efunv);
+                try self.putRef(efun.fun.name, efunv.ref);
             },
         }
     }
 
     for (fun.params, args) |decon, a| {
-        if (!try self.tryDeconstruct(decon, &a.data)) {
+        if (!try self.tryDeconstruct(decon, a.ref)) {
             return error.CaseNotMatched;
         }
     }
@@ -748,95 +664,92 @@ fn evaluateString(self: *const Self, s: Str) ![:0]u8 {
     return try self.arena.dupeZ(u8, s);
 }
 
+const RawValueRef = *align(1) RawValue; // basically, because we don't know *where* the basic data might be, we must assume its offset can be whatever (imagine: struct with  three chars and getting a reference to one of them)
+
+// shit name: basically the value + metadata.
+const ValueMeta = struct {
+    // header: Header,
+    ref: *align(1) RawValue,
+};
+
+fn copyValueMeta(self: *const Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
+    const vref = try self.copyValue(vm.ref, t);
+    return valFromRef(vref);
+}
+
 // values n shit
 // note, that we must preserve the inner representation for compatibility with external functions.
 // note about alignments: in C structs the alignments are variable (because we might represent different structs), so everything must be align(1)
-const ValRef = *align(1) Value; // basically, because we don't know *where* the basic data might be, we must assume its offset can be whatever (imagine: struct with  three chars and getting a reference to one of them)
-const DataRef = *align(1) Value.Type;
-const Value = extern struct {
-    header: Header align(1), // TEMP align(1)
+const RawValue = extern union {
+    int: i64,
+    extptr: *anyopaque,
+    ptr: *align(1) RawValue,
+    fun: *Fun,
+    confun: *ast.Con,
+    lam: *const Lam,
+    enoom: u32, // for enum-like data structures
+    record: Flexible, // one constructor / record type
+    adt: extern struct {
+        tag: u32,
+        data: Flexible,
+    },
 
-    // This is where we store actual data. This must be compatible with C shit.
-    data: Type align(1),
-    const Type = extern union { // NOTE: I might change it so that `data` only contains stuff that should be accessible by C.
-        int: i64,
-        extptr: *anyopaque,
-        ptr: *align(1) Type,
-        fun: *Fun,
-        confun: *ast.Con,
-        lam: *const Lam,
-        enoom: u32, // for enum-like data structures
-        record: Flexible, // one constructor / record type
-        adt: extern struct {
-            tag: u32,
-            data: Flexible,
-        },
-
-        const Lam = struct {
-            lam: *const ast.Expr.Lam,
-            env: []Fun.EnvSnapshot,
-        };
-
-        const Fun = struct {
-            fun: *ast.Function,
-            env: []EnvSnapshot,
-            match: *ast.Match(ast.Type),
-
-            const EnvSnapshot = union(enum) {
-                // i forgot what it was gegegeg
-                Snap: struct { v: ast.Var, vv: *Value },
-                AssocID: ast.Association.ID,
-            };
-        };
-
-        fn toValuePtr(self: *align(1) @This()) ValRef {
-            return @fieldParentPtr("data", self);
-        }
-
-        fn offset(self: *align(1) @This(), off: usize) DataRef {
-            const p: [*]u8 = @ptrCast(self);
-            const offp = p[off..];
-            return @alignCast(@ptrCast(offp));
-        }
-
-        fn slice(self: *align(1) @This(), sz: usize) []u8 {
-            var sl: []u8 = undefined;
-            sl.len = sz;
-            sl.ptr = @ptrCast(self);
-            return sl;
-        }
+    const Lam = struct {
+        lam: *const ast.Expr.Lam,
+        env: []Fun.EnvSnapshot,
     };
 
-    fn toTypePtr(self: *@This()) *align(1) Type {
-        return &self.data;
+    const Fun = struct {
+        fun: *ast.Function,
+        env: []EnvSnapshot,
+        match: *ast.Match(ast.Type),
+
+        const EnvSnapshot = union(enum) {
+            // i forgot what it was gegegeg
+            Snap: struct { v: ast.Var, vv: *align(1) RawValue },
+            AssocID: ast.Association.ID,
+        };
+    };
+
+    fn offset(self: *align(1) @This(), off: usize) RawValueRef {
+        const p: [*]u8 = @ptrCast(self);
+        const offp = p[off..];
+        return @alignCast(@ptrCast(offp));
     }
 
-    fn headerSize() comptime_int {
-        return Header.PaddedSize; // @sizeOf(@This()) - @sizeOf(Type); // TODO: look at this. Prolly should be replaced with Header.PaddedSize
+    fn slice(self: *align(1) @This(), sz: usize) []u8 {
+        var sl: []u8 = undefined;
+        sl.len = sz;
+        sl.ptr = @ptrCast(self);
+        return sl;
     }
+
+    // fn headerSize() comptime_int {
+    //     return Header.PaddedSize; // @sizeOf(@This()) - @sizeOf(Type); // TODO: look at this. Prolly should be replaced with Header.PaddedSize
+    // }
 
     const Flexible = *anyopaque;
     const Tag = u32;
 };
 
-const Header = extern struct {
-    // Interpreter shit.
-    functionType: FunctionType, // optional value parameter, which distinguishes local functions and external (which need to be called differently.)
-    ogPtr: ?DataRef, // in case of deconstructions, I want pointers to point to the original value.
+// const Header = extern struct {
+//     // Interpreter shit.
+//     ogPtr: ?*ValueMeta, // in case of deconstructions, I want pointers to point to the original value.
 
-    // match: *ast.Match(ast.Type),
-    const FunctionType = enum(u64) {
-        ExternalFunction,
-        LocalFunction,
-        ConstructorFunction,
-        Lambda,
-        None,
-    };
+//     // match: *ast.Match(ast.Type),
 
-    const PaddedSize = @sizeOf(Header) + calculatePadding(@sizeOf(Header), @alignOf(Header));
+//     // const PaddedSize = @sizeOf(Header) + calculatePadding(@sizeOf(Header), @alignOf(Header));
+// };
+
+const FunctionType = enum(u64) {
+    ExternalFunction,
+    LocalFunction,
+    ConstructorFunction,
+    Lambda,
+    None,
 };
 
-fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
+fn copyValue(self: *Self, vt: RawValueRef, t: ast.Type) !RawValueRef {
     // TODO: how do we retrieve functionType??
     //  that points to a deeper problem of storing functions in datatypes... bruh.
     //   1. Ignore for now. Just set it to null and just don't put functions in datatypes.
@@ -848,55 +761,48 @@ fn copyValue(self: *Self, vt: *align(1) Value.Type, t: ast.Type) !*Value {
 
     // currently at 2!
     const sz = self.sizeOf(t);
-    const memptr: []u8 = try self.arena.alloc(u8, Value.headerSize() + sz.size);
-    @memcpy(memptr[Value.headerSize() .. Value.headerSize() + sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
-    const vptr: ValRef = @alignCast(@ptrCast(memptr.ptr));
-    switch (self.getType(t)) {
-        .Fun => {
-            const nbx = nunbox(vptr.data.fun); // any pointer is okay.
-            vptr.header.functionType = nbx.fty;
-        },
-        else => vptr.header.functionType = .None,
-    }
-    vptr.header.ogPtr = vt;
+    const memptr: []u8 = try self.arena.alloc(u8, sz.size);
+    @memcpy(memptr[0..sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
+    const vptr: RawValueRef = @alignCast(@ptrCast(memptr.ptr));
     return vptr;
 }
 
-fn intValue(self: *const Self, i: i64) !*Value {
-    return try self.initValue(.{
-        .header = .{ .functionType = .None, .ogPtr = null },
-        .data = .{ .int = i },
-    });
+fn intValue(self: *const Self, i: i64) !ValueMeta {
+    return self.val(.{ .int = i });
 }
 
-fn boolValue(self: *const Self, b: bool) !*Value {
-    return try self.initValue(.{
-        .header = .{ .functionType = .None, .ogPtr = null },
-        .data = .{ .enoom = @intFromBool(b) },
-    });
+fn boolValue(self: *const Self, b: bool) !ValueMeta {
+    return self.val(.{ .enoom = @intFromBool(b) });
 }
 
-fn initValue(self: *const Self, v: Value) !*Value {
-    return try common.allocOne(self.arena, v);
+fn valFromRef(ref: RawValueRef) ValueMeta {
+    return .{
+        // .header = .{ .ogPtr = null },
+        .ref = ref,
+    };
 }
 
-fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !*Value {
+fn val(self: *const Self, v: RawValue) !ValueMeta {
+    const ref = try self.arena.create(RawValue);
+    ref.* = v;
+    return .{
+        // .header = .{ .ogPtr = null },
+        .ref = ref,
+    };
+}
+
+fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !ValueMeta {
     // alignment:
     // https://youtu.be/E0QhZ6tNoR  <= "alignment" is actually a place where values can live.
     // I get it, but why (in the video example) the trailing padding is aligned to 8? because of last member?
     // I think it gets padded to the largest struct.
     //   (watch out: it's incomplete, because from some Zig issue I've seen, i128 padding might be 8)
     //  nested structs do not create "big alignments". If the struct's max alignment was 8, it gets carred to the outer struct.
-    const buf = try self.arena.alloc(u8, Header.PaddedSize + self.sizeOf(t).size);
+    const buf = try self.arena.alloc(u8, self.sizeOf(t).size);
     var stream = std.io.fixedBufferStream(buf);
     var w = stream.writer();
 
-    // preallocate stuff for Value and align to 8 to make sure the payload will be correctly aligned.
-    try w.writeByteNTimes(undefined, @sizeOf(Header));
-    try pad(w, @alignOf(Header));
-
     var maxAlignment: usize = 1;
-
     if (c.data.structureType() == .ADT) {
         try w.writeInt(u32, c.tagValue, endianness);
         maxAlignment = 4;
@@ -912,13 +818,8 @@ fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !*Value 
     // write ending padding (from experiments it's based on max padding.)
     try pad(w, maxAlignment);
 
-    const vptr: *Value = @alignCast(@ptrCast(buf.ptr));
-    vptr.header = .{
-        .functionType = .None,
-        .ogPtr = null,
-    };
-
-    return vptr;
+    const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
+    return valFromRef(vptr);
 }
 
 fn writeExpr(self: *Self, w: anytype, a: *ast.Expr) !usize {
@@ -926,7 +827,7 @@ fn writeExpr(self: *Self, w: anytype, a: *ast.Expr) !usize {
     const v = try self.expr(a);
     const sz = self.sizeOf(ty);
     try pad(w, sz.alignment);
-    try w.writeAll(v.data.slice(sz.size));
+    try w.writeAll(v.ref.slice(sz.size));
 
     return sz.alignment;
 }
@@ -980,8 +881,8 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                 //  I should be able to specify expected datatype size.
                 .EnumLike => {
                     return .{
-                        .size = @sizeOf(Value.Tag),
-                        .alignment = @alignOf(Value.Tag),
+                        .size = @sizeOf(RawValue.Tag),
+                        .alignment = @alignOf(RawValue.Tag),
                     };
                 },
                 .RecordLike => {
@@ -993,7 +894,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                 .ADT => {
                     var max: ?Sizes = null;
                     for (c.type.stuff.cons) |*con| {
-                        const sz = self.sizeOfCon(con, @sizeOf(Value.Tag));
+                        const sz = self.sizeOfCon(con, @sizeOf(RawValue.Tag));
                         if (max) |*m| {
                             if (sz.size > m.size) {
                                 m.size = sz.size;
@@ -1011,7 +912,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     }
 
                     var m = max orelse unreachable;
-                    m.size += @sizeOf(Value.Tag); // don't forget to add a tag. we don't need to change alignment tho, because we took care of it beforehand.
+                    m.size += @sizeOf(RawValue.Tag); // don't forget to add a tag. we don't need to change alignment tho, because we took care of it beforehand.
                     m.size += calculatePadding(m.size, m.alignment);
                     return m;
                 },
@@ -1020,8 +921,8 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
         .TVar => unreachable, // |tv| return self.sizeOf(self.tymap.getTVar(tv)),
 
         .Fun => return .{
-            .size = @sizeOf(*Value.Type.Fun),
-            .alignment = @alignOf(*Value.Type.Fun),
+            .size = @sizeOf(*RawValue.Fun),
+            .alignment = @alignOf(*RawValue.Fun),
         },
         .TyVar => unreachable, // actual error. should not happen!
     }
@@ -1065,18 +966,24 @@ fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usiz
     };
 }
 
-fn getType(self: *Self, ogt: ast.Type) ast.TypeF(ast.Type) {
+fn getType(self: *const Self, ogt: ast.Type) ast.TypeF(ast.Type) {
     return switch (self.typeContext.getType(ogt)) {
         .TVar => |tv| self.getType(self.tymap.getTVar(tv)),
         else => |t| t,
     };
 }
 
-fn getVar(self: *Self, v: ast.Var) !ValRef {
-    return switch (self.scope.getVar(v)) {
-        .v => |val| val,
-        .ref => |tyNt| try self.copyValue(tyNt.data, tyNt.t), // oh man
-    };
+fn getVar(self: *Self, v: ast.Var) ValueMeta {
+    const vref = self.scope.getVar(v);
+    return valFromRef(vref);
+}
+
+fn putVar(self: *Self, v: ast.Var, value: ValueMeta, t: ast.Type) !void {
+    try self.scope.vars.put(v, try self.copyValue(value.ref, t));
+}
+
+fn putRef(self: *Self, v: ast.Var, value: RawValueRef) !void {
+    try self.scope.vars.put(v, value);
 }
 
 const Scope = struct {
@@ -1084,11 +991,9 @@ const Scope = struct {
     vars: Vars,
     funs: Funs,
 
-    const Vars = std.HashMap(ast.Var, ValOrRef, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
+    const Vars = std.HashMap(ast.Var, RawValueRef, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 
-    const Funs = std.HashMap(ast.Var, []Value.Type.Fun.EnvSnapshot, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
-
-    const ValOrRef = union(enum) { v: *Value, ref: struct { data: *align(1) Value.Type, t: ast.Type } };
+    const Funs = std.HashMap(ast.Var, []RawValue.Fun.EnvSnapshot, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 
     fn init(prev: ?*@This(), al: std.mem.Allocator) @This() {
         return .{
@@ -1098,16 +1003,11 @@ const Scope = struct {
         };
     }
 
-    // the inner datatype might change (since I'm not sure if I should keep Value/Type or just keep refs)
-    fn putVar(self: *@This(), v: ast.Var, val: *Value) !void {
-        try self.vars.put(v, .{ .v = val });
-    }
-
-    fn getVar(self: *const @This(), v: ast.Var) ValOrRef {
+    fn getVar(self: *const @This(), v: ast.Var) RawValueRef {
         return self.vars.get(v) orelse (self.prev orelse unreachable).getVar(v);
     }
 
-    fn getFun(self: *const @This(), v: ast.Var) []Value.Type.Fun.EnvSnapshot {
+    fn getFun(self: *const @This(), v: ast.Var) []RawValue.Fun.EnvSnapshot {
         return self.funs.get(v) orelse (self.prev orelse unreachable).getFun(v);
     }
 };
@@ -1185,7 +1085,7 @@ const DyLibLoader = struct {
 };
 
 // https://muxup.com/2023q4/storing-data-in-pointers
-fn nanbox(ptr: anytype, fty: Header.FunctionType) @TypeOf(ptr) {
+fn nanbox(ptr: anytype, fty: FunctionType) @TypeOf(ptr) {
     const choice: usize = switch (fty) {
         .None => unreachable, // we shouldn't call it on non-functions.
         .ConstructorFunction => 0b0001,
@@ -1203,7 +1103,7 @@ fn nanbox(ptr: anytype, fty: Header.FunctionType) @TypeOf(ptr) {
     return @ptrFromInt(pint);
 }
 
-fn nunbox(ptr: anytype) struct { ptr: @TypeOf(ptr), fty: Header.FunctionType } {
+fn nunbox(ptr: anytype) struct { ptr: @TypeOf(ptr), fty: FunctionType } {
     var pint = @intFromPtr(ptr);
     pint = @bitReverse(pint);
     // NOTE: WE DON'T NEED TO SIGN EXTEND AS A LINUX USERSPACE PROGRAM.
@@ -1216,8 +1116,8 @@ fn nunbox(ptr: anytype) struct { ptr: @TypeOf(ptr), fty: Header.FunctionType } {
 
 // check if value is true.
 // the impl is funny and not immediately obvious, so this function was made to document that.
-fn isTrue(v: *Value) bool {
-    return v.data.enoom > 0;
+fn isTrue(v: ValueMeta) bool {
+    return v.ref.enoom > 0;
 }
 
 // kek
