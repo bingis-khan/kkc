@@ -131,10 +131,10 @@ pub fn parse(self: *Self) !Module {
 }
 
 pub fn addExports(self: *Self, exports: *const Module.Exports) !void {
-    try addToHash(&self.scope.currentScope().vars, exports.vars);
-    try addToHash(&self.scope.currentScope().cons, exports.cons);
-    try addToHash(&self.scope.currentScope().types, exports.types);
-    try addToHash(&self.scope.currentScope().instances, exports.instances);
+    try addToHash(&self.scope.currentScope().vars, &exports.vars);
+    try addToHash(&self.scope.currentScope().cons, &exports.cons);
+    try addToHash(&self.scope.currentScope().types, &exports.types);
+    try self.addAllInstances(exports);
 }
 
 fn addToHash(dest: anytype, src: anytype) !void {
@@ -1077,7 +1077,9 @@ fn constraints(self: *Self) !Constraints {
                     .Data => unreachable,
                 }
             } else {
-                unreachable; // TODO: error
+                try self.errors.append(.{ .UndefinedClass = .{
+                    .className = classTok.literal(self.lexer.source),
+                } });
             }
 
             if (!self.check(.COMMA)) break;
@@ -1670,8 +1672,15 @@ fn someRecordDefinition(self: *Self) ![]AST.Expr.Field {
     while (true) {
         const fieldTok = try self.expect(.IDENTIFIER);
         const fieldName = fieldTok.literal(self.lexer.source);
-        try self.devour(.COLON);
-        const expr = try self.expression();
+        const expr = if (self.check(.COLON)) b: {
+            break :b try self.expression();
+        } else b: {
+            const varInst = try self.instantiateVar(&.{}, fieldTok); // { x } => { x: x }  TODO: maybe disallow anything except simple var definitions. Even more, maybe allow only current scope / env?
+            break :b try self.allocExpr(.{
+                .t = varInst.t,
+                .e = .{ .Var = .{ .v = varInst.v, .match = varInst.m } },
+            });
+        };
 
         // check for duplication.
         for (definitions.items) |field| {
@@ -2098,15 +2107,19 @@ fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
 
     // automatically add instances (like muh haskells)
     if (mmod) |mod| {
-        var it = mod.exports.instances.iterator();
-        while (it.next()) |insts| {
-            var iit = insts.value_ptr.iterator();
-            while (iit.next()) |inst| {
-                try self.addInstance(inst.value_ptr.*);
-            }
-        }
+        try self.addAllInstances(&mod.exports);
     }
     return mmod;
+}
+
+fn addAllInstances(self: *Self, exports: *const Module.Exports) !void {
+    var it = exports.instances.iterator();
+    while (it.next()) |insts| {
+        var iit = insts.value_ptr.iterator();
+        while (iit.next()) |inst| {
+            try self.addInstance(inst.value_ptr.*);
+        }
+    }
 }
 
 // VARS

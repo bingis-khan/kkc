@@ -26,6 +26,10 @@ pub const Error = union(enum) {
         loc: Loc,
     },
 
+    UndefinedClass: struct {
+        className: Str,
+    },
+
     // TODO: add location information
     MismatchingTypes: struct {
         lt: ast.Type,
@@ -179,6 +183,7 @@ pub const Error = union(enum) {
             .DataIsNotARecord => |e| c.print(.{ "data ", e.data, " is not a record\n" }),
             .MissingField => |e| c.print(.{ "missing field '", e.field, "'\n" }),
             .DuplicateField => |e| c.print(.{ "duplicate field '", e.field, "'\n" }),
+            .UndefinedClass => |e| c.print(.{ "undefined class ", e.className, "\n" }),
         }
     }
 };

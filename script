@@ -1,8 +1,39 @@
 #!./zig-out/bin/kkc
-use Term
+use Alloc
+ 
+# List alloc a
+# 	al alloc
+# 	elements Slice a  # elements.count ~ capacity
+# 	count Int
 
-from (420)
-	zip(20 to (300))
-	drop(50)
-	take(10)
-	for-each(fn Tuple2(l, r): Term.println('\(l) <=> \(r)'))
+# fn get-ptr (list Ptr (List alloc a), i Int) -> Ptr a
+# 	if i < 0 or i >= list&.count
+# 		Error.critical('Access to list at index \(i) (count: \(list&.count))')
+
+# 	return Slice.get-ptr(list&.elements, i)
+
+# fn get (list Ptr (List alloc a), i Int) -> a:
+# 	list get-ptr(i)&
+
+# fn set (list Ptr (List alloc a), i Int, elem a) -> Unit
+# 	if i < 0 or i >= list&.count
+# 		Error.critical('Tried setting a list element at index \(i) (count: \(list&.count))')
+
+# 	Slice.set(list&.elements, i, elem)
+# 	# i guess i can also return the old value here.
+
+
+
+# inst IntoIter List
+# 	into-iter (self): self.elements
+# 		into-iter()
+
+
+# # kek, should be `new`, but I'm trying out a new convention.
+# fn mk (al alloc) -> List alloc a
+# 	elements = Slice.empty()
+# 	return List { al, elements, count: 0 }
+
+# # fn free-list (list Ptr (List alloc a)) -> Unit <= Allocator alloc
+# # 	list&.al free(list&.elements)
+# # 	return
