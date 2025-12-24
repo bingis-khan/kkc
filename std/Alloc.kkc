@@ -3,6 +3,8 @@ use Mem
 	TypeSize
 	cast-ptr
 use Cnile
+use Slice
+	Slice
 
 
 class Allocator

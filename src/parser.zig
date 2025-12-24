@@ -1661,8 +1661,13 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
         // error already reported.
         // fall to add placeholder.
     }
-    // self.instantiateCon(modpath: Module.Path, conTok: Token)
-    unreachable;
+
+    // PLACEHOLDER EXPR.
+    std.debug.assert(self.errors.items.len > 0);
+    return try self.allocExpr(.{
+        .e = .{ .AnonymousRecord = &.{} },
+        .t = try self.typeContext.fresh(),
+    });
 }
 
 // either anonymous or normal :)

@@ -35,7 +35,8 @@ modules: ModuleLookup,
 errors: *Errors,
 typeContext: *TypeContext,
 al: std.mem.Allocator,
-defaultExports: std.ArrayList(Module.Exports), // TODO: instead of re-adding stuff for every module, save the state and COPY.
+preludeExports: ?Module.Exports, // TODO: instead of re-adding stuff for every module, save the state and COPY.
+stdExports: ?Module.Exports,
 prelude: ?Prelude,
 full: std.ArrayList(ast),
 rootPath: Str,
@@ -48,7 +49,8 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
         .errors = errors,
         .al = al,
         .typeContext = typeContext,
-        .defaultExports = std.ArrayList(Module.Exports).init(al),
+        .preludeExports = null,
+        .stdExports = null,
         .prelude = null,
         .full = std.ArrayList(ast).init(al),
         .rootPath = root,
@@ -57,14 +59,28 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
     };
 }
 
-pub fn loadPrelude(self: *Self, path: *const Str) !Prelude {
-    const preludeModule = try self.loadDefault(path);
+// sets defaultExports
+pub fn loadPrelude(self: *Self) !Prelude {
+    const path: Str = "prelude.kkc";
+    const preludeModule = (try self.loadModule(
+        .{ .ByFilename = .{
+            .isSTD = true,
+            .path = path,
+        } },
+        .{ .printAST = self.opts.printAST, .printTokens = self.opts.printTokens },
+    )) orelse unreachable;
+
+    self.preludeExports = preludeModule.exports;
+
     const prelude = try preludeModule.mkPrelude();
     self.prelude = prelude;
+
     return prelude;
 }
 
-pub fn loadDefault(self: *Self, path: *const Str) !Module {
+// sets stdExports
+pub fn loadConverged(self: *Self) !Module {
+    const path = "converged.kkc";
     const module = try self.loadModule(
         .{ .ByFilename = .{
             .isSTD = true,
@@ -72,11 +88,11 @@ pub fn loadDefault(self: *Self, path: *const Str) !Module {
         } },
         .{ .printAST = self.opts.printAST, .printTokens = self.opts.printTokens },
     );
-    try self.defaultExports.append(module.?.exports);
+    self.stdExports = module.?.exports;
     return module.?;
 }
 
-pub fn initialModule(self: *Self, filename: *const Str) !Module {
+pub fn initialModule(self: *Self, filename: Str) !Module {
     return (try self.loadModule(
         .{ .ByFilename = .{ .isSTD = false, .path = filename } },
         .{ .printAST = self.opts.printRootAST or self.opts.printAST, .printTokens = self.opts.printRootTokens or self.opts.printTokens },
@@ -87,7 +103,7 @@ pub fn initialModule(self: *Self, filename: *const Str) !Module {
 // OMG I HATE THIS BRUH. IT BECAME SO COMPLICATED. FOR SOME REASON I CANT THINK ABOUT THIS STUFF??????? WTF??????
 pub fn loadModule(self: *Self, pathtype: union(enum) {
     ByModulePath: struct { base: Module.BasePath, path: Module.Path },
-    ByFilename: struct { isSTD: bool, path: *const Str },
+    ByFilename: struct { isSTD: bool, path: Str },
 }, opts: struct {
     printTokens: ?bool = null,
     printAST: ?bool = null,
@@ -120,7 +136,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
         .ByFilename => |filename| .{
             .isSTD = filename.isSTD,
-            .path = common.singleElemSlice(Str, filename.path),
+            .path = common.singleElemSlice(Str, &filename.path),
         },
     };
 
@@ -155,7 +171,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
                     try filepath.append('/');
                 }
             }
-            try filepath.appendSlice(fullpath.path.*);
+            try filepath.appendSlice(fullpath.path);
             // std.debug.print("{s}\n", .{filepath.items});
             break :b self.readSource(filepath.items) catch return error.TempError;
         },
@@ -175,13 +191,20 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     }
 
     const moduleName = fullPath.path[fullPath.path.len - 1];
-    var parser = try Parser.init(lexer, self.prelude, switch (pathtype) {
+    const modBasePath: Module.BasePath = switch (pathtype) {
         .ByModulePath => |modpath| modpath.base,
         .ByFilename => |filename| .{ .isSTD = filename.isSTD, .path = &.{} },
-    }, moduleName, self, self.errors, self.typeContext, self.al);
-    for (self.defaultExports.items) |xports| {
-        try parser.addExports(&xports);
+    };
+    var parser = try Parser.init(lexer, self.prelude, modBasePath, moduleName, self, self.errors, self.typeContext, self.al);
+
+    if (self.preludeExports) |*xports| {
+        try parser.addExports(xports);
     }
+
+    if (!fullPath.isSTD) {
+        try parser.addExports(&self.stdExports.?);
+    }
+
     const module = try parser.parse();
     try self.full.append(module.ast);
     try self.modules.put(fullPath, module);
