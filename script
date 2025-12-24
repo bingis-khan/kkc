@@ -1,44 +1,23 @@
 #!./zig-out/bin/kkc
-use Slice
-use Error
-use Iter
-	IntoIter
-	into-iter
+use List
+	add
+	remove
+	first
+	top
+	add-all
 use Alloc
- 
-List alloc a
-	al alloc
-	elements Slice a  # elements.count ~ capacity
-	count Int
+use Term
 
-fn get-ptr (list Ptr (List alloc a), i Int) -> Ptr a
-	if i < 0 or i >= list&.count
-		Error.critical('Access to list at index \(i) (count: \(list&.count))')
+al = Alloc.get-c-allocator()
+list =& List.mk(al)
+list add-all(1 to (100))
+list&
+	zip(from(0))
+	drop(1)
+	for-each(Term.println)
 
-	return Slice.get-ptr(list&.elements, i)
+list remove(1)
 
-fn get (list Ptr (List alloc a), i Int) -> a:
-	list get-ptr(i)&
-
-fn set (list Ptr (List alloc a), i Int, elem a) -> Unit
-	if i < 0 or i >= list&.count
-		Error.critical('Tried setting a list element at index \(i) (count: \(list&.count))')
-
-	Slice.set(list&.elements, i, elem)
-	# i guess i can also return the old value here.
-
-
-
-inst IntoIter List
-	into-iter (self): self.elements
-		into-iter()
-
-
-# kek, should be `new`, but I'm trying out a new convention.
-fn mk (al alloc) -> List alloc a
-	elements = Slice.empty()
-	return List { al, elements, count: 0 }
-
-# fn free-list (list Ptr (List alloc a)) -> Unit <= Allocator alloc
-# 	list&.al free(list&.elements)
-# 	return
+Term.println(list)
+Term.println(list first())
+Term.println(list top())

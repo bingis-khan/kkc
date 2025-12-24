@@ -51,6 +51,7 @@ pub const TokenType = enum {
     PLUS,
     MINUS,
     TIMES,
+    SLASH,
     OR,
     AND,
 

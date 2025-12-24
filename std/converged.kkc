@@ -20,3 +20,5 @@ use Slice
 	Slice
 	subslice
 
+use Alloc
+	Allocator

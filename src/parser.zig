@@ -1921,6 +1921,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .PLUS => .Plus,
         .MINUS => .Minus,
         .TIMES => .Times,
+        .SLASH => .Divide,
         .EQEQ => .Equals,
         .LT => .LessThan,
         .GT => .GreaterThan,

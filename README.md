@@ -27,6 +27,7 @@ BUT, unifying envs is currently scuffed and I need to think more about how it sh
 ## Todo
 
 - instantiate anonymous structs. right now, they are not instantiated. to properly instantiate them, I would need to add them to scheme (so I'd have to assign an ID to an anon struct)
+- add another namespace for other std modules? (basically, most std modules use the same set of em, so it's kinda annoying to import basic modules.)
 
 
 ## Bugs

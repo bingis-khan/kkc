@@ -696,7 +696,7 @@ pub fn TypeF(comptime a: ?type) type {
 
                 .Fun => |fun| {
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    fun.env.print(c);
+                    // fun.env.print(c);  // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                 },
