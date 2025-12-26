@@ -9,6 +9,8 @@ pub const Type = enum {
     cast,
     @"offset-ptr",
     @"size-of",
+    argv,
+    argc,
 };
 
 const List = [_]Self{
@@ -16,6 +18,8 @@ const List = [_]Self{
     .{ .ty = .cast, .args = 1 },
     .{ .ty = .@"offset-ptr", .args = 2 },
     .{ .ty = .@"size-of", .args = 1 },
+    .{ .ty = .argv, .args = 0 },
+    .{ .ty = .argc, .args = 0 },
 };
 
 const Self = @This();

@@ -1,0 +1,15 @@
+# shit module to get around the fact, that the Error module depends on iterators (depends on Str, which depends on Iter)
+use Error
+	panic
+	unreachable
+use Iter
+	into-iter
+	next
+
+# fn head'(s)
+# 	case s into-iter() next()
+# 		Just(x)
+# 			return x
+# 		None
+# 			panic('called `first()` on an empty iterator!')
+# 			return unreachable()

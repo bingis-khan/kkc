@@ -27,6 +27,12 @@ ConstStr  # TODO: later, make a ptr + length struct string.
 StrConcat l r
 	StrConcat l r
 
+StrCase c1 c2  # big hack for alternative string representations. (ex: Maybe)
+	# honestly, we can just do the same thing as with iterators, where we define custom datatypes for this specific function.
+	# But, I'll keep StrCase for now.
+	StrCase1 c1
+	StrCase2 c2
+
 # #[ctype 'uint8_t', cstdinclude 'stdint.h']
 # U8
 

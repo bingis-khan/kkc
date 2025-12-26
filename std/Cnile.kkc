@@ -2,6 +2,9 @@
 #[ctype 'void']
 Void
 
+#[ctype 'FILE']
+FILE
+
 #[dylib 'libc.so']
 external
 	#[cfunname 'printf']
@@ -11,11 +14,16 @@ external
 	printf1(format ConstStr, x a) -> Void
 
 	#[cfunname 'printf']
+	printf2(format ConstStr, x a, y b) -> Void
+
+	#[cfunname 'printf']
 	printf3(format ConstStr, x a, y b, z c) -> Void
 
+	#[cfunname 'fprintf']
+	fprintf1 (file Ptr FILE, format ConstStr, x a) -> Int
 
-	#[cfunname 'rand']
-	rand() -> Int
+
+	rand () -> Int
 
 	memset (dest Ptr Void, byte Int, count Int) -> Ptr Void
 
@@ -24,3 +32,31 @@ external
 	malloc (bytes Int) -> Ptr Void
 	free (x Ptr Void) -> Void
 
+	#### string.h #####
+	strlen (s ConstStr) -> Int
+
+
+	##### file ops #####
+	fopen (filename ConstStr, fileopts ConstStr) -> Ptr FILE  # nullable!
+	fclose (handle Ptr FILE) -> Void
+
+	# in the near future maybe SEEK_END and stuff might be type-numbers instead of a hack datatypes.
+	# SEEK_END = 1 # for example.
+	# in case of `seek-end`, we might be able to modify constants which is bad. another thing might be functions, like `seek-end(): 1`
+	fseek (file Ptr FILE, offset Int, origin Int) -> Void
+	ftell (file Ptr FILE) -> Int
+	fread (buf Ptr a, size Int, count Int, stream Ptr FILE) -> Int
+
+	getenv (s ConstStr) -> ConstStr
+	
+
+
+fn seek-set(): 0
+fn seek-cur(): 1
+fn seek-end(): 2
+
+#[ctype 'char', bytes '1']
+Char
+
+
+# TODO: nullable CPtr and a function CPtr a -> Maybe (Ptr a)

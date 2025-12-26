@@ -1,5 +1,12 @@
 use Str
 	Str
+	chars
+use Str2
+	allocate-str
+	lines
+	char  # oof
+	is-blank
+
 use Iter
 	Range
 
@@ -7,14 +14,30 @@ use Iter
 	to
 
 	map
-	for-each
+	filter
 	drop
 	take
 	zip
-	
-use Error
-	or-fail
+
+	for-each
+	reduce
+	count
+	all
+	head
+
+# use Iter2
+# 	head
+
+use Mem
+	undefined
+
+use Error  # imports instances of failable.
 	or-else
+	or-fail
+
+	todo
+	unreachable
+	panic
 
 use Slice
 	Slice

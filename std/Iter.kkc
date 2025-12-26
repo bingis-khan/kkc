@@ -5,6 +5,11 @@ class Iter
 	next (self Ptr _) -> Maybe item
 
 
+# Basic instances
+inst IntoIter Ptr
+	into-iter (self): self& into-iter()
+
+
 # MAPPPP
 Map it from to
 	Map it (from -> to)
@@ -26,6 +31,34 @@ fn map (iterable, fun)
 	it = into-iter(iterable)
 	return Map(it, fun)
 
+
+##### FILTERRRRRR
+Filter it item
+	og it
+	fun item -> Bool
+
+
+inst IntoIter Filter
+	into-iter (self Filter it from) -> Filter it from
+		return self
+
+inst Iter Filter
+	next (self Ptr (Filter it item)) -> Maybe item <= Iter it
+		while True
+			case next(&self&.og)
+				None
+					return None
+				Just(x)
+					if self&.fun(x)
+						return Just(x)
+
+		# unreachable
+		return @undefined
+
+
+fn filter (iterable it, fun from -> Bool) -> Filter it' from <= IntoIter it
+	it = into-iter(iterable)
+	return Filter { og: it, fun: fun }
 
 
 # DROPPPP
@@ -97,15 +130,6 @@ inst Iter RangeIter
 
 
 
-fn for-each (iterable, fun)
-	it =& into-iter(iterable)
-	while True
-		case next(it)
-			None
-				return
-			Just(x)
-				_ = fun(x)
-
 
 # Unbounded range
 FromIter
@@ -153,3 +177,37 @@ fn zip(left, right)
 	left-it = left into-iter()
 	right-it = right into-iter()
 	return Zip { left-it: left-it, right-it: right-it }
+
+
+
+# consoomers
+
+fn for-each (iterable, fun)
+	it =& into-iter(iterable)
+	while True
+		case next(it)
+			None
+				return
+			Just(x)
+				_ = fun(x)
+
+
+fn reduce (iterable it, base a, fun (item, a) -> a) -> a <= IntoIter it
+	x = base
+	it = into-iter(iterable)
+	while True
+		case next(&it)
+			None
+				return x
+			Just(res)
+				x <= fun(res, x)
+
+	return @undefined  # unreachable. we need better return checking.
+
+fn count(it it) -> Int <= IntoIter it:
+	it reduce(0, fn (_, x): x + 1)
+
+fn all(it, fun): it
+	reduce(True, fn (e, x): fun(e) and x)
+
+fn head(it): (&it into-iter()) next()

@@ -276,7 +276,9 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
                             return try self.mapType(con.application, rec.t);
                         }
                     } else {
-                        unreachable; // TODO USER ERROR
+                        // TODO: Better error bruh. Happens when this datatype does not have this field.
+                        try self.errors.append(.{ .MissingField = .{ .field = mem } });
+                        return try self.fresh();
                     }
                 },
             }
@@ -374,7 +376,27 @@ fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize) !void {
     try self.errors.append(.{ .MismatchingParamLen = .{ .lpl = lpl, .rpl = rpl } });
 }
 
+// TODO: ignoring allocation failures to keep method signature. figure out a way to do a performant occurs check
 fn setType(self: *Self, tref: TyRef, tdest: TyRef) void {
+    // occurs check
+    // var ftvAl = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    // defer ftvAl.deinit();
+    // var curftvs = FTVs.init(ftvAl.allocator());
+    // self.ftvs(&curftvs, tdest) catch unreachable; // ALLOCATION FAILURE BRUH. (i dont care now, current occurs check is kinda crap and slow)
+    // const tyv = self.getType(tref).TyVar;
+    // if (curftvs.contains(tref, tyv)) {
+    //     // self.errors.append(.{ .RecursiveType = .{
+    //     //     .tyv = tyv,
+    //     //     .in = tdest,
+    //     // } }) catch unreachable;
+    //     // return;
+    //     var hadNewline: bool = undefined;
+    //     const ctx = ast.Ctx.init(&hadNewline, self);
+    //     ctx.print(.{ "SHIT: ", tref, " | ", tdest, "\n" });
+
+    //     unreachable;
+    // }
+
     var current = tref;
     while (true) {
         if (current.eq(tdest)) { // check for cycles. checking here to shorten.
@@ -398,6 +420,96 @@ pub fn getType(self: *const Self, t: TyRef) ast.TypeF(TyRef) {
         }
     }
 }
+
+pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
+    const t = self.getType(tref);
+    switch (t) {
+        .Anon => |fields| {
+            for (fields) |field_| {
+                try self.ftvs(store, field_.t);
+            }
+        },
+        .TyVar => |tyv| {
+            try store.tyvars.insert(.{ .tyv = tyv, .t = tref });
+            if (self.getFieldsForTVar(tyv)) |fields| {
+                for (fields) |field_| {
+                    try self.ftvs(store, field_.t);
+                }
+            }
+        },
+        .Con => |con| {
+            for (con.application.tvars) |mt| {
+                try self.ftvs(store, mt);
+            }
+        },
+        .Fun => |fun| {
+            for (fun.args) |arg| {
+                try self.ftvs(store, arg);
+            }
+
+            const env = self.getEnv(fun.env);
+            if (env.env == null) {
+                try store.envs.insert(env.base);
+            }
+
+            try self.ftvs(store, fun.ret);
+        },
+        .TVar => {},
+    }
+}
+
+pub const FTVs = struct {
+    const TyVars = Set(FTV, struct {
+        pub fn eql(ctx: @This(), a: FTV, b: FTV) bool {
+            _ = ctx;
+            return a.tyv.uid == b.tyv.uid;
+        }
+
+        pub fn hash(ctx: @This(), k: FTV) u64 {
+            _ = ctx;
+            // return @truncate(k.tyv);
+            return k.tyv.uid;
+        }
+    });
+    const Envs = Set(ast.EnvRef, struct {
+        pub fn eql(ctx: @This(), a: ast.EnvRef, b: ast.EnvRef) bool {
+            _ = ctx;
+            return a.id == b.id;
+        }
+
+        pub fn hash(ctx: @This(), k: ast.EnvRef) u64 {
+            _ = ctx;
+            // return @truncate(k.tyv);
+            return k.id;
+        }
+    });
+    tyvars: TyVars,
+
+    envs: Envs,
+
+    pub fn init(al: std.mem.Allocator) @This() {
+        return .{
+            .tyvars = TyVars.init(al),
+            .envs = Envs.init(al),
+        };
+    }
+
+    fn contains(self: *const @This(), t: ast.Type, tyv: ast.TyVar) bool {
+        return self.tyvars.contains(.{ .tyv = tyv, .t = t });
+    }
+
+    pub fn difference(self: *@This(), diff: *const @This()) void {
+        self.tyvars.difference(&diff.tyvars);
+        self.envs.difference(&diff.envs);
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.tyvars.deinit();
+        self.envs.deinit();
+    }
+};
+
+pub const FTV = struct { tyv: ast.TyVar, t: ast.Type };
 
 pub fn mapType(self: *Self, match: *const ast.Match(ast.Type), ty: ast.Type) error{OutOfMemory}!ast.Type {
     const t = self.getType(ty);

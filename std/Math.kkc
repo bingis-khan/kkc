@@ -1,0 +1,5 @@
+use Iter
+	to
+
+fn pow (base, p):
+	0 to (p - 1) Iter.reduce(1, fn(item, x): x * base)

@@ -2,6 +2,7 @@ use Slice
 	Slice
 	subslice
 use Error
+	panic
 use Iter
 	IntoIter
 	into-iter
@@ -24,7 +25,7 @@ List alloc a
 
 fn get-ptr (list Ptr (List alloc a), i Int) -> Ptr a
 	if i < 0 or i >= list&.count
-		Error.critical('Access to list at index \(i) (count: \(list&.count))')
+		panic('Access to list at index \(i) (count: \(list&.count))')
 
 	return Slice.get-ptr(list&.elements, i)
 
@@ -33,7 +34,7 @@ fn get (list Ptr (List alloc a), i Int) -> a:
 
 fn set (list Ptr (List alloc a), i Int, elem a) -> Unit
 	if i < 0 or i >= list&.count
-		Error.critical('Tried setting a list element at index \(i) (count: \(list&.count))')
+		panic('Tried setting a list element at index \(i) (count: \(list&.count))')
 
 	Slice.set(list&.elements, i, elem)
 	# i guess i can also return the old value here.
@@ -87,7 +88,7 @@ fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
 
 fn remove (list Ptr (List alloc a), i Int) -> Unit <= Allocator alloc
 	if i < 0 or i >= list&.count
-		Error.critical('Removal at list index \(i) (count: \(list&.count))')
+		panic('Removal at list index \(i) (count: \(list&.count))')
 
 	# move elements back
 	list&

@@ -4,6 +4,7 @@ const Str = Common.Str;
 const Loc = Common.Location;
 const ast = @import("ast.zig");
 const Module = @import("Module.zig");
+const parser = @import("parser.zig");
 
 pub const Error = union(enum) {
     UndefinedVariable: struct {
@@ -52,6 +53,11 @@ pub const Error = union(enum) {
         actual: usize,
     },
 
+    RecursiveType: struct {
+        tyv: ast.TyVar,
+        in: ast.Type,
+    },
+
     TuplesNotYetSupported: struct {},
 
     CannotDirectlyMutateVarFromEnv: struct {},
@@ -75,7 +81,7 @@ pub const Error = union(enum) {
 
     ConstraintsLeft: struct {
         module: Str,
-        numConstraints: usize,
+        constraints: []parser.Association,
     },
 
     TVarDoesNotImplementClass: struct {
@@ -132,6 +138,9 @@ pub const Error = union(enum) {
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
             .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),
             .UndefinedTVar => |e| p("undefined tvar {s} at ({}, {})", .{ e.tvname, e.loc.from, e.loc.to }),
+            .RecursiveType => |e| {
+                c.print(.{ "tried to unify tyvar ", e.tyv, ", which is in type ", e.in, "\n" });
+            },
             .MismatchingTypes => |e| {
                 c.s("Mismatching types: ");
                 e.lt.print(c); // UGLY
@@ -168,7 +177,23 @@ pub const Error = union(enum) {
                 }
                 // p("could not find instance of class {s} for type {s}", .{ e.class.name, e.data.name })
             },
-            .ConstraintsLeft => |e| p("num constraints left in module '{s}': {}", .{ e.module, e.numConstraints }),
+            .ConstraintsLeft => |e| {
+                p("{s}: constraints left {}:", .{ e.module, e.constraints.len });
+                for (e.constraints) |constr| {
+                    c.print(.{
+                        "\t",
+                        constr.from,
+                        " => ",
+                        constr.to,
+                        " for class fun ",
+                        constr.classFun,
+                        "(",
+                        constr.classFun.class,
+                        ")",
+                        "\n",
+                    });
+                }
+            },
             .TVarDoesNotImplementClass => |e| p("tvar {s} does not implement class {s}", .{ e.tv.name, e.class.name }),
             .ConstrainedNonExistentTVar => |e| p("constrained non existent tvar {s}", .{e.tvname}),
             .UnreachableCode => p("unreachable code", .{}),

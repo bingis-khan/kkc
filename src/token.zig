@@ -54,6 +54,7 @@ pub const TokenType = enum {
     SLASH,
     OR,
     AND,
+    NOT,
 
     REF, // &, both ref and deref
     DOT, // .member

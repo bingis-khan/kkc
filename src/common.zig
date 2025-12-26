@@ -10,7 +10,7 @@ pub const Location = struct {
 
     const Self = @This();
     pub fn between(l: *const Self, r: *const Self) Self {
-        if (l.source != r.source) {
+        if (l.source.ptr != r.source.ptr) {
             unreachable;
         }
         return .{
@@ -33,5 +33,12 @@ pub fn singleElemSlice(T: type, x: *const T) []const T {
     var s: []T = undefined;
     s.len = 1;
     s.ptr = @constCast(@ptrCast(x));
+    return s;
+}
+
+pub fn byteSlice(p: *anyopaque, size: usize) []const u8 {
+    var s: []const u8 = undefined;
+    s.len = size;
+    s.ptr = @ptrCast(p);
     return s;
 }

@@ -5,6 +5,7 @@ const common = @import("common.zig");
 const Str = common.Str;
 const endianness = @import("builtin").target.cpu.arch.endian();
 const TypeContext = @import("TypeContext.zig");
+const Args = @import("Args.zig");
 
 const Self = @This();
 
@@ -17,9 +18,10 @@ tymap: *const TypeMap,
 funLoader: DyLibLoader,
 typeContext: *const TypeContext,
 prelude: Prelude,
+progArgs: []Args.Arg,
 
 // right now a very simple interpreter where we don't free.
-pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, al: std.mem.Allocator) !i64 {
+pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, progArgs: []Args.Arg, al: std.mem.Allocator) !i64 {
     var scope = Scope.init(null, al);
     const scheme = ast.Scheme.empty();
     const tymap = TypeMap{
@@ -34,6 +36,7 @@ pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, al
         .arena = al,
         .funLoader = DyLibLoader.init(al),
         .prelude = prelude,
+        .progArgs = progArgs,
     };
     for (modules) |module| {
         self.stmts(module.toplevel) catch |err| switch (err) {
@@ -64,7 +67,9 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         },
         .Return => |e| {
             const v = try self.expr(e);
-            self.returnValue = v;
+            // BUG(return-decon-ref) remember to copy the value in case it's a pure reference.
+            const cv = try self.copyValueMeta(v, e.t);
+            self.returnValue = cv;
             return error.Return;
         },
         .VarDec => |vd| {
@@ -292,6 +297,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     }
                     return valFromRef(ptr);
                 },
+
+                .argv => return try self.val(.{ .extptr = @ptrCast(self.progArgs.ptr) }, @sizeOf(*anyopaque)),
+                .argc => return try self.intValue(@intCast(self.progArgs.len)),
             }
         },
         .Int => |x| {
@@ -318,18 +326,27 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     }
                 },
 
+                .Equals => {
+                    const l = try self.expr(op.l);
+                    const r = try self.expr(op.r);
+                    const size = self.sizeOf(op.l.t).size;
+                    return try self.boolValue(std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size)));
+                },
+
                 // these ones don't short circuit, so we can simplify our structure.
                 else => {
                     const l = try self.expr(op.l);
                     const r = try self.expr(op.r);
                     return switch (op.op) {
-                        .Equals => try self.boolValue(l.ref.int == r.ref.int), // TEMP!!!
+                        // .Equals => try self.boolValue(l.ref.int == r.ref.int), // TEMP!!!
 
                         .Plus => try self.intValue(l.ref.int + r.ref.int),
                         .Minus => try self.intValue(l.ref.int - r.ref.int),
                         .Times => try self.intValue(l.ref.int * r.ref.int),
+                        .Divide => try self.intValue(@divTrunc(l.ref.int, r.ref.int)),
 
                         .LessThan => try self.boolValue(l.ref.int < r.ref.int),
+                        .LessEqualThan => try self.boolValue(l.ref.int <= r.ref.int),
                         .GreaterThan => try self.boolValue(l.ref.int > r.ref.int),
                         .GreaterEqualThan => try self.boolValue(l.ref.int >= r.ref.int),
 
@@ -375,13 +392,13 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         extfun.name.name;
 
                     const fun = try self.funLoader.loadFunction(libName, funName);
-                    return try self.val(.{ .extptr = nanbox(fun, .ExternalFunction) });
+                    return try self.val(.{ .extptr = nanbox(fun, .ExternalFunction) }, @sizeOf(*anyopaque));
                 },
             }
         },
         .Str => |slit| {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit));
-            return try self.val(.{ .extptr = s });
+            return try self.val(.{ .extptr = s }, @sizeOf(*anyopaque));
         },
         .Call => |c| {
             const fun = try self.expr(c.callee);
@@ -456,7 +473,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
 
                     const ret = try self.expr(lam.expr);
 
-                    return ret;
+                    // BUG(return-decon-ref): Remember to copy the value before returning - when returning a deconstructed value, it's possible to return a ref - in this case, we must copy it.
+                    return try self.copyValueMeta(ret, lam.expr.t);
                 },
 
                 .None => unreachable,
@@ -464,9 +482,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         },
         .Con => |con| {
             if (con.tys.len == 0) {
-                return try self.val(.{ .enoom = con.tagValue });
+                return try self.val(.{ .enoom = con.tagValue }, self.sizeOf(e.t).size);
             } else {
-                return try self.val(.{ .confun = nanbox(con, .ConstructorFunction) });
+                return try self.val(.{ .confun = nanbox(con, .ConstructorFunction) }, @sizeOf(*ast.Con));
             }
         },
 
@@ -476,9 +494,10 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .Deref => valFromRef(v.ref.ptr),
                 .Ref => try self.val(.{
                     .ptr = v.ref,
-                }),
+                }, @sizeOf(RawValueRef)),
                 .Access => |mem| valFromRef(self.getFieldFromType(v.ref, uop.e.t, mem)),
                 .As => v,
+                .Not => try self.boolValue(!isTrue(v)),
             };
         },
 
@@ -554,7 +573,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .lam = l,
                 .env = try self.initEnvSnapshot(l.env),
             }), .Lambda);
-            return try self.val(.{ .lam = ptr });
+            return try self.val(.{ .lam = ptr }, @sizeOf(*const RawValue.Lam));
         },
     }
 
@@ -610,7 +629,7 @@ fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !Value
             .env = self.scope.getFun(fun.name),
             .match = m,
         }), .LocalFunction),
-    });
+    }, @sizeOf(*RawValue.Fun));
 }
 
 fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueMeta {
@@ -672,7 +691,7 @@ const ValueMeta = struct {
     ref: *align(1) RawValue,
 };
 
-fn copyValueMeta(self: *const Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
+fn copyValueMeta(self: *Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
     const vref = try self.copyValue(vm.ref, t);
     return valFromRef(vref);
 }
@@ -768,11 +787,11 @@ fn copyValue(self: *Self, vt: RawValueRef, t: ast.Type) !RawValueRef {
 }
 
 fn intValue(self: *const Self, i: i64) !ValueMeta {
-    return self.val(.{ .int = i });
+    return self.val(.{ .int = i }, @sizeOf(@TypeOf(i)));
 }
 
 fn boolValue(self: *const Self, b: bool) !ValueMeta {
-    return self.val(.{ .enoom = @intFromBool(b) });
+    return self.val(.{ .enoom = @intFromBool(b) }, @sizeOf(RawValue.Tag));
 }
 
 fn valFromRef(ref: RawValueRef) ValueMeta {
@@ -782,8 +801,8 @@ fn valFromRef(ref: RawValueRef) ValueMeta {
     };
 }
 
-fn val(self: *const Self, v: RawValue) !ValueMeta {
-    const ref = try self.arena.create(RawValue);
+fn val(self: *const Self, v: RawValue, size: usize) !ValueMeta {
+    const ref: RawValueRef = @ptrCast((try self.arena.alloc(u8, size)).ptr);
     ref.* = v;
     return .{
         // .header = .{ .ogPtr = null },
@@ -856,6 +875,12 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
             return self.sizeOfRecord(fields, 0);
         },
         .Con => |c| {
+            // before all that check for 'bytes' annotation.
+            if (ast.Annotation.find(c.type.annotations, "bytes")) |ann| {
+                const sz = std.fmt.parseInt(usize, ann.params[0], 10) catch unreachable; // TODO: USER ERROR
+                return .{ .size = sz, .alignment = sz };
+            }
+
             const oldTyMap = self.tymap;
             const tymap = TypeMap{
                 .prev = oldTyMap,

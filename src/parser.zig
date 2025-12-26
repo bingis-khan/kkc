@@ -118,7 +118,7 @@ pub fn parse(self: *Self) !Module {
     if (self.associations.items.len > 0) {
         try self.errors.append(.{ .ConstraintsLeft = .{
             .module = self.name,
-            .numConstraints = self.associations.items.len,
+            .constraints = self.associations.items,
         } });
     }
 
@@ -158,7 +158,7 @@ fn scopeToExports(self: *Self) Module.Exports {
     };
 }
 
-fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
+fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.Annotation) !void {
     const uid = self.gen.types.newUnique();
     self.scope.beginScope(null);
     const data = b: {
@@ -186,17 +186,21 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
                     .envVars = &.{},
                     .associations = &.{}, // TODO: when I add fake class names as types, this will  be non-empty.
                 },
+                .annotations = annotations,
             });
         }
 
-        const data = try self.arena.create(AST.Data);
-        data.uid = self.gen.types.newUnique();
-        data.name = typename.literal(self.lexer.source);
-        data.scheme = .{
-            .tvars = tvars.items,
-            .envVars = &.{}, // TEMP
-            .associations = &.{},
-        }; // TODO: check for repeating tvars and such.
+        const data = try Common.allocOne(self.arena, AST.Data{
+            .uid = self.gen.types.newUnique(),
+            .name = typename.literal(self.lexer.source),
+            .scheme = AST.Scheme{
+                .tvars = tvars.items,
+                .envVars = &.{}, // TEMP
+                .associations = &.{},
+            }, // TODO: check for repeating tvars and such.
+            .annotations = annotations,
+            .stuff = undefined,
+        });
 
         var cons = std.ArrayList(AST.Con).init(self.arena);
         var recs = std.ArrayList(AST.Record).init(self.arena);
@@ -229,7 +233,9 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token) !void {
                 });
 
                 tag += 1;
-            } else unreachable;
+            } else {
+                unreachable; // TODO: ERROR!
+            }
         }
 
         if (cons.items.len > 0 and recs.items.len > 0) {
@@ -648,14 +654,14 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                     break :b .{ .Expr = try self.finishExpression(ce) };
                 }
 
-                try self.dataDef(typename, mtv);
+                try self.dataDef(typename, mtv, annotations);
                 break :b null;
             }
 
             // BRITTLE AS HELL.
             if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP) {
                 // TODO: parse non-qualified postfix expression alls.
-                try self.dataDef(typename, null);
+                try self.dataDef(typename, null, annotations);
                 break :b null;
             }
 
@@ -775,10 +781,10 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
             return null;
         } // class
         else if (self.check(.INST)) {
-            const className = try self.expect(.TYPE);
-            const class = (self.maybeLookupType(className.literal(self.lexer.source)) orelse unreachable).Class;
-            const typeName = try self.expect(.TYPE);
-            const data = (self.maybeLookupType(typeName.literal(self.lexer.source)) orelse unreachable).Data;
+            const qclassName = try self.parseQualifiedType(try self.expect(.TYPE));
+            const class = (try self.findQualifiedDataOrClass(qclassName.modpath, qclassName.name, qclassName.loc) orelse unreachable).Class;
+            const qtypeName = try self.parseQualifiedType(try self.expect(.TYPE));
+            const data = (try self.findQualifiedDataOrClass(qtypeName.modpath, qtypeName.name, qtypeName.loc) orelse unreachable).Data;
 
             const oldSelf = self.selfType;
             const instantiatedSelfType = try self.typeContext.newType(.{
@@ -812,6 +818,8 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                     break;
                 } else {
                     // error that instance function is not found.
+                    // TODO: I might need to add a placeholder function (based on the class declaration), which is a lot of work, so whatever.
+                    try self.err(void, "TEMP ERROR: could not find instance function {s}", .{fun.name.name});
                     unreachable;
                 }
 
@@ -1418,6 +1426,16 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         });
     }
 
+    if (self.check(.NOT) and minPrec <= comptime binOpPrecedence(.And)) {
+        const n = try self.expression();
+        const boolTy = try self.definedType(.Bool);
+        try self.typeContext.unify(n.t, boolTy);
+        return self.allocExpr(.{
+            .e = .{ .UnOp = .{ .op = .Not, .e = n } },
+            .t = boolTy,
+        });
+    }
+
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
     if (self.check(.FN) or self.peek().type == .COLON) { // smol hack to allow quick empty lambdas.
         var params = std.ArrayList(*AST.Decon).init(self.arena);
@@ -1510,6 +1528,13 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     // arg 2
                     try self.typeContext.unify(try self.definedType(.Int), args.items[1].t);
 
+                    break :b ptr.t;
+                },
+
+                .argc => try self.definedType(.Int),
+                .argv => b: {
+                    const ptr = (try self.defined(.Ptr)).dataInst;
+                    try self.typeContext.unify(ptr.tyArgs[0], try self.definedType(.ConstStr));
                     break :b ptr.t;
                 },
             };
@@ -1612,7 +1637,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
     const definitions = try self.someRecordDefinition();
 
     // instantiate it.
-    const mDataOrClass = try self.findQualifiedDataOrClass(modpath, name);
+    const mDataOrClass = try self.findQualifiedDataOrClass(modpath, name.literal(self.lexer.source), name.toLocation(self.lexer.source));
     if (mDataOrClass) |dataOrClass| {
         switch (dataOrClass) {
             .Data => |data| {
@@ -1707,17 +1732,36 @@ fn someRecordDefinition(self: *Self) ![]AST.Expr.Field {
     return definitions.items;
 }
 
+fn parseQualifiedType(self: *Self, first: Token) !struct { modpath: Module.Path, name: Str, loc: Common.Location } {
+    if (self.peek().type != .DOT) {
+        return .{ .modpath = &.{}, .name = first.literal(self.lexer.source), .loc = first.toLocation(self.lexer.source) };
+    }
+
+    var fullPath = try std.ArrayList(Str).initCapacity(self.arena, 1);
+    try fullPath.append(first.literal(self.lexer.source));
+    var loc = first.toLocation(self.lexer.source);
+    while (self.check(.DOT)) {
+        const tt = try self.expect(.TYPE);
+        try fullPath.append(tt.literal(self.lexer.source));
+        loc = loc.between(&tt.toLocation(self.lexer.source));
+    }
+
+    const modpath = fullPath.items[0 .. fullPath.items.len - 1];
+    const tyname = fullPath.getLast();
+
+    return .{ .modpath = modpath, .name = tyname, .loc = loc };
+}
+
 // right now only used for records. In the future, will be used for qualifying types themselves.
 // ALSO, TODO we might abstract away the stuff about getting the module, because it's annoying and it's not immediately obvious how I should handle that error. So, a fn (modpath) -> ?Module (but also throw error when module == null)
-fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, tok: Token) !?Module.DataOrClass {
-    const name = tok.literal(self.lexer.source);
+fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, loc: Common.Location) !?Module.DataOrClass {
     if (modpath.len == 0) {
         if (self.maybeLookupType(name)) |dataOrClass| {
             return dataOrClass;
         } else {
             try self.errors.append(.{ .UndefinedType = .{
                 .typename = name,
-                .loc = tok.toLocation(self.lexer.source),
+                .loc = loc,
             } });
             return null;
         }
@@ -1730,7 +1774,7 @@ fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, tok: Token) !?Mod
                     try self.errors.append(.{
                         .UndefinedType = .{
                             .typename = name,
-                            .loc = tok.toLocation(self.lexer.source),
+                            .loc = loc,
                         },
                     });
                     return null;
@@ -1859,6 +1903,7 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                 't' => try s.append('\t'),
                 'n' => try s.append('\n'),
                 '\\' => try s.append('\\'),
+                '0' => try s.append(0),
                 else => unreachable, // TODO handle errors
             }
         } else {
@@ -1924,6 +1969,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .SLASH => .Divide,
         .EQEQ => .Equals,
         .LT => .LessThan,
+        .LTEQ => .LessEqualThan,
         .GT => .GreaterThan,
         .GTEQ => .GreaterEqualThan,
         .OR => .Or,
@@ -1947,21 +1993,23 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 
         .Or => 2,
         .And => 3,
+        // .Not => 4,
 
-        .Equals => 4,
-        .LessThan => 4,
-        .GreaterThan => 4,
-        .GreaterEqualThan => 4,
+        .Equals => 8,
+        .LessThan => 8,
+        .LessEqualThan => 8,
+        .GreaterThan => 8,
+        .GreaterEqualThan => 8,
 
-        .Plus => 5,
-        .Minus => 5,
-        .Times => 7,
-        .Divide => 7,
+        .Plus => 12,
+        .Minus => 12,
+        .Times => 12,
+        .Divide => 12,
 
-        .Call => 10,
-        .RecordAccess => 10,
-        .Deref => 10,
-        .PostfixCall => 10,
+        .Call => 18,
+        .RecordAccess => 18,
+        .Deref => 18,
+        .PostfixCall => 18,
         else => unreachable,
     };
 }
@@ -1979,7 +2027,7 @@ const Type = struct {
         const self = this.parser;
         // temp
         if (self.consume(.TYPE)) |ty| {
-            const ity = try self.instantiateType(ty);
+            const ity = try self.qualifiedType(ty);
             if (ity.tyArgs.len != 0) {
                 try self.errors.append(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
             }
@@ -2022,17 +2070,17 @@ const Type = struct {
     fn sepTyo(this: *const @This()) !AST.Type {
         const self = this.parser;
         if (self.consume(.TYPE)) |tyName| {
+            const ty = try self.qualifiedType(tyName);
+
             var tyArgs = std.ArrayList(AST.Type).init(self.arena);
             while (true) {
                 const tokType = self.peek().type;
-                if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE)) { // bad bad works
+                if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE)) { // bad but works
                     break;
                 }
 
                 try tyArgs.append(try this.typ());
             }
-
-            const ty = try self.instantiateType(tyName);
 
             // simply check arity.
             try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
@@ -2391,6 +2439,9 @@ fn solveAvailableConstraints(self: *Self) !void {
                                 }
                             }
 
+                            // TODO: compiler error: could not find instance function.
+                            //  This case should be checked when parsing the selected instance.
+                            //  Then here, we would return some placeholder (or the placeholder will be provided then)
                             unreachable;
                         };
                         const funTyAndMatch = try self.instantiateFunction(fun);
@@ -2491,9 +2542,13 @@ fn instantiateData(self: *Self, data: *AST.Data) !DataInst {
     };
 }
 
-fn instantiateType(self: *Self, tyTok: Token) !DataShit {
-    const typename = tyTok.literal(self.lexer.source);
-    if (self.maybeLookupType(typename)) |dataOrClass| {
+fn qualifiedType(self: *Self, first: Token) !DataShit {
+    const stuff = try self.parseQualifiedType(first);
+    const modpath = stuff.modpath;
+    const tyname = stuff.name;
+    const loc = stuff.loc;
+
+    if (try self.findQualifiedDataOrClass(modpath, tyname, loc)) |dataOrClass| {
         switch (dataOrClass) {
             .Data => |data| {
                 const dt = try self.instantiateData(data);
@@ -2511,9 +2566,9 @@ fn instantiateType(self: *Self, tyTok: Token) !DataShit {
             },
         }
     } else {
-        return try self.newPlaceholderType(typename, .{
-            .from = tyTok.from,
-            .to = tyTok.to,
+        return try self.newPlaceholderType(tyname, .{
+            .from = first.from,
+            .to = first.to,
             .source = self.lexer.source,
         });
     }
@@ -2531,6 +2586,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         .uid = self.gen.vars.newUnique(),
         .stuff = .{ .cons = &.{} },
         .scheme = AST.Scheme.empty(),
+        .annotations = &.{},
     });
     try self.errors.append(.{
         .UndefinedType = .{ .typename = typename, .loc = location },
@@ -2719,86 +2775,39 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
     return try Common.allocOne(self.arena, tvarMatch);
 }
 
-const FTVs = struct {
-    const TyVars = Set(FTV, struct {
-        pub fn eql(ctx: @This(), a: FTV, b: FTV) bool {
-            _ = ctx;
-            return a.tyv.uid == b.tyv.uid;
-        }
-
-        pub fn hash(ctx: @This(), k: FTV) u64 {
-            _ = ctx;
-            // return @truncate(k.tyv);
-            return k.tyv.uid;
-        }
-    });
-    const Envs = Set(AST.EnvRef, struct {
-        pub fn eql(ctx: @This(), a: AST.EnvRef, b: AST.EnvRef) bool {
-            _ = ctx;
-            return a.id == b.id;
-        }
-
-        pub fn hash(ctx: @This(), k: AST.EnvRef) u64 {
-            _ = ctx;
-            // return @truncate(k.tyv);
-            return k.id;
-        }
-    });
-    tyvars: TyVars,
-
-    envs: Envs,
-
-    fn init(al: std.mem.Allocator) @This() {
-        return .{
-            .tyvars = TyVars.init(al),
-            .envs = Envs.init(al),
-        };
-    }
-
-    fn difference(self: *@This(), diff: *const @This()) void {
-        self.tyvars.difference(&diff.tyvars);
-        self.envs.difference(&diff.envs);
-    }
-
-    fn deinit(self: *@This()) void {
-        self.tyvars.deinit();
-        self.envs.deinit();
-    }
-};
-const FTV = struct { tyv: AST.TyVar, t: AST.Type };
 fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []*AST.Decon, ret: AST.Type, env: AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
     const expectedBinding = AST.TVar.Binding{
         .Function = functionId,
     };
 
     // Function local stuff.
-    var funftvs = FTVs.init(self.arena);
-    try self.ftvs(&funftvs, ret);
+    var funftvs = TypeContext.FTVs.init(self.arena);
+    try self.typeContext.ftvs(&funftvs, ret);
     for (params) |p| {
-        try self.ftvs(&funftvs, p.t);
+        try self.typeContext.ftvs(&funftvs, p.t);
     }
 
     // environment stuff.
-    var envftvs = FTVs.init(self.arena);
+    var envftvs = TypeContext.FTVs.init(self.arena);
     for (env) |inst| {
         // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
         switch (inst.v) {
-            .Var => try self.ftvs(&envftvs, inst.t),
+            .Var => try self.typeContext.ftvs(&envftvs, inst.t),
             .Fun => |fun| {
                 for (fun.params) |p| {
-                    try self.ftvs(&envftvs, p.t);
+                    try self.typeContext.ftvs(&envftvs, p.t);
                 }
 
-                try self.ftvs(&envftvs, fun.ret);
+                try self.typeContext.ftvs(&envftvs, fun.ret);
             },
 
             .ClassFun => |vv| {
                 const cfun = vv.cfun;
                 for (cfun.params) |p| {
-                    try self.ftvs(&envftvs, p.t);
+                    try self.typeContext.ftvs(&envftvs, p.t);
                 }
 
-                try self.ftvs(&envftvs, cfun.ret);
+                try self.typeContext.ftvs(&envftvs, cfun.ret);
             },
         }
     }
@@ -2868,9 +2877,9 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                     }
 
                     // mkae sure to check it's actually bound to a function.
-                    var assocFTVs = FTVs.init(self.arena); // TODO: this is kinda fugly. I should reuse the general ftvs.
+                    var assocFTVs = TypeContext.FTVs.init(self.arena); // TODO: this is kinda fugly. I should reuse the general ftvs.
                     defer assocFTVs.deinit();
-                    try self.ftvs(&assocFTVs, assoc.to);
+                    try self.typeContext.ftvs(&assocFTVs, assoc.to);
 
                     var assocFTVIt = assocFTVs.tyvars.iterator();
                     while (assocFTVIt.next()) |tyv| {
@@ -2923,45 +2932,8 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     };
 }
 
-fn ftvs(self: *Self, store: *FTVs, tref: AST.Type) !void {
-    const t = self.typeContext.getType(tref);
-    switch (t) {
-        .Anon => |fields| {
-            for (fields) |field| {
-                try self.ftvs(store, field.t);
-            }
-        },
-        .TyVar => |tyv| {
-            try store.tyvars.insert(.{ .tyv = tyv, .t = tref });
-            if (self.typeContext.getFieldsForTVar(tyv)) |fields| {
-                for (fields) |field| {
-                    try self.ftvs(store, field.t);
-                }
-            }
-        },
-        .Con => |con| {
-            for (con.application.tvars) |mt| {
-                try self.ftvs(store, mt);
-            }
-        },
-        .Fun => |fun| {
-            for (fun.args) |arg| {
-                try self.ftvs(store, arg);
-            }
-
-            const env = self.typeContext.getEnv(fun.env);
-            if (env.env == null) {
-                try store.envs.insert(env.base);
-            }
-
-            try self.ftvs(store, fun.ret);
-        },
-        .TVar => {},
-    }
-}
-
 // ASSOCIATION
-const Association = struct {
+pub const Association = struct {
     from: AST.Type,
     to: AST.Type,
 
@@ -3198,7 +3170,7 @@ fn loadLexingState(self: *Self, state: LexingState) void {
 
 // NOTE: later, we don't have to specify a return value. Just always follow it with "return unreachable".
 fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
-    std.debug.print(fmt ++ " at {}\n", args ++ .{self.currentToken});
+    std.debug.print(fmt ++ " at {} ({s})\n", args ++ .{ self.currentToken, self.name });
     std.debug.print("{s}\n", .{self.lexer.source[self.currentToken.from -% 5 .. @min(self.lexer.source.len, self.currentToken.to +% 5)]});
     return error.ParseError;
 }

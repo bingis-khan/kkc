@@ -1,23 +1,80 @@
 #!./zig-out/bin/kkc
-use List
-	add
-	remove
-	first
-	top
-	add-all
-use Alloc
 use Term
+use File
+use Alloc
+use Slice
+use Args
+use Env
+use StrBuilder
+use Mem
+use Str
+use Str2
+
 
 al = Alloc.get-c-allocator()
-list =& List.mk(al)
-list add-all(1 to (100))
-list&
-	zip(from(0))
-	drop(1)
-	for-each(Term.println)
+home = Env.get('HOME') or-else('.')
+sb = StrBuilder.mk(al)
+filename = '\(home)/reminders' allocate-str(al)
+Term.println('[looking for reminders in \(filename)]')
 
-list remove(1)
+reminders = File.read-contents(al, filename) lines() filter(fn s: not s is-blank()) zip(from(1))
 
-Term.println(list)
-Term.println(list first())
-Term.println(list top())
+
+# program control (if there are no arguments, display the whole thing.)
+args = Args.get()
+
+if args.count == 0
+	reminders
+		for-each(fn Tuple2(r, i): Term.println('\(i). \(r)'))
+
+else
+	option = args Slice.get(0)
+
+	# normally, there should be case desonstruction!
+	if option Str.eq ('add')
+		if not (args.count == 2)
+			panic('Must have two arguments to add a reminder: add [your reminder]')
+
+		content = args Slice.get(1)
+
+		if content is-blank()
+			panic('blank reminder provided...')
+
+		builder =& StrBuilder.mk(al)
+		reminders map(fn Tuple2(r, i): r) for-each(fn r: builder StrBuilder.writeln(r))
+		builder StrBuilder.writeln(content)
+		File.write-contents(filename, builder StrBuilder.as-str())
+		Term.println(content)
+
+	elif option Str.eq ('remove') or option Str.eq ('rm')
+		if not (args.count == 2)
+			panic('Must have two arguments to remove a reminder: remove [reminder id]')
+
+		case Str2.parse-int(args Slice.get(1))
+			None
+				panic('Not a number!!!')
+			Just(i)
+				len = reminders count()
+				if i < 1 or i > len
+					panic('No reminder with this ID!')
+
+				builder =& StrBuilder.mk(al)
+
+				# demonstrating the use of closures!
+				fn try-writeln (Tuple2(elem, elem-i))
+					if not (elem-i == i)
+						builder StrBuilder.writeln(elem)
+					return
+
+				reminders
+					for-each(try-writeln)
+
+				File.write-contents(filename, builder StrBuilder.as-str())
+
+				removed-reminder = reminders drop(i - 1) head()
+				Term.println('REMOVED (\(i)): \(removed-reminder)')
+	else
+		panic('unknown option "\(option)!"')
+
+# mask memory corruption :)
+return 0

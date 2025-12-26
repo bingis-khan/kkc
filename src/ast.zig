@@ -500,6 +500,9 @@ pub const Expr = struct {
                     .As => |t| {
                         c.print(.{ uop.e, " as ", t });
                     },
+                    .Not => {
+                        c.print(.{ "not ", uop.e });
+                    },
                 }
                 c.s(")");
             },
@@ -532,6 +535,7 @@ pub const UnOp = union(enum) {
     Deref,
     Access: Str,
     As: Type,
+    Not,
 };
 
 pub const BinOp = enum {
@@ -746,6 +750,7 @@ pub const Data = struct {
         cons: []Con,
         recs: []Record,
     },
+    annotations: []Annotation, // TODO: we may later check if annotations are valid for each thing they are assigned to.
 
     pub fn eq(l: *const @This(), r: *const @This()) bool {
         return l.uid == r.uid;
@@ -923,6 +928,10 @@ pub const ClassFun = struct {
     pub const Param = struct {
         t: Type,
     };
+
+    pub fn print(self: @This(), c: Ctx) void {
+        c.print(.{self.name});
+    }
 };
 
 pub const Instance = struct {

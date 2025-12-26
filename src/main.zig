@@ -12,8 +12,6 @@ const Str = common.Str;
 const Args = @import("Args.zig");
 
 pub fn main() !void {
-    const opts = try Args.parse(std.process.args());
-
     // SETUP
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const al = gpa.allocator();
@@ -26,6 +24,9 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(al);
     defer arena.deinit();
     const aa = arena.allocator();
+
+    // PARSE ARGS
+    const opts = try Args.parse(std.process.args(), aa);
 
     // -|| MODULES ||-
     const compilationStartTime = try std.time.Instant.now();
@@ -52,7 +53,7 @@ pub fn main() !void {
 
     // go and interpret
     if (errors.items.len == 0) {
-        const ret = try Interpreter.run(fullAST, prelude, &typeContext, aa);
+        const ret = try Interpreter.run(fullAST, prelude, &typeContext, opts.programArgs, aa);
         std.debug.print("=== return value: {} ===\n", .{ret});
     }
 }

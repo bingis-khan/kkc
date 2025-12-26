@@ -56,7 +56,8 @@ pub const Lexer = struct {
         const from = self.currentIndex;
 
         // NOTE: currently, possible EOFs are unhadled. Fix dat.
-        const tt: TokenType = switch (self.nextChar()) {
+        const nc = self.nextChar();
+        const tt: TokenType = switch (nc) {
             '#' => b: {
                 // annotation shit.
                 // I wonder if it would be easier to parse annotations in LEXER? Might be a bit faster.
@@ -144,6 +145,7 @@ pub const Lexer = struct {
                     as,
                     @"or",
                     @"and",
+                    not,
                 };
                 const keyword = std.meta.stringToEnum(Keyword, self.scanned(from)) orelse {
                     break :b .IDENTIFIER;
@@ -165,6 +167,7 @@ pub const Lexer = struct {
                     .as => .AS,
                     .@"or" => .OR,
                     .@"and" => .AND,
+                    .not => .NOT,
                 };
             },
 
@@ -179,7 +182,10 @@ pub const Lexer = struct {
             },
 
             '_' => .UNDERSCORE,
-            else => unreachable, // TODO: ERROR.
+            else => {
+                std.debug.print("Weird ass char '{}' at {s}\n", .{ nc, self.source[self.currentIndex - 5 .. self.currentIndex + 5] });
+                unreachable; // TODO: ERROR.
+            },
         };
         const to = self.currentIndex;
 

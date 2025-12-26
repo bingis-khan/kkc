@@ -2,10 +2,20 @@ use Term
 use Cnile
 use Mem
 
-fn critical (errmsg) -> Unit
-	Term.println('CRITICAL: \(errmsg)')
+fn todo() -> a
+	Term.println('todo')
 	Cnile.exit(1)
-	return
+	return Mem.undefined()
+
+fn unreachable() -> a
+	Term.println('unreachable')
+	Cnile.exit(1)
+	return Mem.undefined()
+
+fn panic (errmsg) -> Unit
+	Term.println('PANIC: \(errmsg)')
+	Cnile.exit(1)
+
 
 
 class Failable
@@ -18,7 +28,7 @@ inst Failable Maybe
 	or-fail (x, errmsg)
 		case x
 			None
-				critical(errmsg)
+				panic(errmsg)
 				return Mem.undefined()
 			Just(xx)
 				return xx
@@ -35,7 +45,7 @@ inst Failable Either
 	or-fail (x, errmsg)
 		case x
 			Left(_)
-				critical(errmsg)
+				panic(errmsg)
 				return Mem.undefined()
 
 			Right(x)

@@ -20,6 +20,10 @@ pub fn Set(comptime K: type, comptime Context: type) type {
             try self.hash.put(x, .{});
         }
 
+        pub fn contains(self: *const Self, e: K) bool {
+            return self.hash.contains(e);
+        }
+
         pub fn delete(self: *Self, x: K) void {
             _ = self.hash.remove(x);
         }

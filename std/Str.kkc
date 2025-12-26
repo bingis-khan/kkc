@@ -1,17 +1,119 @@
 use Cnile
+use Iter
+	Iter
+	IntoIter
+	into-iter
+	next
+	head
+	zip
+	all
+use Mem
+use Math
 
 class Str
 	# later should write to some buffer instead of printing directly.
 	print-str (self _) -> Unit
-	# chars (self _) -> iter
+	chars (self _) -> iter
+
+
+##### ConstStr ######
+
+ConstStrIter
+	ogstr ConstStr
+	i Int
+
+inst IntoIter ConstStr
+	into-iter (self): ConstStrIter { ogstr: self, i: 0 }
+
+inst IntoIter ConstStrIter
+	into-iter (self): self
+
+inst Iter ConstStrIter
+	next (self)
+		if self&.i >= Cnile.strlen(self&.ogstr)  # later this will be good, when the default string will also have a length.
+			return None
+
+		char-ptr = Mem.cast(self&.ogstr) as Ptr Cnile.Char
+		c = (char-ptr Mem.offset-ptr(self&.i))&
+		self <&.i= self&.i + 1
+		return Just(c)
+
+inst Str ConstStr
+	print-str (self _) -> Unit
+		Cnile.printf1('%s', self)
+	chars (self _) -> ConstStrIter:
+		self into-iter()
+
+
+
+inst Str Cnile.Char
+	print-str (self _) -> Unit
+		Cnile.printf1('%c', self)
+
+
+
+####### Int #######
+
+IntStrIter
+	int Int
+	len Int
+
+inst Iter IntStrIter
+	next (self Ptr IntStrIter) -> Maybe Cnile.Char
+		if self&.len <= 0
+			return None
+
+		trim-down = 10 Math.pow (self&.len - 1)
+		upper = self&.int / trim-down
+		upper-mask = (upper / 10) * 10
+		digit = upper - upper-mask
+
+		self <&.len= self&.len - 1
+
+		digit-char = Mem.cast(digit + 48)
+		return Just(digit-char)
+
+
+# funny :)
+fn count-digits (self Int) -> Int
+	if self == 0
+		return 1
+
+	digits = 0
+	while self > 0
+		self <= self / 10
+		digits <= digits + 1
+
+	return digits
 
 inst Str Int
 	print-str (self Int) -> Unit
 		Cnile.printf1('%d', self)
 
-inst Str ConstStr
-	print-str (self _) -> Unit
-		Cnile.printf1('%s', self)
+	chars (self Int):
+		IntStrIter { int: self, len: self count-digits() }
+
+
+
+######## StrConcat #########
+
+StrConcatIter l r
+	left l
+	right r
+
+inst IntoIter StrConcatIter
+	into-iter (self): self
+
+inst Iter StrConcatIter
+	next (self)
+		case next(&self&.left)
+			Just(s)
+				return Just(s)
+			None
+				return next(&self&.right)
+
+inst IntoIter StrConcat
+	into-iter (StrConcat(left, right)): StrConcatIter { left: left chars(), right: right chars() }
 
 inst Str StrConcat
 	print-str (self _) -> Unit
@@ -20,6 +122,47 @@ inst Str StrConcat
 				print-str(l)
 				print-str(r)
 
+	chars (self): self into-iter()
+
+
+
+####### StrCase #######
+
+StrCaseIter c1 c2
+	StrCaseIter1 c1
+	StrCaseIter2 c2
+
+inst IntoIter StrCaseIter
+	into-iter(self): self
+
+inst Iter StrCaseIter
+	next(self)
+		case self&
+			StrCaseIter1(c)
+				return next(&c)
+
+			StrCaseIter2(c)
+				return next(&c)
+inst IntoIter StrCase
+	into-iter (self)
+		case self
+			StrCase1(c)
+				return StrCaseIter1(c chars())
+			StrCase2(c)
+				return StrCaseIter2(c chars())
+inst Str StrCase
+	print-str (self)
+		case self
+			StrCase1(c)
+				c print-str()
+
+			StrCase2(c)
+				c print-str()
+
+	chars (self): self into-iter()
+
+
+
 inst Str Bool
 	print-str (self Bool) -> Unit
 		if self
@@ -27,14 +170,26 @@ inst Str Bool
 		else
 			print-str('False')
 
+	chars (self)
+		if self
+			return 'True' chars()
+		else
+			return 'False' chars()
+
 inst Str Unit
 	print-str (self Unit) -> Unit
 		print-str('()')
+
+	chars (self): '()' chars()
 
 
 inst Str Ptr
 	print-str (self _)
 		_ = print-str(self&)
+
+	chars (self): self& chars()
+
+
 
 
 inst Str Maybe
@@ -46,9 +201,27 @@ inst Str Maybe
 			Just(x)
 				print-str('Just(\(x))')
 
+	chars (self)
+		c = @undefined
+		case self
+			None
+				c <= 'None' StrCase1()
+
+			Just(x)
+				c <= 'Just(\(x))' StrCase2()
+
+		return c chars()
+
 
 inst Str Tuple2
 	print-str (tup)
 		case tup
 			Tuple2(l, r)
 				print-str('(\(l), \(r))')
+
+
+###### Functions ######
+
+fn nullchar() -> Cnile.Char: Mem.zeroed()  # HACK!!
+fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)
+

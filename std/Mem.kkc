@@ -27,6 +27,17 @@ fn zeroed() -> a
 	return x
 
 # TODO: maybe make a module "Ptr"?
+# Also, this is only used for C shit... so this should not be here.
+# For undefined stuff we should have 0xabcdef and stuff.
 fn null-ptr() -> Ptr a: zeroed()
 
 fn ptr-to-int(p Ptr a) -> Int: @cast(p)
+
+
+fn from-nullable-c-str (s ConstStr)
+	if s == zeroed()  # == NULL?
+		return None
+	else
+		return Just(s)
+
+

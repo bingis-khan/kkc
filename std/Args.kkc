@@ -1,0 +1,10 @@
+use Slice
+	Slice
+use Mem
+
+# maybe merge this module with Env.
+
+fn get () -> Slice ConstStr:
+	Slice { ptr: @argv Mem.offset-ptr(1), count: @argc - 1 }
+
+fn program-name(): @argv&

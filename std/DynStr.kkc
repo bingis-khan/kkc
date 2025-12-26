@@ -1,0 +1,24 @@
+use Iter
+	into-iter
+use Cnile
+use Slice
+	Slice
+	subslice
+use Str
+	Str
+	print-str
+
+# should this have a separate module???
+DynStr
+	contents Slice Cnile.Char
+
+
+inst Str DynStr
+	print-str (self DynStr) -> Unit
+		Cnile.printf2('%.*s', self.contents.count, self.contents.ptr)
+
+	chars (self DynStr): self.contents into-iter()
+
+# i want to do substrings differently later.
+fn substr (s DynStr, from Int, to Int):
+	DynStr { contents: s.contents subslice(from, to) }

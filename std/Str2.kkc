@@ -1,0 +1,131 @@
+use Iter
+	Iter
+	IntoIter
+	into-iter
+	all
+	reduce
+use Str
+	Str
+	print-str
+	chars
+use Iter
+	head
+	count
+	zip
+	from
+	for-each
+use Error
+	panic
+use Alloc
+use Slice
+use Mem
+use DynStr
+	DynStr
+	substr
+
+
+##### Functions
+# BUG: does not work for nullchars (due to our string representation still lacking length)
+fn allocate-str (s, al) -> ConstStr
+	len = s chars() count()
+	str = al Alloc.allocate(len + 1)
+	s chars()
+		zip(from(0))
+		for-each(fn Tuple2(c, i): str Slice.set(i, c))
+
+	str Slice.set(len, Str.nullchar())
+	return str.ptr Mem.cast()
+
+fn char(s)
+	case s chars() head()
+		Just(c)
+			return c
+		None
+			# BAD! but this is not a good function, it should be called with constant strings n stuff
+			# later, when we add reexporting, I should make more fine grained modules and reexport stuff.
+			panic('char: empty string')
+			return Mem.undefined()
+
+fn newline(): char('\n')
+
+fn is-whitespace (c):
+	c == char(' ') or c == char('\n') or c == char('\t')
+
+fn is-blank (s): s
+	chars()
+	all(is-whitespace)
+
+#### Instances
+
+LineIter
+	og DynStr
+	last Int
+
+fn lines (s DynStr): LineIter { og: s, last: 0 }
+
+inst IntoIter LineIter
+	into-iter (self LineIter): self
+
+
+
+inst Iter LineIter
+	next (self Ptr LineIter) -> Maybe DynStr
+		# should consume the last trailing newline
+		if self&.last >= self&.og.contents.count or self&.og.contents Slice.get(self&.last) == Str.nullchar()
+			return None
+
+		# iterator is left after last encountered newline
+		i = self&.last
+		while not (self&.og.contents Slice.get(i) == newline() and i < self&.og.contents.count)
+			i <= i + 1
+
+		line = self&.og substr(self&.last, i)
+		i <= i + 1  # skip past the newline
+
+		# modify the state
+		self <&.last= i
+
+		return Just(line)
+
+
+
+###### Functions ######
+
+# kekkekekekekkekekek
+fn parse-digit (c)
+	if c == char('0')
+		return Just(0)
+	elif c == char('1')
+		return Just(1)
+	elif c == char('2')
+		return Just(2)
+	elif c == char('3')
+		return Just(3)
+	elif c == char('4')
+		return Just(4)
+	elif c == char('5')
+		return Just(5)
+	elif c == char('6')
+		return Just(6)
+	elif c == char('7')
+		return Just(7)
+	elif c == char('8')
+		return Just(8)
+	elif c == char('9')
+		return Just(9)
+	else
+		return None
+
+fn parse-int(s)
+	fn sequence-maybe (e, b)
+		case b
+			None
+				return None
+			Just(x)
+				case parse-digit(e)
+					None
+						return None
+					Just(xe)
+						return Just(x * 10 + xe)
+
+	return s chars() reduce(Just(0), sequence-maybe)
