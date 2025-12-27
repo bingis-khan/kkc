@@ -806,7 +806,7 @@ fn val(self: *const Self, v: RawValue, size: usize) !ValueMeta {
 
     // NOTE: equivalent to:
     // ref.* = value
-    // EXCEPT the thing is, RawValue has size greater than 8! Saw assigning it leads to assignment to some random memory.
+    // EXCEPT the thing is, RawValue has size greater than 8! So assigning it leads to assigning random memory to possibly unallocated segments.
     // SO, we have to mempy it.
     common.bytecopy(ref, &v, size);
 

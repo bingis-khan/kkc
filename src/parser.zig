@@ -536,11 +536,12 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
         else if (self.consume(.IDENTIFIER)) |v| {
             // here, choose between identifier and call
             if (self.check(.EQUALS)) {
+                const pm = self.foldFromHere();
                 const expr = try self.expression();
                 const vt = try self.newVar(v);
                 try self.typeContext.unify(vt.t, expr.t);
 
-                try self.endStmt();
+                try self.finishFold(pm);
 
                 break :b .{ .VarDec = .{
                     .varDef = vt.v,
@@ -548,8 +549,9 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 } };
             } else if (self.check(.LTEQ)) { // basic mutation (different token.)
                 // COPYPASTA
+                const pm = self.foldFromHere();
                 const e = try self.expression();
-                try self.endStmt();
+                try self.finishFold(pm);
 
                 const vtsc = try self.lookupVar(&.{}, v);
                 const vv = switch (vtsc.vorf) {
@@ -600,6 +602,8 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 }
 
                 try self.devour(.EQUALS);
+
+                const pm = self.foldFromHere();
                 const e = try self.expression();
 
                 try self.typeContext.unify(innerTy, e.t);
@@ -609,7 +613,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 //     try self.errors.append(.{ .CannotDirectlyMutateVarFromEnv = .{} });
                 // }
 
-                try self.endStmt();
+                try self.finishFold(pm);
                 break :b .{ .VarMut = .{
                     .varRef = vv.v,
                     .accessors = accessors.items,

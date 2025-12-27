@@ -17,7 +17,12 @@ sb = StrBuilder.mk(al)
 filename = '\(home)/reminders' allocate-str(al)
 Term.println('[looking for reminders in \(filename)]')
 
-reminders = File.read-contents(al, filename) lines() filter(fn s: not s is-blank()) zip(from(1))
+reminders = @undefined
+reminders <=
+	File.read-contents(al, filename)
+	lines()
+	filter(fn s: not s is-blank())
+	zip(from(1))
 
 
 # program control (if there are no arguments, display the whole thing.)
