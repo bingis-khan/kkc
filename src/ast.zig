@@ -503,6 +503,9 @@ pub const Expr = struct {
                     .Not => {
                         c.print(.{ "not ", uop.e });
                     },
+                    .Negate => {
+                        c.print(.{ "-", uop.e });
+                    },
                 }
                 c.s(")");
             },
@@ -536,6 +539,7 @@ pub const UnOp = union(enum) {
     Access: Str,
     As: Type,
     Not,
+    Negate,
 };
 
 pub const BinOp = enum {
@@ -565,7 +569,9 @@ pub const BinOp = enum {
     fn print(self: @This(), c: Ctx) void {
         const sop = switch (self) {
             .Plus => "+",
+            .Minus => "-",
             .Times => "*",
+            .Divide => "/",
             .Equals => "==",
             else => "XXX",
         };

@@ -17,8 +17,7 @@ sb = StrBuilder.mk(al)
 filename = '\(home)/reminders' allocate-str(al)
 Term.println('[looking for reminders in \(filename)]')
 
-reminders = @undefined
-reminders <=
+reminders =
 	File.read-contents(al, filename)
 	lines()
 	filter(fn s: not s is-blank())
@@ -79,4 +78,4 @@ else
 				removed-reminder = reminders drop(i - 1) head()
 				Term.println('REMOVED (\(i)): \(removed-reminder)')
 	else
-		panic('unknown option "\(option)!"')
+		panic('unknown option "\(option)"!')

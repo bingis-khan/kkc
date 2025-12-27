@@ -1430,13 +1430,25 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         });
     }
 
+    // not
     if (self.check(.NOT) and minPrec <= comptime binOpPrecedence(.And)) {
-        const n = try self.expression();
+        const n = try self.precedenceExpression(binOpPrecedence(.And) + 1); // higher than and
         const boolTy = try self.definedType(.Bool);
         try self.typeContext.unify(n.t, boolTy);
         return self.allocExpr(.{
             .e = .{ .UnOp = .{ .op = .Not, .e = n } },
             .t = boolTy,
+        });
+    }
+
+    // negation (-)
+    if (self.check(.MINUS) and minPrec <= comptime binOpPrecedence(.Divide)) {
+        const n = try self.precedenceExpression(binOpPrecedence(.Divide) + 1); // higher than and
+        const intTy = try self.definedType(.Int);
+        try self.typeContext.unify(n.t, intTy);
+        return self.allocExpr(.{
+            .e = .{ .UnOp = .{ .op = .Negate, .e = n } },
+            .t = intTy,
         });
     }
 
@@ -1972,6 +1984,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .TIMES => .Times,
         .SLASH => .Divide,
         .EQEQ => .Equals,
+        .NOTEQ => .NotEquals,
         .LT => .LessThan,
         .LTEQ => .LessEqualThan,
         .GT => .GreaterThan,
@@ -2000,6 +2013,7 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
         // .Not => 4,
 
         .Equals => 8,
+        .NotEquals => 8,
         .LessThan => 8,
         .LessEqualThan => 8,
         .GreaterThan => 8,
@@ -2007,14 +2021,16 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 
         .Plus => 12,
         .Minus => 12,
-        .Times => 12,
-        .Divide => 12,
+        .Times => 14,
+        .Divide => 14,
+
+        // .Negation => 16,
 
         .Call => 18,
         .RecordAccess => 18,
         .Deref => 18,
         .PostfixCall => 18,
-        else => unreachable,
+        // else => unreachable,
     };
 }
 

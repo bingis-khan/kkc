@@ -86,6 +86,13 @@ inst Iter SliceIter
 		return Just(elem)
 
 
+# SHITTY STR INST (Item = Cnile.Char)
+inst Str SliceIter
+	print-str (self)
+		self for-each(print-str)
+
+	chars (self): self
+
 
 SliceAddressIter a
 	slice Slice a

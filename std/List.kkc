@@ -13,7 +13,6 @@ use Iter
 use Alloc
 	Allocator
 	allocate
-	free
 use Str
 	Str
 	print-str
@@ -55,8 +54,8 @@ fn mk (al alloc) -> List alloc a
 	elements = Slice.empty()
 	return List { al, elements, count: 0 }
 
-fn free-list (list Ptr (List alloc a)) -> Unit <= Allocator alloc
-	list&.al free(list&.elements)
+fn free (list Ptr (List alloc a)) -> Unit <= Allocator alloc
+	list&.al Alloc.free(list&.elements)
 	return
 
 
@@ -78,7 +77,7 @@ fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
 		# still, the external interface and usage needs some contemplation
 		# copy to old slice
 		list&.elements zip(from(0)) for-each(fn Tuple2(x, i): Slice.set(new-slice, i, x))
-		list&.al free(list&.elements)
+		list&.al Alloc.free(list&.elements)
 		list <&.elements= new-slice
 
 	Slice.set(list&.elements, list&.count, elem)
@@ -102,7 +101,7 @@ fn remove (list Ptr (List alloc a), i Int) -> Unit <= Allocator alloc
 	capacity = list&.elements.count
 	if list&.count * shrink-factor < capacity
 		if list&.count == 0
-			list&.al free(list&.elements)
+			list&.al Alloc.free(list&.elements)
 			list <&.elements= Slice.empty()
 			return
 
@@ -112,7 +111,7 @@ fn remove (list Ptr (List alloc a), i Int) -> Unit <= Allocator alloc
 			Slice.subslice(0, list&.count)
 			Slice.copy-to(new-slice)
 
-		list&.al free(list&.elements)
+		list&.al Alloc.free(list&.elements)
 		list <&.elements= new-slice
 
 	return

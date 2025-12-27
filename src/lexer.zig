@@ -119,7 +119,12 @@ pub const Lexer = struct {
                 break :b .MINUS;
             },
             '*' => .TIMES,
-            '/' => .SLASH,
+            '/' => b: {
+                if (self.check('=')) {
+                    break :b .NOTEQ;
+                }
+                break :b .SLASH;
+            },
             '@' => b: {
                 self.identifier();
                 break :b .INTRINSIC;

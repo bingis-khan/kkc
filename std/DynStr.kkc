@@ -1,4 +1,5 @@
 use Iter
+	IntoIter
 	into-iter
 use Cnile
 use Slice
@@ -18,6 +19,10 @@ inst Str DynStr
 		Cnile.printf2('%.*s', self.contents.count, self.contents.ptr)
 
 	chars (self DynStr): self.contents into-iter()
+
+inst IntoIter DynStr
+	into-iter (self):
+		self.contents into-iter()
 
 # i want to do substrings differently later.
 fn substr (s DynStr, from Int, to Int):

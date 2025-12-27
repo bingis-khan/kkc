@@ -3,3 +3,13 @@ use Iter
 
 fn pow (base, p):
 	0 to (p - 1) Iter.reduce(1, fn(item, x): x * base)
+
+fn mod(l, d)
+	r = l / d
+	# There should be an assert that r >= 0...
+	m = l - r * d
+
+	if m < 0
+		return d + m
+	else
+		return m

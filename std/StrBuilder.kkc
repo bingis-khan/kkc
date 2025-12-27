@@ -33,8 +33,8 @@ fn mk (al alloc) -> StrBuilder alloc <= Allocator alloc
 fn as-str (builder Ptr (StrBuilder alloc)):
 	DynStr { contents: builder&.chars.elements subslice(0, builder&.chars.count) }
 
-fn free-builder (builder Ptr (StrBuilder alloc)) <= Allocator alloc
-	List.free-list(&builder&.chars)
+fn free (builder Ptr (StrBuilder alloc)) <= Allocator alloc
+	List.free(&builder&.chars)
 
 
 inst Str StrBuilder

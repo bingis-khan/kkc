@@ -7,6 +7,8 @@ use Iter
 	head
 	zip
 	all
+	for-each
+	Drop
 use Mem
 use Math
 
@@ -218,6 +220,16 @@ inst Str Tuple2
 		case tup
 			Tuple2(l, r)
 				print-str('(\(l), \(r))')
+
+
+##### Iterators (rn I've decided that treating strings as iterators should *just work*(TM)) (this MIGHT CHANGE IN THE FUTURE)
+
+inst Str Drop
+	# this is barely typed. Assumes Item = Char
+	print-str (self)
+		self for-each(print-str)
+
+	chars (self): self
 
 
 ###### Functions ######

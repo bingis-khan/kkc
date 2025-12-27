@@ -44,6 +44,7 @@ pub const TokenType = enum {
 
     EQUALS,
     EQEQ,
+    NOTEQ,
     GT,
     GTEQ,
     LT,

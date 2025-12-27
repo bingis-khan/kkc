@@ -16,6 +16,10 @@ fn panic (errmsg) -> Unit
 	Term.println('PANIC: \(errmsg)')
 	Cnile.exit(1)
 
+fn assert(cond, msg)
+	if not cond
+		Term.println('ASSERTION FAILED: \(msg)')
+		Cnile.exit(1)
 
 
 class Failable

@@ -326,11 +326,13 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     }
                 },
 
-                .Equals => {
+                .Equals, .NotEquals => {
                     const l = try self.expr(op.l);
                     const r = try self.expr(op.r);
                     const size = self.sizeOf(op.l.t).size;
-                    return try self.boolValue(std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size)));
+                    const eqResult = std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size));
+                    const boolVal = try self.boolValue(if (op.op == .Equals) eqResult else !eqResult);
+                    return boolVal;
                 },
 
                 // these ones don't short circuit, so we can simplify our structure.
@@ -498,6 +500,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .Access => |mem| valFromRef(self.getFieldFromType(v.ref, uop.e.t, mem)),
                 .As => v,
                 .Not => try self.boolValue(!isTrue(v)),
+                .Negate => try self.intValue(-v.ref.int),
             };
         },
 

@@ -53,7 +53,11 @@ pub fn main() !void {
 
     // go and interpret
     if (errors.items.len == 0) {
+        const interpretStartTime = try std.time.Instant.now();
         const ret = try Interpreter.run(fullAST, prelude, &typeContext, opts.programArgs, aa);
+        const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
+
         std.debug.print("=== return value: {} ===\n", .{ret});
+        std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
     }
 }

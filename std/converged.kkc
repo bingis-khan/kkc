@@ -6,6 +6,7 @@ use Str2
 	lines
 	char  # oof
 	is-blank
+	parse-int
 
 use Iter
 	Range
@@ -38,6 +39,7 @@ use Error  # imports instances of failable.
 	todo
 	unreachable
 	panic
+	assert
 
 use Slice
 	Slice
