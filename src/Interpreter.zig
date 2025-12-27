@@ -803,11 +803,13 @@ fn valFromRef(ref: RawValueRef) ValueMeta {
 
 fn val(self: *const Self, v: RawValue, size: usize) !ValueMeta {
     const ref: RawValueRef = @ptrCast((try self.arena.alloc(u8, size)).ptr);
-    var sref: []u8 = undefined;
-    sref.len = size;
-    sref.ptr = @ptrCast(ref);
 
-    @memcpy(sref, @as([*]u8, @constCast(@ptrCast(&v))));
+    // NOTE: equivalent to:
+    // ref.* = value
+    // EXCEPT the thing is, RawValue has size greater than 8! Saw assigning it leads to assignment to some random memory.
+    // SO, we have to mempy it.
+    common.bytecopy(ref, &v, size);
+
     return .{
         // .header = .{ .ogPtr = null },
         .ref = ref,

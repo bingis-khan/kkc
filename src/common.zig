@@ -42,3 +42,11 @@ pub fn byteSlice(p: *anyopaque, size: usize) []const u8 {
     s.ptr = @ptrCast(p);
     return s;
 }
+
+pub fn bytecopy(dest: *anyopaque, src: *const anyopaque, count: usize) void {
+    var sref: []u8 = undefined;
+    sref.len = count;
+    sref.ptr = @ptrCast(dest);
+
+    @memcpy(sref, @as([*]const u8, @ptrCast(src)));
+}
