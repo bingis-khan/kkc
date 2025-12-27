@@ -41,7 +41,7 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
 
             const option = std.meta.stringToEnum(ProgramOption, arg[2..]) orelse {
                 // if option does not exist, pass it to the proogram
-                try progArgs.append(arg);
+                try progArgs.append(try al.dupeZ(u8, arg)); // NOTE: copy just in case, I'm not sure if its needed tho.
                 continue;
             };
 

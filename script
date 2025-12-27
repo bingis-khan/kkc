@@ -75,6 +75,3 @@ else
 				Term.println('REMOVED (\(i)): \(removed-reminder)')
 	else
 		panic('unknown option "\(option)!"')
-
-# mask memory corruption :)
-return 0

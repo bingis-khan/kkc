@@ -803,7 +803,11 @@ fn valFromRef(ref: RawValueRef) ValueMeta {
 
 fn val(self: *const Self, v: RawValue, size: usize) !ValueMeta {
     const ref: RawValueRef = @ptrCast((try self.arena.alloc(u8, size)).ptr);
-    ref.* = v;
+    var sref: []u8 = undefined;
+    sref.len = size;
+    sref.ptr = @ptrCast(ref);
+
+    @memcpy(sref, @as([*]u8, @constCast(@ptrCast(&v))));
     return .{
         // .header = .{ .ogPtr = null },
         .ref = ref,

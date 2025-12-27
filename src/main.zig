@@ -38,7 +38,7 @@ pub fn main() !void {
     const prelude = try modules.loadPrelude();
     _ = try modules.loadConverged();
 
-    _ = try modules.initialModule(opts.filename);
+    _ = try modules.initialModule(&opts.filename);
     const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
     std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
 

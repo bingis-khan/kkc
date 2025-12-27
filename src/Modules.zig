@@ -59,13 +59,13 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
     };
 }
 
+const preludePath: Str = "prelude.kkc";
 // sets defaultExports
 pub fn loadPrelude(self: *Self) !Prelude {
-    const path: Str = "prelude.kkc";
     const preludeModule = (try self.loadModule(
         .{ .ByFilename = .{
             .isSTD = true,
-            .path = path,
+            .path = &preludePath,
         } },
         .{ .printAST = self.opts.printAST, .printTokens = self.opts.printTokens },
     )) orelse unreachable;
@@ -79,12 +79,12 @@ pub fn loadPrelude(self: *Self) !Prelude {
 }
 
 // sets stdExports
+const convergedPath: Str = "converged.kkc";
 pub fn loadConverged(self: *Self) !Module {
-    const path = "converged.kkc";
     const module = try self.loadModule(
         .{ .ByFilename = .{
             .isSTD = true,
-            .path = path,
+            .path = &convergedPath,
         } },
         .{ .printAST = self.opts.printAST, .printTokens = self.opts.printTokens },
     );
@@ -92,7 +92,7 @@ pub fn loadConverged(self: *Self) !Module {
     return module.?;
 }
 
-pub fn initialModule(self: *Self, filename: Str) !Module {
+pub fn initialModule(self: *Self, filename: *const Str) !Module {
     return (try self.loadModule(
         .{ .ByFilename = .{ .isSTD = false, .path = filename } },
         .{ .printAST = self.opts.printRootAST or self.opts.printAST, .printTokens = self.opts.printRootTokens or self.opts.printTokens },
@@ -103,7 +103,7 @@ pub fn initialModule(self: *Self, filename: Str) !Module {
 // OMG I HATE THIS BRUH. IT BECAME SO COMPLICATED. FOR SOME REASON I CANT THINK ABOUT THIS STUFF??????? WTF??????
 pub fn loadModule(self: *Self, pathtype: union(enum) {
     ByModulePath: struct { base: Module.BasePath, path: Module.Path },
-    ByFilename: struct { isSTD: bool, path: Str },
+    ByFilename: struct { isSTD: bool, path: *const Str },
 }, opts: struct {
     printTokens: ?bool = null,
     printAST: ?bool = null,
@@ -136,7 +136,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
         .ByFilename => |filename| .{
             .isSTD = filename.isSTD,
-            .path = common.singleElemSlice(Str, &filename.path),
+            .path = common.singleElemSlice(Str, filename.path),
         },
     };
 
@@ -171,7 +171,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
                     try filepath.append('/');
                 }
             }
-            try filepath.appendSlice(fullpath.path);
+            try filepath.appendSlice(fullpath.path.*);
             // std.debug.print("{s}\n", .{filepath.items});
             break :b self.readSource(filepath.items) catch return error.TempError;
         },
