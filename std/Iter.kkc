@@ -1,3 +1,5 @@
+use Mem  # might be temporary - for test ListLike instance for range.
+
 class IntoIter
 	into-iter (self _) -> itershit
 
@@ -130,7 +132,6 @@ inst Iter RangeIter
 
 
 
-
 # Unbounded range
 FromIter
 	from Int
@@ -211,3 +212,41 @@ fn all(it, fun): it
 	reduce(True, fn (e, x): fun(e) and x)
 
 fn head(it): (&it into-iter()) next()
+
+
+
+inst ListLike Range
+	deconstruct (Range(rf, rt), lp, lc, spread, rp, rc)
+		count = rt - rf
+		fn set-ptr (p, i, e)
+			pp = Mem.offset-ptr(p, i)
+			pp <&= e
+
+		if lc > 0
+			if lc > count
+				return False
+
+			Range(rf, rt)
+				take(lc)
+				zip(from(0))
+				for-each(fn Tuple2(lv, i): set-ptr(lp&, i, lv))
+
+		if rc > 0
+			if rc + lc > count
+				return False
+
+			Range(rf, rt)
+				drop(count - rc + 1)
+				zip(from(0))
+				for-each(fn Tuple2(rv, i): set-ptr(rp&, i, rv))
+
+		case spread
+			NoSpread
+				return lc + rc == count
+
+			UnassignedSpread
+				return True
+
+			AssignedSpread(xptr)
+				xptr <&= Range(rf + lc, rt - rc)
+				return True

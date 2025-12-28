@@ -275,6 +275,9 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             const lptr = try self.val(.{
                 .ptr = @ptrCast(lslice.ptr),
             }, @sizeOf(*anyopaque)); // NOTE: BAD, NOT CONSULTING SIZEOF.
+            const lptrptr = try self.val(.{
+                .ptr = lptr.ref,
+            }, @sizeOf(*anyopaque));
             // defer self.arena.free(lslice); // i know it's arena rn, but I'm specifying its lifetime... or not (we copy rn, which seems incorrect.)
 
             const rsize: usize = if (listDecon.r) |r| r.r.len else 0;
@@ -283,6 +286,9 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             const rptr = try self.val(.{
                 .ptr = @ptrCast(rslice.ptr),
             }, @sizeOf(*anyopaque)); // NOTE: BAD, NOT CONSULTING SIZEOF.
+            const rptrptr = try self.val(.{
+                .ptr = rptr.ref,
+            }, @sizeOf(*anyopaque));
 
             const spreadTy = listDecon.spreadTy;
             const spreadSize = self.sizeOf(spreadTy).size;
@@ -312,10 +318,10 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
 
             var args = [_]ValueMeta{
                 valFromRef(v),
-                lptr,
+                lptrptr,
                 lsizeVal,
                 spreadVal,
-                rptr,
+                rptrptr,
                 rsizeVal,
             };
             const deconSucceeded = try self.function(instFun.fun, &args);
@@ -325,7 +331,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
 
             // var lit = valArrayIterator(lslice.ptr, elemSize);
             for (listDecon.l, 0..) |ldecon, i| {
-                const lval = valArrayGet(lslice.ptr, elemSize, i); // maybe we should just use val.offset()?
+                const lval = valArrayGet(lptrptr.ref.ptr.ptr, elemSize, i); // maybe we should just use val.offset()?
                 if (!try self.tryDeconstruct(ldecon, lval)) {
                     return false;
                 }
@@ -333,7 +339,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
 
             if (rsize > 0) {
                 for (listDecon.r.?.r, 0..) |rdecon, i| {
-                    const rval = valArrayGet(rslice.ptr, elemSize, i);
+                    const rval = valArrayGet(rptrptr.ref.ptr.ptr, elemSize, i);
                     if (!try self.tryDeconstruct(rdecon, rval)) {
                         return false;
                     }

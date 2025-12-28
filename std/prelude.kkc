@@ -56,7 +56,7 @@ ListSpread spread
 class ListLike
 	# Elem <- dependent type
 	# correct type would be (_, Slice elem, Maybe (Maybe (Ptr _), Slice elem)), but the current one is easier to call from the iterpreter.
-	deconstruct (self _, lp Ptr elem, lc Int, spread ListSpread spread, rp Ptr elem, rc Int) -> Bool
+	deconstruct (self _, lp Ptr (Ptr elem), lc Int, spread ListSpread spread, rp Ptr (Ptr elem), rc Int) -> Bool
 
 
 # this might be generated at compile time bruv. thats why im keeping it here.

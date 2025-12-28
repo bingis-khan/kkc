@@ -1269,11 +1269,14 @@ fn deconstruction(self: *Self) !*AST.Decon {
         {
             std.debug.assert(params.items.len == 6); // If this changed, the ListLike declaration might have changed.
 
-            const elemPtr = (try self.defined(.Ptr)).dataInst;
+            const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
+            const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
+            // this is to allow modification, while allowing types which don't have a stable pointer to any element.
             try self.typeContext.unify(elemPtr.tyArgs[0], elemTy);
+            try self.typeContext.unify(elemPtrPtr.tyArgs[0], elemPtr.t);
 
-            try self.typeContext.unify(params.items[1], elemPtr.t);
-            try self.typeContext.unify(params.items[4], elemPtr.t);
+            try self.typeContext.unify(params.items[1], elemPtrPtr.t);
+            try self.typeContext.unify(params.items[4], elemPtrPtr.t);
 
             const spread = (try self.defined(.ListSpread)).dataInst;
             try self.typeContext.unify(spread.tyArgs[0], spreadInnerTy);

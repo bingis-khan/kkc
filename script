@@ -5,51 +5,56 @@ use Slice
 
 al = Alloc.get-c-allocator()
 s = 1 to (10)
-	map(Just)
 	to-list(al)
 	List.to-slice()
 
 inst ListLike Slice
 	deconstruct (self, lp, lc, spread, rp, rc)
-		ls = Slice { ptr: lp, count: lc }
-		rs = Slice { ptr: rp, count: rc }
-
-		if ls.count > 0
-			if ls.count > self.count
+		if lc > 0
+			if lc > self.count
 				return False
 
-			self
-				subslice(0, ls.count)
-				Slice.copy-to (ls)
+			lp <&= self.ptr
 
-		if rs.count > 0
-			if rs.count + ls.count > self.count
+		if rc > 0
+			if rc + lc > self.count
 				return False
 
-			self
-				subslice(self.count - rs.count, self.count)
-				Slice.copy-to (rs)
+			cut = self
+				subslice(self.count - rc, self.count)
+
+			rp <&= cut.ptr
 
 		case spread
 			NoSpread
-				return ls.count + rs.count == self.count
+				return lc + rc == self.count
 
 			UnassignedSpread
 				return True
 
 			AssignedSpread(xptr)
 				xptr <&= self
-					subslice(ls.count, self.count - rs.count)
+					subslice(lc, self.count - rc)
 				return True
-case s
-	[x, None, z, ...dupa, _, _]
-		# println(miau)
-		println(x)
-		# println(y)
-		println(z)
-		println(dupa)
 
+				
+# case s
+# 	[x, ...xs]
+# 		println(x)
+# 		println(xs)
+
+# 	xs
+# 		println('not matched: \(xs)')
+
+case 5 to (10)
+	[x, y, ..., z]
+		println(x)
+		println(y)
+		println(z)
 	xs
-		println('not matched: \(xs)')
+		xs for-each(println)
+		# println('not matched: \(xs)')
+1 to (10) to-list(al) println()
+s println()
 
 al Alloc.free(s)
