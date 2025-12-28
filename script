@@ -1,81 +1,53 @@
 #!./zig-out/bin/kkc
-use Term
-use File
 use Alloc
+use List
 use Slice
-use Args
-use Env
-use StrBuilder
-use Mem
-use Str
-use Str2
-
 
 al = Alloc.get-c-allocator()
-home = Env.get('HOME') or-else('.')
-sb = StrBuilder.mk(al)
-filename = '\(home)/reminders' allocate-str(al)
-Term.println('[looking for reminders in \(filename)]')
+s = 1 to (10)
+	to-list(al)
+	List.to-slice()
 
-reminders =
-	File.read-contents(al, filename)
-	lines()
-	filter(fn s: not s is-blank())
-	zip(from(1))
+inst ListLike Slice
+	deconstruct (self, lp, lc, spread, rp, rc)
+		ls = Slice { ptr: lp, count: lc }
+		rs = Slice { ptr: rp, count: rc }
 
+		if ls.count > 0
+			if ls.count > self.count
+				return False
 
-# program control (if there are no arguments, display the whole thing.)
-args = Args.get()
+			self
+				subslice(0, ls.count)
+				Slice.copy-to (ls)
 
-if args.count == 0
-	reminders
-		for-each(fn Tuple2(r, i): Term.println('\(i). \(r)'))
+		if rs.count > 0
+			if rs.count + ls.count > self.count
+				return False
 
-else
-	option = args Slice.get(0)
+			self
+				subslice(self.count - rs.count, self.count)
+				Slice.copy-to (rs)
 
-	# normally, there should be case desonstruction!
-	if option Str.eq ('add')
-		if not (args.count == 2)
-			panic('Must have two arguments to add a reminder: add [your reminder]')
+		case spread
+			NoSpread
+				return ls.count + rs.count == self.count
 
-		content = args Slice.get(1)
+			UnassignedSpread
+				return True
 
-		if content is-blank()
-			panic('blank reminder provided...')
+			AssignedSpread(xptr)
+				xptr <&= self
+					subslice(ls.count, self.count - rs.count)
+				return True
+case s
+	[x, y, z, ...dupa, miau, miauuu]
+		println(x)
+		println(y)
+		println(z)
+		println(dupa)
 
-		builder =& StrBuilder.mk(al)
-		reminders map(fn Tuple2(r, i): r) for-each(fn r: builder StrBuilder.writeln(r))
-		builder StrBuilder.writeln(content)
-		File.write-contents(filename, builder StrBuilder.as-str())
-		Term.println(content)
+	xs
+		println('not matched: \(xs)')
 
-	elif option Str.eq ('remove') or option Str.eq ('rm')
-		if not (args.count == 2)
-			panic('Must have two arguments to remove a reminder: remove [reminder id]')
-
-		case Str2.parse-int(args Slice.get(1))
-			None
-				panic('Not a number!!!')
-			Just(i)
-				len = reminders count()
-				if i < 1 or i > len
-					panic('No reminder with this ID!')
-
-				builder =& StrBuilder.mk(al)
-
-				# demonstrating the use of closures!
-				fn try-writeln (Tuple2(elem, elem-i))
-					if not (elem-i == i)
-						builder StrBuilder.writeln(elem)
-					return
-
-				reminders
-					for-each(try-writeln)
-
-				File.write-contents(filename, builder StrBuilder.as-str())
-
-				removed-reminder = reminders drop(i - 1) head()
-				Term.println('REMOVED (\(i)): \(removed-reminder)')
-	else
-		panic('unknown option "\(option)"!')
+al Alloc.free(s)

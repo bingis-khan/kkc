@@ -45,5 +45,11 @@ use Slice
 	Slice
 	subslice
 
+use List
+	to-list
+
 use Alloc
 	Allocator
+
+use Term
+	println

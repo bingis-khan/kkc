@@ -105,6 +105,8 @@ pub fn lookupData(self: *const Self, dataName: Str) ?DataOrClass {
 
 // should be const, but stack.Fixed's iterator can return pointers. This can be fixed by using two different types.
 pub fn mkPrelude(self: *const Self) !Prelude {
+
+    // types
     var enums: [Prelude.NumPredefinedTypes]*ast.Data = .{undefined} ** Prelude.NumPredefinedTypes;
     var copy = Prelude.PremadeTypeName;
     var it = copy.iterator();
@@ -118,7 +120,23 @@ pub fn mkPrelude(self: *const Self) !Prelude {
             return error.PreludeError;
         }
     }
+
+    // classes
+    var classEnums: [Prelude.NumPredefinedClasses]*ast.Class = .{undefined} ** Prelude.NumPredefinedClasses;
+    var classNames = Prelude.PremadeClassName;
+    var cit = classNames.iterator();
+    while (cit.next()) |kv| {
+        if (self.lookupData(kv.value.*)) |dc| {
+            switch (dc) {
+                .Class => |c| classEnums[@intCast(@intFromEnum(kv.key))] = c,
+                .Data => return error.PreludeError,
+            }
+        } else {
+            return error.PreludeError;
+        }
+    }
     return .{
         .predefinedTypes = enums,
+        .predefinedClasses = classEnums,
     };
 }

@@ -36,6 +36,7 @@ fn try-read-contents (filename, al)
 	return Just(str)
 
 
+# alternate name: read-all
 fn read-contents (filename, al):
 	try-read-contents(filename, al) or-fail('could not open file \(filename)!')
 

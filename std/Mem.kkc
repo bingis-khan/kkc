@@ -1,7 +1,7 @@
 
 fn undefined(): @undefined
 fn offset-ptr(x Ptr a, count Int):
-	@offset-ptr(x, count * @size-of(@undefined as a))
+	@offset-ptr(x, count * @size-of(@undefined as a))  # Alignment is already included in size, (as padding) so move should be okay?
 
 
 TypeSize a

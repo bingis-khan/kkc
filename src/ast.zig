@@ -342,6 +342,20 @@ pub const Decon = struct {
             decons: []*Decon,
         },
         Record: []Field,
+
+        List: struct {
+            l: []Var,
+            r: ?struct {
+                spreadVar: ?struct { v: Var, t: Type },
+                r: []Var,
+            },
+
+            elemTy: Type,
+            spreadTy: Type,
+
+            // for class function "deconstruct"
+            assocRef: *?Match(Type).AssocRef,
+        },
     },
 
     pub const Field = struct {
@@ -366,6 +380,26 @@ pub const Decon = struct {
                 c.encloseSepBy(fields, ", ", "{ ", " }");
             },
             .None => c.s("_"),
+            .List => |l| {
+                if (l.r) |r| {
+                    c.print("[");
+                    c.sepBy(l.l, ", ");
+                    if (l.l.len > 0) {
+                        c.print(", ");
+                    }
+                    c.print("...");
+                    if (r.spreadVar) |v| {
+                        c.print(.{ v.v, " :: ", v.t });
+                    }
+                    if (r.r.len > 0) {
+                        c.print(", ");
+                    }
+                    c.sepBy(r.r, ", ");
+                    c.print("]");
+                } else {
+                    c.encloseSepBy(l.l, ", ", "[", "]");
+                }
+            },
         }
 
         c.typed(self.t);

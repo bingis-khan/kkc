@@ -139,3 +139,12 @@ fn top (list)
 
 fn add-all(list, it)
 	it for-each(fn x: list add(x))
+
+fn to-list(it, al)
+	l =& mk(al)
+	l add-all(it)
+	return l&
+
+fn to-slice(l)
+	ptr = l.elements.ptr
+	return Slice { ptr, count: l.count  }

@@ -248,6 +248,100 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
                 }
             }
         },
+        .List => |listDecon| {
+            // const cfun = self.prelude.definedClass(.ListLike).classFuns[0];
+            // NOTE COPYPASTA: from .Var in expr()
+            // TODO: also, we should avoid allocating and boxing here, since we're gonna call it immediately anyway.
+            //  (in the future :))
+            const instFunBoxed = switch (listDecon.assocRef.*.?) {
+                .Id => |uid| b: {
+                    const instfun = self.tymap.tryGetFunctionByID(uid).?;
+                    break :b try self.initFunction(instfun.fun, instfun.m);
+                },
+                .InstFun => |instfun| try self.initFunction(instfun.fun, instfun.m),
+            };
+
+            const instFun: *align(1) const RawValue = @ptrCast(&nunbox(instFunBoxed.ref.extptr).ptr);
+
+            // ALLOCATE DATA FOR DECONSTRUCTION.
+            // TODO: note, it gets copied!!! (unlike general deconstruction)
+            //  For slices, we can take a real pointer
+            //  but for stuff like iterators, it's impossible!
+            //  What should I do?
+            const elemSize = self.sizeOf(listDecon.elemTy).size;
+            const lsize = listDecon.l.len;
+            const lsizeVal = try self.intValue(@intCast(lsize));
+            const lslice = try self.arena.alloc(u8, lsize * elemSize);
+            const lptr = try self.val(.{
+                .ptr = @ptrCast(lslice.ptr),
+            }, @sizeOf(*anyopaque)); // NOTE: BAD, NOT CONSULTING SIZEOF.
+            // defer self.arena.free(lslice); // i know it's arena rn, but I'm specifying its lifetime... or not (we copy rn, which seems incorrect.)
+
+            const rsize: usize = if (listDecon.r) |r| r.r.len else 0;
+            const rsizeVal = try self.intValue(@intCast(rsize));
+            const rslice: []u8 = if (rsize > 0) try self.arena.alloc(u8, rsize * elemSize) else &.{};
+            const rptr = try self.val(.{
+                .ptr = @ptrCast(rslice.ptr),
+            }, @sizeOf(*anyopaque)); // NOTE: BAD, NOT CONSULTING SIZEOF.
+
+            const spreadTy = listDecon.spreadTy;
+            const spreadSize = self.sizeOf(spreadTy).size;
+            var spreadInnerVal: ?RawValueRef = null;
+            const spreadVal = if (listDecon.r) |r| b: {
+                if (r.spreadVar) |svar| {
+                    const innerSize = self.sizeOf(svar.t);
+                    const innerVal: RawValueRef = @ptrCast(try self.arena.alloc(u8, innerSize.size));
+                    spreadInnerVal = innerVal;
+
+                    // COPYPASTA: need to somehow allocate records and partially initialize them.
+                    // TODO use common values n stuff n stuff
+                    const buf = try self.arena.alloc(u8, spreadSize);
+                    var stream = std.io.fixedBufferStream(buf);
+                    const w = stream.writer();
+
+                    try w.writeInt(RawValue.Tag, 2, endianness);
+                    try pad(w, @alignOf(*anyopaque));
+                    try w.writeInt(usize, @intFromPtr(innerVal), endianness);
+
+                    const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
+                    break :b valFromRef(vptr);
+                } else {
+                    break :b try self.val(.{ .enoom = 1 }, spreadSize);
+                }
+            } else try self.val(.{ .enoom = 0 }, spreadSize);
+
+            var args = [_]ValueMeta{
+                valFromRef(v),
+                lptr,
+                lsizeVal,
+                spreadVal,
+                rptr,
+                rsizeVal,
+            };
+            const deconSucceeded = try self.function(instFun.fun, &args);
+
+            // if not matched, don't bother setting vars
+            if (!isTrue(deconSucceeded)) return false;
+
+            // var lit = valArrayIterator(lslice.ptr, elemSize);
+            for (listDecon.l, 0..) |lvar, i| {
+                const lval = valArrayGet(lslice.ptr, elemSize, i);
+                try self.putRef(lvar, lval);
+            }
+
+            if (rsize > 0) {
+                for (listDecon.r.?.r, 0..) |rvar, i| {
+                    const rval = valArrayGet(rslice.ptr, elemSize, i);
+                    try self.putRef(rvar, rval);
+                }
+            }
+
+            if (spreadInnerVal) |innerVal| {
+                try self.putRef(listDecon.r.?.spreadVar.?.v, innerVal);
+            }
+
+            return true;
+        },
         // else => unreachable,
     }
 }
@@ -496,7 +590,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .Deref => valFromRef(v.ref.ptr),
                 .Ref => try self.val(.{
                     .ptr = v.ref,
-                }, @sizeOf(RawValueRef)),
+                }, self.sizeOf(e.t).size),
                 .Access => |mem| valFromRef(self.getFieldFromType(v.ref, uop.e.t, mem)),
                 .As => v,
                 .Not => try self.boolValue(!isTrue(v)),
@@ -797,6 +891,10 @@ fn boolValue(self: *const Self, b: bool) !ValueMeta {
     return self.val(.{ .enoom = @intFromBool(b) }, @sizeOf(RawValue.Tag));
 }
 
+fn valArrayGet(ptr: *anyopaque, elemSize: usize, i: usize) RawValueRef {
+    return @ptrCast(@as([*]u8, @ptrCast(ptr)) + elemSize * i);
+}
+
 fn valFromRef(ref: RawValueRef) ValueMeta {
     return .{
         // .header = .{ .ogPtr = null },
@@ -877,6 +975,7 @@ fn calculatePadding(cur: usize, alignment: usize) usize {
 // calculates total size of the record (including tag)
 //  size includes alignment!
 //  VERY SLOW, BECAUSE IT RECALCULATES ALIGNMENT EACH TIME.
+//  BUG: works for Ints only accidentally, since i64 and ptr have the same size. FIXIT!
 const Sizes = struct { size: usize, alignment: usize };
 fn sizeOf(self: *Self, t: ast.Type) Sizes {
     switch (self.getType(t)) {

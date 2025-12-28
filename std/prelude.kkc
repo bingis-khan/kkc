@@ -46,6 +46,19 @@ Ptr a
 	Ptr a
 
 
+
+# List decostruction
+ListSpread spread
+	NoSpread
+	UnassignedSpread
+	AssignedSpread (Ptr spread)
+
+class ListLike
+	# Elem <- dependent type
+	# correct type would be (_, Slice elem, Maybe (Maybe (Ptr _), Slice elem)), but the current one is easier to call from the iterpreter.
+	deconstruct (self _, lp Ptr elem, lc Int, spread ListSpread spread, rp Ptr elem, rc Int) -> Bool
+
+
 # this might be generated at compile time bruv. thats why im keeping it here.
 # Also, instead of Tuple, Treeple, Quantuple use Tuple2, Tuple3, etc. It'll be easier to parse.
 Tuple2 a b

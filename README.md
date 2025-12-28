@@ -27,9 +27,12 @@ BUT, unifying envs is currently scuffed and I need to think more about how it sh
 ## Todo
 
 - instantiate anonymous structs. right now, they are not instantiated. to properly instantiate them, I would need to add them to scheme (so I'd have to assign an ID to an anon struct)
+  - i forgot, did I do it???
 - add another namespace for other std modules? (basically, most std modules use the same set of em, so it's kinda annoying to import basic modules.)
+- do man or boy test
 
 
 ## Bugs
 
-- release=fast breaks (some incorrect pointer stuff) - dunno why.
+- [V] release=fast breaks (some incorrect pointer stuff) - dunno why.
+  - fixed it when I ironed out value passing in interpreter and valgrinded some undefined behavior.
