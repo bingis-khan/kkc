@@ -141,3 +141,31 @@ inst Str Slice
 			print-str(']')
 
 
+inst ListLike Slice
+	deconstruct (self, lp, lc, spread, rp, rc)
+		if lc > 0
+			if lc > self.count
+				return False
+
+			lp <&= self.ptr
+
+		if rc > 0
+			if rc + lc > self.count
+				return False
+
+			cut = self
+				subslice(self.count - rc, self.count)
+
+			rp <&= cut.ptr
+
+		case spread
+			NoSpread
+				return lc + rc == self.count
+
+			UnassignedSpread
+				return True
+
+			AssignedSpread(xptr)
+				xptr <&= self
+					subslice(lc, self.count - rc)
+				return True
