@@ -344,10 +344,10 @@ pub const Decon = struct {
         Record: []Field,
 
         List: struct {
-            l: []Var,
+            l: []*Decon,
             r: ?struct {
                 spreadVar: ?struct { v: Var, t: Type },
-                r: []Var,
+                r: []*Decon,
             },
 
             elemTy: Type,

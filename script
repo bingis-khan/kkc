@@ -5,6 +5,7 @@ use Slice
 
 al = Alloc.get-c-allocator()
 s = 1 to (10)
+	map(Just)
 	to-list(al)
 	List.to-slice()
 
@@ -41,9 +42,10 @@ inst ListLike Slice
 					subslice(ls.count, self.count - rs.count)
 				return True
 case s
-	[x, y, z, ...dupa, miau, miauuu]
+	[x, None, z, ...dupa, _, _]
+		# println(miau)
 		println(x)
-		println(y)
+		# println(y)
 		println(z)
 		println(dupa)
 

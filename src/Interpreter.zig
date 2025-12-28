@@ -324,15 +324,19 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             if (!isTrue(deconSucceeded)) return false;
 
             // var lit = valArrayIterator(lslice.ptr, elemSize);
-            for (listDecon.l, 0..) |lvar, i| {
-                const lval = valArrayGet(lslice.ptr, elemSize, i);
-                try self.putRef(lvar, lval);
+            for (listDecon.l, 0..) |ldecon, i| {
+                const lval = valArrayGet(lslice.ptr, elemSize, i); // maybe we should just use val.offset()?
+                if (!try self.tryDeconstruct(ldecon, lval)) {
+                    return false;
+                }
             }
 
             if (rsize > 0) {
-                for (listDecon.r.?.r, 0..) |rvar, i| {
+                for (listDecon.r.?.r, 0..) |rdecon, i| {
                     const rval = valArrayGet(rslice.ptr, elemSize, i);
-                    try self.putRef(rvar, rval);
+                    if (!try self.tryDeconstruct(rdecon, rval)) {
+                        return false;
+                    }
                 }
             }
 

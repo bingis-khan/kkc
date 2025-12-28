@@ -1201,15 +1201,15 @@ fn deconstruction(self: *Self) !*AST.Decon {
         };
     } // record deccon
     else if (self.check(.LEFT_SQBR)) b: {
-        var left = std.ArrayList(AST.Var).init(self.arena);
-        var right = std.ArrayList(AST.Var).init(self.arena);
+        var left = std.ArrayList(*AST.Decon).init(self.arena);
+        var right = std.ArrayList(*AST.Decon).init(self.arena);
         const listTy = try self.typeContext.fresh();
         const elemTy = try self.typeContext.fresh();
         const spreadTy = try self.typeContext.fresh();
         const spreadInnerTy = try self.typeContext.fresh();
 
         // for now, parse an easy version of this.
-        var vars = &left;
+        var decons = &left;
         var spreadVar: ?AST.Var = null;
         var hadSpread = false;
         if (!self.check(.RIGHT_SQBR)) {
@@ -1226,12 +1226,11 @@ fn deconstruction(self: *Self) !*AST.Decon {
                     }
 
                     hadSpread = true;
-                    vars = &right;
+                    decons = &right;
                 } else {
-                    const vtok = try self.expect(.IDENTIFIER);
-                    const v = try self.newVar(vtok);
-                    try self.typeContext.unify(v.t, elemTy);
-                    try vars.append(v.v);
+                    const decon = try self.deconstruction();
+                    try self.typeContext.unify(decon.t, elemTy);
+                    try decons.append(decon);
                 }
 
                 if (self.check(.RIGHT_SQBR)) {
