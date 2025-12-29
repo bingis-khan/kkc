@@ -4,30 +4,25 @@ use List
 use Slice
 
 al = Alloc.get-c-allocator()
-s = 1 to (10)
+s = 1 to (3)
+	map(Just)
 	to-list(al)
 	List.to-slice()
 
 case s
-	[x, y, ...xs]
-		println(x)
+	[Just(1), None, Just(3)]
+		println('head is one')
+
+	[Just(1), y, ...xs, z]
+		# println(x)
 		println(y)
-		y <= 420
+		y <= Just(420)
 		println(y)
 		println(xs)
+		println(z)
 
 	xs
 		println('not matched: \(xs)')
 
-case 5 to (10)
-	[x, y, ..., z]
-		println(x)
-		println(y)
-		println(z)
-	xs
-		xs for-each(println)
-		# println('not matched: \(xs)')
-1 to (10) to-list(al) println()
-s println()
-
 al Alloc.free(s)
+

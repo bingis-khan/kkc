@@ -1115,6 +1115,12 @@ fn deconstruction(self: *Self) !*AST.Decon {
             .d = .{ .None = .{} },
         };
     } // ignore var
+    else if (self.consume(.INTEGER)) |numTok| b: {
+        break :b .{
+            .t = try self.definedType(.Int),
+            .d = .{ .Num = self.parseInt(numTok) },
+        };
+    } // number
     else if (self.consume(.TYPE)) |cn| b: {
         const con = bb: {
             if (self.check(.DOT)) {
@@ -1683,7 +1689,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     else if (self.consume(.INTEGER)) |i| {
         return self.allocExpr(.{
             .t = try self.definedType(.Int),
-            .e = .{ .Int = std.fmt.parseInt(i64, i.literal(self.lexer.source), 10) catch unreachable },
+            .e = .{ .Int = self.parseInt(i) },
         });
     } // var
     else if (self.consume(.STRING)) |s| {
@@ -3316,3 +3322,9 @@ const ParserError = error{
 
 // TEMP
 const Fold = *u32;
+
+// assume integer is well formed because lexer guarantees it.
+fn parseInt(self: *const Self, tok: Token) i64 {
+    std.debug.assert(tok.type == .INTEGER);
+    return std.fmt.parseInt(i64, tok.literal(self.lexer.source), 10) catch unreachable;
+}

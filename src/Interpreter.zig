@@ -199,6 +199,9 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             try self.putRef(vn, v);
             return true;
         },
+        .Num => |num| {
+            return v.int == num;
+        },
         .Record => |fields| {
             for (fields) |field| {
                 const nuv = self.getFieldFromType(v, decon.t, field.field);

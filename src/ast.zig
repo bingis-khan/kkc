@@ -336,6 +336,7 @@ pub const Decon = struct {
     t: Type,
     d: union(enum) {
         None: struct {},
+        Num: i64,
         Var: Var,
         Con: struct {
             con: *Con,
@@ -369,7 +370,9 @@ pub const Decon = struct {
 
     pub fn print(self: *const @This(), c: Ctx) void {
         switch (self.d) {
+            .None => c.s("_"),
             .Var => |v| v.print(c),
+            .Num => |num| c.print(num),
             .Con => |con| {
                 con.con.print(c);
                 if (con.decons.len > 0) {
@@ -379,7 +382,6 @@ pub const Decon = struct {
             .Record => |fields| {
                 c.encloseSepBy(fields, ", ", "{ ", " }");
             },
-            .None => c.s("_"),
             .List => |l| {
                 if (l.r) |r| {
                     c.print("[");

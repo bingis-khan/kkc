@@ -46,6 +46,12 @@ Ptr a
 	Ptr a
 
 
+# Index
+# class Gettable
+# 	# Key
+# 	# Elem
+# 	get (_, key key) -> elem
+
 
 # List decostruction
 ListSpread spread
