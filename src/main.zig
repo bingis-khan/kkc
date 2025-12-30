@@ -25,6 +25,14 @@ pub fn main() !void {
     defer arena.deinit();
     const aa = arena.allocator();
 
+    const stdRoot = std.process.getEnvVarOwned(aa, "KKC_STD") catch |e| switch (e) {
+        error.EnvironmentVariableNotFound => b: {
+            std.debug.print("KKC_STD env var not set. Defaulting to 'std/'.\n", .{});
+            break :b "std/";
+        },
+        else => return e,
+    };
+
     // PARSE ARGS
     const opts = try Args.parse(std.process.args(), aa);
 
@@ -33,7 +41,7 @@ pub fn main() !void {
 
     var errors = Errors.init(aa);
     var typeContext = try TypeContext.init(aa, &errors);
-    var modules = Modules.init(aa, &errors, &typeContext, "", &opts);
+    var modules = Modules.init(aa, &errors, &typeContext, "", stdRoot, &opts);
 
     const prelude = try modules.loadPrelude();
     _ = try modules.loadConverged();

@@ -46,11 +46,15 @@ Ptr a
 	Ptr a
 
 
+# Equality
+class Eq
+	eq (_, _) -> Bool
+
 # Index
-# class Gettable
-# 	# Key
-# 	# Elem
-# 	get (_, key key) -> elem
+class Gettable
+	# Key
+	# Elem
+	get (_, key key) -> elem
 
 
 # List decostruction

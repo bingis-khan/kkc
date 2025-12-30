@@ -40,10 +40,11 @@ stdExports: ?Module.Exports,
 prelude: ?Prelude,
 full: std.ArrayList(ast),
 rootPath: Str,
+stdPath: Str,
 gen: Gen,
 opts: *const Args,
 
-pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str, args: *const Args) Self {
+pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str, stdPath: Str, args: *const Args) Self {
     return .{
         .modules = ModuleLookup.init(al),
         .errors = errors,
@@ -53,6 +54,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
         .stdExports = null,
         .prelude = null,
         .full = std.ArrayList(ast).init(al),
+        .stdPath = stdPath,
         .rootPath = root,
         .gen = Gen.init(),
         .opts = args,
@@ -164,7 +166,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         .ByFilename => |fullpath| b: {
             var filepath = std.ArrayList(u8).init(self.al);
             if (fullpath.isSTD) {
-                try filepath.appendSlice("std/");
+                try filepath.appendSlice(self.stdPath);
             } else {
                 if (self.rootPath.len > 0) {
                     try filepath.appendSlice(self.rootPath);
@@ -239,7 +241,7 @@ fn modulePathToFilepath(self: *const Self, base: Module.BasePath) !Str {
     var sb = std.ArrayList(u8).init(self.al);
 
     if (base.isSTD) {
-        try sb.appendSlice("std/");
+        try sb.appendSlice(self.stdPath);
     } else {
         try sb.appendSlice(self.rootPath);
         try sb.append('/');

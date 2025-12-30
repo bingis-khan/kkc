@@ -17,6 +17,7 @@ CAllocator
 	CAllocator
 
 fn get-c-allocator (): CAllocator
+fn idc(): CAllocator
 
 
 inst Allocator CAllocator

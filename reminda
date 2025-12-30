@@ -1,4 +1,4 @@
-#!./zig-out/bin/kkc
+#!./zig-out/bin/kkc --hackscript
 use Term
 use File
 use Alloc
@@ -11,7 +11,7 @@ use Str
 use Str2
 
 
-al = Alloc.get-c-allocator()
+al = Alloc.idc()
 home = Env.get('HOME') or-else('.')
 sb = StrBuilder.mk(al)
 filename = '\(home)/reminders' allocate-str(al)

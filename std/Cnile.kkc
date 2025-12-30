@@ -5,7 +5,8 @@ Void
 #[ctype 'FILE']
 FILE
 
-#[dylib 'libc.so']
+# Had to change from libc.so to libc.so.6 after switching from musl to glibc
+#[dylib 'libc.so.6']
 external
 	#[cfunname 'printf']
 	printf0(format ConstStr) -> Void

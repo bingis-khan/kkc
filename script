@@ -3,26 +3,11 @@ use Alloc
 use List
 use Slice
 
-al = Alloc.get-c-allocator()
-s = 1 to (3)
-	map(Just)
-	to-list(al)
-	List.to-slice()
-
-case s
-	[Just(1), None, Just(3)]
-		println('head is one')
-
-	[Just(1), y, ...xs, z]
-		# println(x)
-		println(y)
-		y <= Just(420)
-		println(y)
-		println(xs)
-		println(z)
-
-	xs
-		println('not matched: \(xs)')
-
-al Alloc.free(s)
-
+al = Alloc.idc()
+s = 1 to (5) to-list(al) List.to-slice()
+case { x: s }
+	{ x: [x1, x2, ...xs, x4, x5] }
+		'miau' println()
+		xs println()
+	v
+		println('not matched \(v.x)')

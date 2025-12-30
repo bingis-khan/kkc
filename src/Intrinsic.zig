@@ -11,6 +11,7 @@ pub const Type = enum {
     @"size-of",
     argv,
     argc,
+    // inteq,
 };
 
 const List = [_]Self{
@@ -20,6 +21,7 @@ const List = [_]Self{
     .{ .ty = .@"size-of", .args = 1 },
     .{ .ty = .argv, .args = 0 },
     .{ .ty = .argc, .args = 0 },
+    // .{ .ty = .inteq, .args = 2 },
 };
 
 const Self = @This();
