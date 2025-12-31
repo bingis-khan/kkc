@@ -4,10 +4,23 @@ const Str = Common.Str;
 const Loc = Common.Location;
 const ast = @import("ast.zig");
 const Module = @import("Module.zig");
+const token = @import("token.zig");
+const Token = token.Token;
+const TokenType = token.TokenType;
 const parser = @import("parser.zig");
 
 pub const Error = union(enum) {
     IncorrectIndent: struct {},
+
+    UnexpectedToken: struct {
+        got: Token,
+        expected: TokenType,
+    },
+
+    UnexpectedThing: struct {
+        expected: Str,
+        at: Token,
+    },
 
     UndefinedVariable: struct {
         varname: ast.Var,
@@ -137,6 +150,8 @@ pub const Error = union(enum) {
     pub fn print(self: @This(), c: ast.Ctx) void {
         switch (self) {
             .IncorrectIndent => p("incorrect indent", .{}),
+            .UnexpectedToken => |e| p("expected {}, but got {}", .{ e.expected, e.got }),
+            .UnexpectedThing => |e| p("expect {s} at {}", .{ e.expected, e.at }),
             .UndefinedVariable => |uv| p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to }),
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
             .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),

@@ -387,6 +387,28 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
 }
 
 fn statement(self: *Self) ParserError!?*AST.Stmt {
+    return self.statement_() catch |e| switch (e) {
+        error.ParseError => {
+            // maybe extract it to a new function.
+            // sync to end of line (naive n simple)
+            while (!self.isEndStmt() and self.peek().type != .INDENT) {
+                self.skip();
+            }
+
+            // what to do in case of suddent indent??
+            // maybe nothing? like, handle all indenting statemenets separately (if, case, etc.)
+
+            switch (self.mode) {
+                .Normal => try self.endStmt(),
+                .CountIndent => try self.finishFold(.Normal),
+            }
+            return null;
+        },
+        else => return e,
+    };
+}
+
+fn statement_(self: *Self) ParserError!?*AST.Stmt {
     if (self.returned == .Returned) {
         try self.reportError(.{ .UnreachableCode = .{} });
         self.returned = .Errored;
@@ -506,7 +528,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                                         }
                                     }
                                 } else {
-                                    return self.err(*AST.Stmt, "Expect imported stuff", .{});
+                                    return try self.errorExpect("imported stuff");
                                 }
 
                                 if (self.check(.RIGHT_PAREN)) break;
@@ -514,7 +536,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                             };
                         }
                     } else {
-                        return self.err(*AST.Stmt, "Expect import", .{});
+                        return try self.errorExpect("import");
                     }
 
                     if (self.check(.DEDENT)) break;
@@ -823,7 +845,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 } else {
                     // error that instance function is not found.
                     // TODO: I might need to add a placeholder function (based on the class declaration), which is a lot of work, so whatever.
-                    try self.err(void, "TEMP ERROR: could not find instance function {s}", .{fun.name.name});
+                    try self.errorExpect("could not find instance of function (IMPLEMENT THIS PART BRUH!!)");
                     unreachable;
                 }
 
@@ -997,7 +1019,7 @@ fn endStmt(self: *Self) !void {
 
 fn isEndStmt(self: *Self) bool {
     const tt = self.peek().type;
-    return tt == .DEDENT or tt == .STMT_SEP;
+    return tt == .DEDENT or tt == .STMT_SEP or tt == .EOF; // NOTE: check for EOF just in case!
 }
 
 fn consumeSeps(self: *Self) void {
@@ -1315,7 +1337,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
         //
     } // arr decon [...]
     else {
-        return self.err(*AST.Decon, "Expect decon", .{});
+        return try self.errorExpect("decon");
     };
 
     return try Common.allocOne(self.arena, decon);
@@ -1715,7 +1737,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         return self.allocExpr(.{ .e = .{ .AnonymousRecord = definitions }, .t = t });
     } // anonymous struct.
     else {
-        return self.err(*AST.Expr, "Unexpected term", .{});
+        return try self.errorExpect("term");
     }
 }
 
@@ -1758,7 +1780,7 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
                 .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
             });
         } else {
-            return self.err(*AST.Expr, "Unfinished module shit.\n", .{});
+            return try self.errorExpect("rest of qualification");
         }
     }
 }
@@ -2196,7 +2218,7 @@ const Type = struct {
 
             return try self.typeContext.newType(.{ .Anon = fields.items });
         } else {
-            return try self.err(AST.Type, "Expect type", .{});
+            try self.errorExpect("type");
         }
         unreachable;
     }
@@ -3217,7 +3239,10 @@ fn finishFold(self: *Self, mode: ParsingMode) !void {
 }
 
 fn expect(self: *Self, tt: TokenType) !Token {
-    return self.consume(tt) orelse return self.err(Token, "Expect {}", .{tt});
+    return self.consume(tt) orelse try self.parseError(.{ .UnexpectedToken = .{
+        .got = self.currentToken,
+        .expected = tt,
+    } });
 }
 
 fn devour(self: *Self, tt: TokenType) !void {
@@ -3304,11 +3329,22 @@ fn loadLexingState(self: *Self, state: LexingState) void {
 }
 
 // NOTE: later, we don't have to specify a return value. Just always follow it with "return unreachable".
-fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
-    std.debug.print(fmt ++ " at {} ({s})\n", args ++ .{ self.currentToken, self.name });
-    std.debug.print("{s}\n", .{self.lexer.source[self.currentToken.from -% 5 .. @min(self.lexer.source.len, self.currentToken.to +% 5)]});
+fn errorExpect(self: *Self, exp: Str) !noreturn {
+    try self.parseError(.{ .UnexpectedThing = .{
+        .at = self.currentToken,
+        .expected = exp,
+    } });
+}
+fn parseError(self: *Self, err: Error) !noreturn {
+    try self.reportError(err);
     return error.ParseError;
 }
+
+// fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !t {
+//     std.debug.print(fmt ++ " at {} ({s})\n", args ++ .{ self.currentToken, self.name });
+//     std.debug.print("{s}\n", .{self.lexer.source[self.currentToken.from -% 5 .. @min(self.lexer.source.len, self.currentToken.to +% 5)]});
+//     return error.ParseError;
+// }
 
 // this might be in the tokenizer.
 fn sync_to_next_toplevel() void {}
