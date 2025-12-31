@@ -1,4 +1,5 @@
 #!./zig-out/bin/kkc
+Just(1) or-else(2)
 
 if True
 	if True

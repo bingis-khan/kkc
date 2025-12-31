@@ -1,4 +1,4 @@
-#!./zig-out/bin/kkc --hackscript
+#!./zig-out/bin/kkc
 use Term
 use File
 use Alloc

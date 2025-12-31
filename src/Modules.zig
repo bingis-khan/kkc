@@ -210,10 +210,9 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         try parser.addExports(xports);
     }
 
-    // TEMP
-    // if (!fullPath.isSTD) {
-    //     try parser.addExports(&self.stdExports.?);
-    // }
+    if (!fullPath.isSTD) {
+        try parser.addExports(&self.stdExports.?);
+    }
 
     const module = try parser.parse();
     try self.full.append(module.ast);
