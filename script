@@ -1,13 +1,5 @@
 #!./zig-out/bin/kkc
-use Alloc
-use List
-use Slice
 
-al = Alloc.idc()
-s = 1 to (5) to-list(al) List.to-slice()
-case { x: s }
-	{ x: [x1, x2, ...xs, x4, x5] }
-		'miau' println()
-		xs println()
-	v
-		println('not matched \(v.x)')
+if True
+	if True
+		pass

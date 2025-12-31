@@ -27,6 +27,10 @@ pub fn Fixed(comptime t: type, comptime sz: usize) type {
             return s.mem[s.current - 1];
         }
 
+        pub fn peek(s: *const Self) t {
+            return s.mem[s.current - 2];
+        }
+
         pub fn topp(s: *Self) *t {
             return &s.mem[s.current - 1];
         }

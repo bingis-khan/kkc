@@ -10,6 +10,8 @@ printRootTokens: bool = false,
 printAST: bool = false,
 printRootAST: bool = false,
 printExports: bool = false,
+noImplicitPrelude: bool = false,
+dontRun: bool = false,
 programArgs: []Arg = &.{},
 
 pub const Arg = [*:0]const u8;
@@ -52,6 +54,8 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
                 .exports => opts.printExports = true,
                 .@"!tokens" => opts.printRootTokens = true,
                 .@"!ast" => opts.printRootAST = true,
+                .noimplicit => opts.noImplicitPrelude = true,
+                .dontRun => opts.dontRun = true,
             }
         } else {
             if (filename == null) {
@@ -80,4 +84,6 @@ const ProgramOption = enum {
     exports,
     @"!tokens",
     @"!ast",
+    noimplicit,
+    dontRun,
 };

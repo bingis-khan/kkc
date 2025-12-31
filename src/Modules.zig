@@ -126,7 +126,10 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
             if (self.modules.get(fullPath)) |module| {
                 if (module == null) {
-                    try self.errors.append(.{ .CircularModuleReference = .{} });
+                    try self.errors.append(.{
+                        .err = .{ .CircularModuleReference = .{} },
+                        .module = "<TODO>",
+                    });
                     return null;
                 }
 
@@ -150,7 +153,10 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
                 if (self.modules.get(fullPath)) |module| {
                     if (module == null) {
-                        try self.errors.append(.{ .CircularModuleReference = .{} });
+                        try self.errors.append(.{
+                            .err = .{ .CircularModuleReference = .{} },
+                            .module = "<TODO>",
+                        });
                         return null;
                     }
 
@@ -181,18 +187,19 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
     try self.modules.put(fullPath, null);
 
-    const lexer = Lexer.init(source);
+    const moduleName = fullPath.path[fullPath.path.len - 1];
+    const lexer = Lexer.init(source, moduleName, self.errors);
 
     if (opts.printTokens orelse self.opts.printTokens) {
         std.debug.print("TOKENS OF {s}\n", .{fullPath.path[fullPath.path.len - 1]});
         var l = lexer;
+        l.errors = null; // disable errors
         while (!l.finished()) {
             const tok = l.nextToken();
             std.debug.print("{}\n", .{tok});
         }
     }
 
-    const moduleName = fullPath.path[fullPath.path.len - 1];
     const modBasePath: Module.BasePath = switch (pathtype) {
         .ByModulePath => |modpath| modpath.base,
         .ByFilename => |filename| .{ .isSTD = filename.isSTD, .path = &.{} },
@@ -203,9 +210,10 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         try parser.addExports(xports);
     }
 
-    if (!fullPath.isSTD) {
-        try parser.addExports(&self.stdExports.?);
-    }
+    // TEMP
+    // if (!fullPath.isSTD) {
+    //     try parser.addExports(&self.stdExports.?);
+    // }
 
     const module = try parser.parse();
     try self.full.append(module.ast);

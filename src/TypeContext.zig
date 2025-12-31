@@ -4,6 +4,7 @@ const UniqueGen = @import("UniqueGen.zig");
 const Unique = UniqueGen.Unique;
 const @"error" = @import("error.zig");
 const Errors = @"error".Errors;
+const Error = @"error".Error;
 const common = @import("common.zig");
 const Str = common.Str;
 const Set = @import("Set.zig").Set;
@@ -190,7 +191,7 @@ fn matchFields(self: *Self, rec1: struct { t: ast.Type, fields: []ast.Record }, 
                 break;
             }
         } else {
-            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = rec1.t, .field = f2.field } });
+            try self.reportError(.{ .TypeDoesNotHaveField = .{ .t = rec1.t, .field = f2.field } });
         }
     }
 
@@ -203,7 +204,7 @@ fn matchFields(self: *Self, rec1: struct { t: ast.Type, fields: []ast.Record }, 
                 break;
             }
         } else {
-            try self.errors.append(.{ .TypeDoesNotHaveField = .{ .t = rec2.t, .field = f1.field } });
+            try self.reportError(.{ .TypeDoesNotHaveField = .{ .t = rec2.t, .field = f1.field } });
         }
     }
 }
@@ -223,7 +224,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
                     return rec.t;
                 }
             } else {
-                try self.errors.append(.{ .TypeDoesNotHaveField = .{
+                try self.reportError(.{ .TypeDoesNotHaveField = .{
                     .t = t,
                     .field = mem,
                 } });
@@ -236,7 +237,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
                     return f.t;
                 }
             } else {
-                try self.errors.append(.{ .TypeDoesNotHaveField = .{
+                try self.reportError(.{ .TypeDoesNotHaveField = .{
                     .t = t,
                     .field = mem,
                 } });
@@ -267,7 +268,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
             const data = con.type;
             switch (data.stuff) {
                 .cons => {
-                    try self.errors.append(.{ .TypeIsNotARecord = .{ .t = t, .field = mem } });
+                    try self.reportError(.{ .TypeIsNotARecord = .{ .t = t, .field = mem } });
                     return try self.fresh();
                 },
                 .recs => |recs| {
@@ -277,7 +278,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
                         }
                     } else {
                         // TODO: Better error bruh. Happens when this datatype does not have this field.
-                        try self.errors.append(.{ .MissingField = .{ .field = mem } });
+                        try self.reportError(.{ .MissingField = .{ .field = mem } });
                         return try self.fresh();
                     }
                 },
@@ -365,15 +366,15 @@ pub fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef) !void {
 }
 
 fn errMismatch(self: *Self, lt: TyRef, rt: TyRef) !void {
-    try self.errors.append(.{ .MismatchingTypes = .{ .lt = lt, .rt = rt } });
+    try self.reportError(.{ .MismatchingTypes = .{ .lt = lt, .rt = rt } });
 }
 
 fn envMismatch(self: *Self, lenv: ast.Env, renv: ast.Env) !void {
-    try self.errors.append(.{ .MismatchingEnv = .{ .le = lenv, .re = renv } });
+    try self.reportError(.{ .MismatchingEnv = .{ .le = lenv, .re = renv } });
 }
 
 fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize) !void {
-    try self.errors.append(.{ .MismatchingParamLen = .{ .lpl = lpl, .rpl = rpl } });
+    try self.reportError(.{ .MismatchingParamLen = .{ .lpl = lpl, .rpl = rpl } });
 }
 
 // TODO: ignoring allocation failures to keep method signature. figure out a way to do a performant occurs check
@@ -385,7 +386,7 @@ fn setType(self: *Self, tref: TyRef, tdest: TyRef) void {
     // self.ftvs(&curftvs, tdest) catch unreachable; // ALLOCATION FAILURE BRUH. (i dont care now, current occurs check is kinda crap and slow)
     // const tyv = self.getType(tref).TyVar;
     // if (curftvs.contains(tref, tyv)) {
-    //     // self.errors.append(.{ .RecursiveType = .{
+    //     // self.reportError(.{ .RecursiveType = .{
     //     //     .tyv = tyv,
     //     //     .in = tdest,
     //     // } }) catch unreachable;
@@ -632,6 +633,10 @@ fn mapEnv(self: *Self, match: *const ast.Match(ast.Type), envref: ast.EnvRef) !a
 
         // try self.newEnv(null); // IMPORTANT: must instantiate new env..
     };
+}
+
+fn reportError(self: *const Self, ierr: Error) !void {
+    try self.errors.append(.{ .err = ierr, .module = "<TODO>" });
 }
 
 // copied from parser.zig until I solve how I should report errors (probably an Errors struct that can be passed down to various components.)

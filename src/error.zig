@@ -7,6 +7,8 @@ const Module = @import("Module.zig");
 const parser = @import("parser.zig");
 
 pub const Error = union(enum) {
+    IncorrectIndent: struct {},
+
     UndefinedVariable: struct {
         varname: ast.Var,
         loc: Loc,
@@ -134,6 +136,7 @@ pub const Error = union(enum) {
     }
     pub fn print(self: @This(), c: ast.Ctx) void {
         switch (self) {
+            .IncorrectIndent => p("incorrect indent", .{}),
             .UndefinedVariable => |uv| p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to }),
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
             .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),
@@ -213,4 +216,4 @@ pub const Error = union(enum) {
     }
 };
 
-pub const Errors = std.ArrayList(Error);
+pub const Errors = std.ArrayList(struct { module: Str, err: Error });

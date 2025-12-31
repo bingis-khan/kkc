@@ -5,11 +5,16 @@ const std = @import("std");
 const Common = @import("common.zig");
 const Str = Common.Str;
 const stack = @import("stack.zig");
+const @"error" = @import("error.zig");
+const Errors = @"error".Errors;
+const Error = @"error".Error;
+
 pub const Lexer = struct {
     source: Str,
+    errors: ?*Errors,
     indentStack: IndentStack,
-
     currentIndex: usize,
+    moduleName: Str,
 
     // number when no token on a line has been generated.
     // nil when it's already done something.
@@ -18,12 +23,14 @@ pub const Lexer = struct {
     const IndentStack = stack.Fixed(usize, Common.MaxIndent);
     const Self = @This();
 
-    pub fn init(src: Str) Self {
+    pub fn init(src: Str, moduleName: Str, errors: ?*Errors) Self {
         var self = Self{
             .source = src,
             .currentIndex = 0,
             .indentStack = IndentStack.init(),
             .lineBeginOffset = undefined,
+            .errors = errors,
+            .moduleName = moduleName,
         };
         self.indentStack.push(0);
         self.skipWhitespace();
@@ -33,7 +40,6 @@ pub const Lexer = struct {
 
     pub fn nextToken(self: *Self) Token {
         if (self.isAtEnd()) {
-
             // remember to match dedents at the end.
             if (self.indentStack.top() > 0) {
                 _ = self.indentStack.pop();
@@ -48,8 +54,14 @@ pub const Lexer = struct {
             const off = self.currentIndex - self.lineBeginOffset;
             const currentIndent = self.indentStack.top();
             if (off < currentIndent) {
-                _ = self.indentStack.pop();
-                return Token{ .type = .DEDENT, .from = self.lineBeginOffset, .to = self.currentIndex };
+                // SLIGHT copypasta!
+                if (off <= self.indentStack.peek()) {
+                    _ = self.indentStack.pop();
+                    return Token{ .type = .DEDENT, .from = self.lineBeginOffset, .to = self.currentIndex };
+                } else {
+                    // TODO: REPORT
+                    // NOTE: NOT REALLY, DON'T KNOW IF HERE IS BETTER OR AT THE END.
+                }
             }
         }
 
@@ -187,9 +199,9 @@ pub const Lexer = struct {
             },
 
             '_' => .UNDERSCORE,
-            else => {
+            else => b: {
                 std.debug.print("Weird ass char '{}' at {s}\n", .{ nc, self.source[self.currentIndex - 5 .. self.currentIndex + 5] });
-                unreachable; // TODO: ERROR.
+                break :b .ERROR;
             },
         };
         const to = self.currentIndex;
@@ -211,8 +223,17 @@ pub const Lexer = struct {
                 self.indentStack.push(off);
                 return Token{ .type = .INDENT, .from = to, .to = self.currentIndex };
             } else if (off < currentIndent) {
-                _ = self.indentStack.pop();
-                return Token{ .type = .DEDENT, .from = to, .to = self.currentIndex };
+                // check if the indent is incorrect
+                // eg.
+                // if ...
+                //    stmt1
+                //   stmt2  <- report error for this one
+                if (off <= self.indentStack.peek()) {
+                    _ = self.indentStack.pop();
+                    return Token{ .type = .DEDENT, .from = to, .to = self.currentIndex };
+                } else {
+                    self.reportError(.{ .IncorrectIndent = .{} });
+                }
             }
         }
 
@@ -290,6 +311,16 @@ pub const Lexer = struct {
     fn skipLine(self: *Self) void {
         while (!self.isAtEnd() and self.curChar() != '\n') {
             _ = self.nextChar();
+        }
+    }
+
+    fn reportError(self: *const Self, err: Error) void {
+        if (self.errors) |errors| {
+            errors.append(.{ .err = err, .module = self.moduleName }) catch {
+                // I LITERALLY DON'T CARE OMGGGGGG.
+                // ITS NOT EVEN THAT IMPORTANT.
+                std.debug.print("LEXER: FAILED TO APPEND ERROR, BUT IDC\n", .{});
+            };
         }
     }
 };

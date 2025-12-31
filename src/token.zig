@@ -87,4 +87,7 @@ pub const TokenType = enum {
     RIGHT_SQBR,
 
     EOF,
+
+    ERROR,
+    INCORRECT_INDENT, // should not cause parsing to fail! just report.
 };

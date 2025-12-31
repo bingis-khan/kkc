@@ -116,7 +116,7 @@ pub fn parse(self: *Self) !Module {
     try self.solveAvailableConstraints();
 
     if (self.associations.items.len > 0) {
-        try self.errors.append(.{ .ConstraintsLeft = .{
+        try self.reportError(.{ .ConstraintsLeft = .{
             .module = self.name,
             .constraints = self.associations.items,
         } });
@@ -239,7 +239,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
         }
 
         if (cons.items.len > 0 and recs.items.len > 0) {
-            try self.errors.append(.{ .RecordsAndConstructorsPresent = .{} });
+            try self.reportError(.{ .RecordsAndConstructorsPresent = .{} });
         }
 
         if (cons.items.len > 0) {
@@ -334,7 +334,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
             }
 
             // otherwise
-            try self.errors.append(.{ .MissingReturn = .{} });
+            try self.reportError(.{ .MissingReturn = .{} });
         }
 
         self.returnType = oldReturnType;
@@ -388,7 +388,7 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
 
 fn statement(self: *Self) ParserError!?*AST.Stmt {
     if (self.returned == .Returned) {
-        try self.errors.append(.{ .UnreachableCode = .{} });
+        try self.reportError(.{ .UnreachableCode = .{} });
         self.returned = .Errored;
     }
 
@@ -450,7 +450,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                             if (mod.lookupVar(varName)) |vv| {
                                 try self.scope.currentScope().vars.put(varName, vv);
                             } else {
-                                try self.errors.append(.{ .ModuleDoesNotExportThing = .{} });
+                                try self.reportError(.{ .ModuleDoesNotExportThing = .{} });
                             }
                         }
                     } else if (self.consume(.TYPE)) |tt| {
@@ -459,7 +459,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                         const dataOrClass: ?Module.DataOrClass = bb: {
                             if (mmodule) |mod| {
                                 const doc = mod.lookupData(typeName) orelse {
-                                    try self.errors.append(.{ .UndefinedType = .{ .typename = typeName, .loc = tt.toLocation(self.lexer.source) } });
+                                    try self.reportError(.{ .UndefinedType = .{ .typename = typeName, .loc = tt.toLocation(self.lexer.source) } });
                                     break :bb null;
                                 };
                                 try self.scope.currentScope().types.put(typeName, doc);
@@ -482,10 +482,10 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                                                         break;
                                                     }
                                                 } else {
-                                                    try self.errors.append(.{ .ClassDoesNotExportThing = .{} });
+                                                    try self.reportError(.{ .ClassDoesNotExportThing = .{} });
                                                 }
                                             },
-                                            .Data => try self.errors.append(.{ .ModuleDoesNotExportThing = .{} }),
+                                            .Data => try self.reportError(.{ .ModuleDoesNotExportThing = .{} }),
                                         }
                                     }
                                 } else if (self.consume(.TYPE)) |ct| {
@@ -499,10 +499,10 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                                                         break;
                                                     }
                                                 } else {
-                                                    try self.errors.append(.{ .DataDoesNotExportThing = .{} });
+                                                    try self.reportError(.{ .DataDoesNotExportThing = .{} });
                                                 }
                                             },
-                                            .Class => try self.errors.append(.{ .ModuleDoesNotExportThing = .{} }),
+                                            .Class => try self.reportError(.{ .ModuleDoesNotExportThing = .{} }),
                                         }
                                     }
                                 } else {
@@ -557,7 +557,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 const vv = switch (vtsc.vorf) {
                     .Var => |vt| vt,
                     else => bb: {
-                        try self.errors.append(.{ .TryingToMutateNonVar = .{} });
+                        try self.reportError(.{ .TryingToMutateNonVar = .{} });
                         break :bb try self.newVar(v);
                     },
                 };
@@ -573,7 +573,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 const vv = switch (vtsc.vorf) {
                     .Var => |vt| vt,
                     else => bb: {
-                        try self.errors.append(.{ .TryingToMutateNonVar = .{} });
+                        try self.reportError(.{ .TryingToMutateNonVar = .{} });
                         break :bb try self.newVar(v);
                     },
                 };
@@ -610,7 +610,7 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
 
                 // TEMP
                 // if (vtsc.sc != self.scope.currentScope()) {
-                //     try self.errors.append(.{ .CannotDirectlyMutateVarFromEnv = .{} });
+                //     try self.reportError(.{ .CannotDirectlyMutateVarFromEnv = .{} });
                 // }
 
                 try self.finishFold(pm);
@@ -1078,7 +1078,7 @@ fn constraints(self: *Self) !Constraints {
                         const tvarName = tvt.literal(self.lexer.source);
                         const tvar = self.scope.currentScope().tvars.get(tvarName) orelse {
                             // NOTE: we're looking only at current scope, so we won't find any named tvars from other functions.
-                            try self.errors.append(.{ .ConstrainedNonExistentTVar = .{ .tvname = tvarName } });
+                            try self.reportError(.{ .ConstrainedNonExistentTVar = .{ .tvname = tvarName } });
                             break :b;
                         };
 
@@ -1089,7 +1089,7 @@ fn constraints(self: *Self) !Constraints {
                     .Data => unreachable,
                 }
             } else {
-                try self.errors.append(.{ .UndefinedClass = .{
+                try self.reportError(.{ .UndefinedClass = .{
                     .className = classTok.literal(self.lexer.source),
                 } });
             }
@@ -1785,7 +1785,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
                                 }
                             } else {
                                 //missing field
-                                try self.errors.append(.{ .MissingField = .{ .field = dataField.field } });
+                                try self.reportError(.{ .MissingField = .{ .field = dataField.field } });
                             }
                         }
 
@@ -1797,7 +1797,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
                         } });
                     },
                     .cons => {
-                        try self.errors.append(.{ .DataIsNotARecord = .{ .data = data } });
+                        try self.reportError(.{ .DataIsNotARecord = .{ .data = data } });
                         // fallthrough to return placeholder.
                     },
                 }
@@ -1845,7 +1845,7 @@ fn someRecordDefinition(self: *Self) ![]AST.Expr.Field {
         // check for duplication.
         for (definitions.items) |field| {
             if (Common.streq(field.field, fieldName)) {
-                try self.errors.append(.{
+                try self.reportError(.{
                     .DuplicateField = .{ .field = fieldName },
                 });
                 break;
@@ -1889,7 +1889,7 @@ fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, loc: C
         if (self.maybeLookupType(name)) |dataOrClass| {
             return dataOrClass;
         } else {
-            try self.errors.append(.{ .UndefinedType = .{
+            try self.reportError(.{ .UndefinedType = .{
                 .typename = name,
                 .loc = loc,
             } });
@@ -1901,7 +1901,7 @@ fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, loc: C
                 if (mod.lookupData(name)) |data| {
                     return data;
                 } else {
-                    try self.errors.append(.{
+                    try self.reportError(.{
                         .UndefinedType = .{
                             .typename = name,
                             .loc = loc,
@@ -1915,7 +1915,7 @@ fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, loc: C
                 unreachable;
             }
         } else {
-            try self.errors.append(.{ .UnimportedModule = .{} });
+            try self.reportError(.{ .UnimportedModule = .{} });
             return null;
         }
     }
@@ -2163,7 +2163,7 @@ const Type = struct {
         if (self.consume(.TYPE)) |ty| {
             const ity = try self.qualifiedType(ty);
             if (ity.tyArgs.len != 0) {
-                try self.errors.append(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
+                try self.reportError(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
             }
             return ity.t;
         } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
@@ -2262,7 +2262,7 @@ const Type = struct {
                 // only Unit tuple is supported.
                 return try self.definedType(.Unit);
             } else { // this LOOKS like a tuple, but we don't support tuples yet!
-                try self.errors.append(.{ .TuplesNotYetSupported = .{} });
+                try self.reportError(.{ .TuplesNotYetSupported = .{} });
                 return self.typeContext.fresh();
             }
         } else if (self.consume(.IDENTIFIER)) |tv| {
@@ -2363,7 +2363,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
                 unreachable; // TEMP. I JUST NEED TO SEE WHEN THAT HAPPENS.
             }
         } else {
-            try self.errors.append(.{ .UnimportedModule = .{} });
+            try self.reportError(.{ .UnimportedModule = .{} });
         }
     }
 
@@ -2371,7 +2371,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
         .name = varName,
         .uid = self.gen.vars.newUnique(),
     };
-    try self.errors.append(.{
+    try self.reportError(.{
         .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
             .from = varTok.from,
             .to = varTok.to,
@@ -2588,7 +2588,7 @@ fn solveAvailableConstraints(self: *Self) !void {
                         i -%= 1; // make sure to adjust index.
                     } else {
                         // error
-                        try self.errors.append(.{ .CouldNotFindInstanceForType = .{
+                        try self.reportError(.{ .CouldNotFindInstanceForType = .{
                             .data = con.type,
                             .class = assoc.classFun.class,
                             .possibilities = assoc.instances,
@@ -2618,7 +2618,7 @@ fn solveAvailableConstraints(self: *Self) !void {
 
                     // assoc.ref.* = null;
                     // _ = self.associations.orderedRemove(i);
-                    // try self.errors.append(.{ .TVarDoesNotImplementClass = .{ .tv = tv, .class = targetClass } });
+                    // try self.reportError(.{ .TVarDoesNotImplementClass = .{ .tv = tv, .class = targetClass } });
                     // NOTE: don't assign to hadChanges, because this doesn't impact anything.
                 },
                 .TyVar => {},
@@ -2722,7 +2722,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         .scheme = AST.Scheme.empty(),
         .annotations = &.{},
     });
-    try self.errors.append(.{
+    try self.reportError(.{
         .UndefinedType = .{ .typename = typename, .loc = location },
     });
 
@@ -2773,7 +2773,7 @@ fn lookupTVar(self: *Self, tvTok: Token, binding: ?AST.TVar.Binding) !AST.TVar {
     } else {
         // create a new var then.
         if (binding == null) {
-            try self.errors.append(.{ .UndefinedTVar = .{
+            try self.reportError(.{ .UndefinedTVar = .{
                 .tvname = tvname,
                 .loc = .{
                     .from = tvTok.from,
@@ -2815,7 +2815,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
                 .tagValue = 0,
             };
             data.scheme = AST.Scheme.empty();
-            try self.errors.append(.{
+            try self.reportError(.{
                 .UndefinedCon = .{ .conname = conName, .loc = .{
                     .from = conTok.from,
                     .to = conTok.to,
@@ -3007,7 +3007,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         }
 
                         // here, it's "bruh"
-                        try self.errors.append(.{ .TVarDoesNotImplementClass = .{ .class = assocClass, .tv = assocTV } });
+                        try self.reportError(.{ .TVarDoesNotImplementClass = .{ .class = assocClass, .tv = assocTV } });
                     }
 
                     // mkae sure to check it's actually bound to a function.
@@ -3251,6 +3251,7 @@ fn consume(self: *Self, tt: TokenType) ?Token {
     switch (self.mode) {
         .Normal => {},
         .CountIndent => |*ind| while (tok.isWhitespace()) {
+            // TODO: COPYPASTA!
             if (tok.type == .STMT_SEP and ind.* == 0) break;
             if (tok.type == .INDENT) ind.* += 1;
             if (tok.type == .DEDENT) {
@@ -3327,4 +3328,8 @@ const Fold = *u32;
 fn parseInt(self: *const Self, tok: Token) i64 {
     std.debug.assert(tok.type == .INTEGER);
     return std.fmt.parseInt(i64, tok.literal(self.lexer.source), 10) catch unreachable;
+}
+
+fn reportError(self: *const Self, ierr: Error) !void {
+    try self.errors.append(.{ .err = ierr, .module = self.name });
 }

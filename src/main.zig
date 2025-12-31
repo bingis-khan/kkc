@@ -56,11 +56,12 @@ pub fn main() !void {
     const fakeHackCtx = ast.Ctx.init(&fakeNewline, &typeContext);
     fakeNewline = false; // SIKE (but obv. temporary)
     for (errors.items) |err| {
-        err.print(fakeHackCtx);
+        fakeHackCtx.print(.{ err.module, ": " });
+        err.err.print(fakeHackCtx);
     }
 
     // go and interpret
-    if (errors.items.len == 0) {
+    if (errors.items.len == 0 and !opts.dontRun) {
         const interpretStartTime = try std.time.Instant.now();
         const ret = try Interpreter.run(fullAST, prelude, &typeContext, opts.programArgs, aa);
         const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
