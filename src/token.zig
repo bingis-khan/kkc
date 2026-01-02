@@ -4,6 +4,7 @@ pub const Token = struct {
     type: TokenType,
     from: usize,
     to: usize,
+    line: usize,
 
     const Self = @This();
     pub fn literal(self: Self, src: Str) Str {
@@ -11,7 +12,12 @@ pub const Token = struct {
     }
 
     pub fn toLocation(self: Self, src: Str) common.Location {
-        return .{ .from = self.from, .to = self.to, .source = src };
+        return .{
+            .from = self.from,
+            .to = self.to,
+            .source = src,
+            .line = self.line,
+        };
     }
 
     pub fn isWhitespace(self: *const Self) bool {

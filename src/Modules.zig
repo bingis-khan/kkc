@@ -128,7 +128,10 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
                 if (module == null) {
                     try self.errors.append(.{
                         .err = .{ .CircularModuleReference = .{} },
-                        .module = "<TODO>",
+                        .module = .{
+                            .name = "<TODO>",
+                            .source = "<TODO>",
+                        },
                     });
                     return null;
                 }
@@ -155,7 +158,10 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
                     if (module == null) {
                         try self.errors.append(.{
                             .err = .{ .CircularModuleReference = .{} },
-                            .module = "<TODO>",
+                            .module = .{
+                                .name = "<TODO>",
+                                .source = "<TODO>",
+                            },
                         });
                         return null;
                     }

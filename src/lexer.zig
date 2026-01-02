@@ -19,6 +19,7 @@ pub const Lexer = struct {
     // number when no token on a line has been generated.
     // nil when it's already done something.
     lineBeginOffset: usize,
+    line: usize,
 
     const IndentStack = stack.Fixed(usize, Common.MaxIndent);
     const Self = @This();
@@ -31,6 +32,7 @@ pub const Lexer = struct {
             .lineBeginOffset = undefined,
             .errors = errors,
             .moduleName = moduleName,
+            .line = 1,
         };
         self.indentStack.push(0);
         self.skipWhitespace();
@@ -43,10 +45,20 @@ pub const Lexer = struct {
             // remember to match dedents at the end.
             if (self.indentStack.top() > 0) {
                 _ = self.indentStack.pop();
-                return Token{ .type = .DEDENT, .from = self.lineBeginOffset, .to = self.currentIndex };
+                return Token{
+                    .type = .DEDENT,
+                    .from = self.lineBeginOffset,
+                    .to = self.currentIndex,
+                    .line = self.line,
+                };
             }
 
-            return Token{ .type = .EOF, .from = self.currentIndex, .to = self.currentIndex };
+            return Token{
+                .type = .EOF,
+                .from = self.currentIndex,
+                .to = self.currentIndex,
+                .line = self.line,
+            };
         }
 
         // MID QUICK COPYPASTA
@@ -57,7 +69,12 @@ pub const Lexer = struct {
                 // SLIGHT copypasta!
                 if (off <= self.indentStack.peek()) {
                     _ = self.indentStack.pop();
-                    return Token{ .type = .DEDENT, .from = self.lineBeginOffset, .to = self.currentIndex };
+                    return Token{
+                        .type = .DEDENT,
+                        .from = self.lineBeginOffset,
+                        .to = self.currentIndex,
+                        .line = self.line,
+                    };
                 } else {
                     // TODO: REPORT
                     // NOTE: NOT REALLY, DON'T KNOW IF HERE IS BETTER OR AT THE END.
@@ -209,10 +226,12 @@ pub const Lexer = struct {
         self.skipWhitespace();
 
         if (tt == .STMT_SEP) {
+            self.line += 1;
             // continually skip whitespace and newlines until we get another non STMT_SEP. we have to update the line beginning.
             self.lineBeginOffset = to;
             while (!self.isAtEnd() and self.curChar() == '\n') {
                 _ = self.nextChar();
+                self.line += 1;
                 self.lineBeginOffset = self.currentIndex;
                 self.skipWhitespace();
             }
@@ -221,7 +240,12 @@ pub const Lexer = struct {
             const currentIndent = self.indentStack.top();
             if (off > currentIndent) {
                 self.indentStack.push(off);
-                return Token{ .type = .INDENT, .from = to, .to = self.currentIndex };
+                return Token{
+                    .type = .INDENT,
+                    .from = to,
+                    .to = self.currentIndex,
+                    .line = self.line,
+                };
             } else if (off < currentIndent) {
                 // check if the indent is incorrect
                 // eg.
@@ -230,14 +254,24 @@ pub const Lexer = struct {
                 //   stmt2  <- report error for this one
                 if (off <= self.indentStack.peek()) {
                     _ = self.indentStack.pop();
-                    return Token{ .type = .DEDENT, .from = to, .to = self.currentIndex };
+                    return Token{
+                        .type = .DEDENT,
+                        .from = to,
+                        .to = self.currentIndex,
+                        .line = self.line,
+                    };
                 } else {
                     self.reportError(.{ .IncorrectIndent = .{} });
                 }
             }
         }
 
-        return Token{ .type = tt, .from = from, .to = to };
+        return Token{
+            .type = tt,
+            .from = from,
+            .to = to,
+            .line = self.line,
+        };
     }
 
     fn scanned(self: Self, from: usize) Str {
@@ -316,7 +350,10 @@ pub const Lexer = struct {
 
     fn reportError(self: *const Self, err: Error) void {
         if (self.errors) |errors| {
-            errors.append(.{ .err = err, .module = self.moduleName }) catch {
+            errors.append(.{ .err = err, .module = .{
+                .name = self.moduleName,
+                .source = self.source,
+            } }) catch {
                 // I LITERALLY DON'T CARE OMGGGGGG.
                 // ITS NOT EVEN THAT IMPORTANT.
                 std.debug.print("LEXER: FAILED TO APPEND ERROR, BUT IDC\n", .{});

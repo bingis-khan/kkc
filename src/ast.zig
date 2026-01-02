@@ -4,6 +4,7 @@ const Unique = @import("UniqueGen.zig").Unique;
 const TypeContext = @import("TypeContext.zig");
 const common = @import("common.zig");
 const Intrinsic = @import("Intrinsic.zig");
+const Loc = common.Location;
 
 toplevel: []*Stmt, // top level
 
@@ -334,6 +335,7 @@ pub const Case = struct {
 
 pub const Decon = struct {
     t: Type,
+    l: Loc,
     d: union(enum) {
         None: struct {},
         Num: i64,
@@ -410,6 +412,7 @@ pub const Decon = struct {
 
 pub const Expr = struct {
     t: Type,
+    l: Loc,
     e: union(enum) {
         BinOp: struct { l: Rec, op: BinOp, r: Rec },
         UnOp: struct { e: Rec, op: UnOp },

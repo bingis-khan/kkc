@@ -46,20 +46,25 @@ pub const Error = union(enum) {
         className: Str,
     },
 
-    // TODO: add location information
     MismatchingTypes: struct {
         lt: ast.Type,
+        lpos: Loc,
         rt: ast.Type,
+        rpos: ?Loc,
     },
 
     MismatchingEnv: struct {
         le: ast.Env,
+        lpos: Loc,
         re: ast.Env,
+        rpos: ?Loc,
     },
 
     MismatchingParamLen: struct {
         lpl: usize,
+        lloc: Loc,
         rpl: usize,
+        rloc: ?Loc,
     },
 
     MismatchingKind: struct {
@@ -147,12 +152,24 @@ pub const Error = union(enum) {
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
-    pub fn print(self: @This(), c: ast.Ctx) void {
+    pub fn print(self: @This(), c: ast.Ctx, module: ModuleInfo) void {
         switch (self) {
             .IncorrectIndent => p("incorrect indent", .{}),
-            .UnexpectedToken => |e| p("expected {}, but got {}", .{ e.expected, e.got }),
+            .UnexpectedToken => |e| {
+                module.errorAtLocation(e.got.toLocation(module.source), .{ .label = .{
+                    .fmt = "expected {}, but got {}",
+                    .args = .{ e.expected, e.got.type },
+                } });
+                // p("expected {}, but got {}", .{ e.expected, e.got });
+            },
             .UnexpectedThing => |e| p("expect {s} at {}", .{ e.expected, e.at }),
-            .UndefinedVariable => |uv| p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to }),
+            .UndefinedVariable => |uv| {
+                module.errorAtLocation(uv.loc, .{ .label = .{
+                    .fmt = "undefined variable {s}",
+                    .args = .{uv.varname.name},
+                } });
+                // p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to });
+            },
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
             .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),
             .UndefinedTVar => |e| p("undefined tvar {s} at ({}, {})", .{ e.tvname, e.loc.from, e.loc.to }),
@@ -173,7 +190,15 @@ pub const Error = union(enum) {
                 c.encloseSepBy(e.re, ", ", "[", "]");
                 p("", .{}); // newline
             },
-            .MismatchingParamLen => |e| p("Mismatching lengths: {} =/= {}", .{ e.lpl, e.rpl }),
+            .MismatchingParamLen => |e| {
+                if (e.rloc) |rloc| {
+                    module.errorAtLocation(e.lloc, .{ .label = .{ .fmt = "mismatching param lengths. expected length of {}", .args = .{e.lpl} } });
+                    module.errorAtLocation(rloc, .{ .label = .{ .fmt = "but got length of {}", .args = .{e.rpl} } });
+                } else {
+                    module.errorAtLocation(e.lloc, .{ .label = .{ .fmt = "mismatching param lengths. expected length of {}, but got {}", .args = .{ e.lpl, e.rpl } } });
+                }
+                // p("Mismatching lengths: {} =/= {}", .{ e.lpl, e.rpl });
+            },
             .MismatchingKind => |e| p("Mismatching kind for {s}: expect {}, but got {}", .{ e.data.name, e.expect, e.actual }),
             .TuplesNotYetSupported => p("Tuples not yet supported!", .{}),
 
@@ -231,4 +256,92 @@ pub const Error = union(enum) {
     }
 };
 
-pub const Errors = std.ArrayList(struct { module: Str, err: Error });
+// const Formatted = struct { fmt: com, args: anytype };
+
+pub const Errors = std.ArrayList(struct { module: ModuleInfo, err: Error });
+pub const ModuleInfo = struct {
+    source: Str,
+    name: Str,
+
+    fn errorAtLocation(module: *const @This(), loc: Loc, labels: anytype) void {
+        const label = @field(labels, "label");
+        const labelFmt = @field(label, "fmt");
+        const labelArgs = @field(label, "args");
+        std.debug.print("{s}: " ++ labelFmt ++ "\n", .{module.name} ++ labelArgs);
+
+        // I actually don't know when it can happen, so TODO
+        if (loc.source[loc.from] == '\n') {
+            unreachable;
+        }
+
+        var lineBeginIndex = loc.from;
+        while (true) {
+            if (lineBeginIndex == 0) break;
+            if (loc.source[lineBeginIndex] == '\n') {
+                lineBeginIndex += 1;
+                break;
+            }
+            lineBeginIndex -= 1;
+        }
+
+        var tabsBeforeToken: u32 = 0;
+        for (lineBeginIndex..loc.from) |i| {
+            if (loc.source[i] == '\t') {
+                tabsBeforeToken += 1;
+            }
+        }
+
+        var lineEndIndex = loc.to;
+        while (true) {
+            if (lineEndIndex == loc.source.len or loc.source[lineEndIndex] == '\n') {
+                break;
+            }
+
+            lineEndIndex += 1;
+        }
+
+        var linesInBetween: u32 = 0;
+        for (loc.from..loc.to) |i| {
+            if (loc.source[i] == '\n') linesInBetween += 1;
+        }
+
+        if (linesInBetween == 0) {
+            std.debug.print(" {} | {s}\n", .{ loc.line, loc.source[lineBeginIndex..lineEndIndex] });
+
+            // PRINT THE UNDERLINE
+            // TEMP: with normal stdio, just count the number once.
+            var lineLengthMeasure = std.io.countingWriter(std.io.null_writer);
+            var measureWriter = lineLengthMeasure.writer();
+            measureWriter.print("{}", .{loc.line}) catch {};
+            for (0..lineLengthMeasure.bytes_written + 1) |_| {
+                std.debug.print(" ", .{}); // pad
+            }
+
+            // pad to match the length of the number.
+            std.debug.print(" | ", .{});
+
+            for (0..tabsBeforeToken) |_| {
+                std.debug.print("\t", .{});
+            }
+
+            const lineChars = loc.from - lineBeginIndex;
+            for (0..lineChars - tabsBeforeToken) |_| {
+                std.debug.print(" ", .{});
+            }
+
+            for (loc.from..loc.to) |_| {
+                std.debug.print("^", .{});
+            }
+            std.debug.print("\n", .{});
+        } else {
+            unreachable; // TODO
+        }
+
+        if (@hasField(@TypeOf(labels), "footnote")) {
+            const footFmt = @field(label, "fmt");
+            _ = footFmt; // autofix
+            const footArgs = @field(label, "args");
+            _ = footArgs; // autofix
+        }
+    }
+};

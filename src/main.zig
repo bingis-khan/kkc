@@ -56,8 +56,7 @@ pub fn main() !void {
     const fakeHackCtx = ast.Ctx.init(&fakeNewline, &typeContext);
     fakeNewline = false; // SIKE (but obv. temporary)
     for (errors.items) |err| {
-        fakeHackCtx.print(.{ err.module, ": " });
-        err.err.print(fakeHackCtx);
+        err.err.print(fakeHackCtx, err.module);
     }
 
     // go and interpret

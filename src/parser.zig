@@ -211,7 +211,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
                 const t = try Type.init(self, .{ .Data = data.uid }).sepTyo();
                 try recs.append(.{
                     .field = recname.literal(self.lexer.source),
-                    .t = t,
+                    .t = t.e,
                 });
                 try self.endStmt();
             } else if (self.consume(.TYPE)) |conName| {
@@ -220,7 +220,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
                 while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                     // TODO: for now, no complicated types!
                     const ty = try Type.init(self, .{ .Data = data.uid }).typ();
-                    try tys.append(ty);
+                    try tys.append(ty.e);
                 }
                 self.consumeSeps();
 
@@ -253,7 +253,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
     try self.newData(data);
 }
 
-fn function(self: *Self, fun: *AST.Function) !*AST.Function {
+fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     const oldTriedReturningAtAll = self.triedReturningAtAll;
     const oldReturned = self.returned;
     defer {
@@ -278,7 +278,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
                     self,
                     .{ .Function = fun.name.uid },
                 ).sepTyo();
-                try self.typeContext.unify(decon.t, pt);
+                try self.typeContext.unify(decon.t, pt.e, &.{ .l = decon.l, .r = pt.l });
             }
             try params.append(decon);
 
@@ -298,7 +298,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
     const ret = try self.typeContext.fresh();
     if (self.check(.RIGHT_ARROW)) {
         const retTy = try Type.init(self, .{ .Function = fun.name.uid }).sepTyo();
-        try self.typeContext.unify(ret, retTy);
+        try self.typeContext.unify(ret, retTy.e, null);
     }
 
     const constraints_ = try self.constraints();
@@ -312,7 +312,7 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
         stmts[0] = try Common.allocOne(self.arena, AST.Stmt{
             .Return = expr,
         });
-        try self.typeContext.unify(ret, expr.t);
+        try self.typeContext.unify(ret, expr.t, &.{ .l = expr.l });
         break :b stmts;
     } else b: {
         // set return and parse body
@@ -323,18 +323,27 @@ fn function(self: *Self, fun: *AST.Function) !*AST.Function {
         const returnStatus = fnBodyAndReturnStatus.returnStatus;
 
         if (!self.triedReturningAtAll) {
-            try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn()));
+            try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(nameLoc))); // TODO: add special location type for "midlines"
+            // eg.
+            //      askjdklasjdk
+            //  |-> ----------
+            //  |   aksdlkasjdkj
+            //  L some footnote
+
         } else if (returnStatus == .Nah) retcheck: {
+            // We know we returned somewhere, but for this main program branch we did not for some reason.
+            // If the return type is Unit, we can just insert a return.
+            //  Otherwise, error obv.
             switch (self.typeContext.getType(self.returnType.?)) {
                 .Con => |c| if (c.type.uid == (try self.defined(.Unit)).data.uid) {
-                    try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn()));
+                    try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(nameLoc)));
                     break :retcheck;
                 },
-                else => {},
+                else => {
+                    // otherwise
+                    try self.reportError(.{ .MissingReturn = .{} });
+                },
             }
-
-            // otherwise
-            try self.reportError(.{ .MissingReturn = .{} });
         }
 
         self.returnType = oldReturnType;
@@ -428,7 +437,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
 
             break :b .{ .Pass = label };
         } // pass
-        else if (self.check(.RETURN)) {
+        else if (self.consume(.RETURN)) |retTok| {
             const expr = if (!self.isEndStmt()) bb: {
                 const pm = self.foldFromHere();
                 const e = try self.expression();
@@ -440,6 +449,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 const con = &self.typeContext.getType(t).Con.type.stuff.cons[0]; // WARNING: funny casts
                 break :bb try self.allocExpr(.{
                     .t = t,
+                    .l = retTok.toLocation(self.lexer.source),
                     .e = .{ .Con = con },
                 });
             };
@@ -447,7 +457,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             self.triedReturningAtAll = true;
             if (self.returned != .Errored) self.returned = .Returned;
 
-            try self.typeContext.unify(expr.t, try self.getReturnType());
+            try self.typeContext.unify(expr.t, try self.getReturnType(), &.{ .l = undefined });
 
             break :b .{ .Return = expr };
         } // return
@@ -551,7 +561,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             const v = try self.expect(.IDENTIFIER);
             try self.devour(.LEFT_PAREN);
             const funptr = try self.newFunction(v);
-            const fun = try self.function(funptr);
+            const fun = try self.function(funptr, self.loc(v));
             const fndec = AST.Stmt{ .Function = fun };
             break :b fndec;
         } // function
@@ -561,7 +571,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 const pm = self.foldFromHere();
                 const expr = try self.expression();
                 const vt = try self.newVar(v);
-                try self.typeContext.unify(vt.t, expr.t);
+                try self.typeContext.unify(vt.t, expr.t, &.{ .l = self.loc(v), .r = expr.l });
 
                 try self.finishFold(pm);
 
@@ -584,7 +594,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     },
                 };
 
-                try self.typeContext.unify(vv.t, e.t);
+                try self.typeContext.unify(vv.t, e.t, &.{ .l = self.loc(v), .r = e.l });
                 break :b .{ .VarMut = .{
                     .varRef = vv.v,
                     .accessors = &.{},
@@ -603,14 +613,14 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 var innerTy = vv.t;
                 var accessors = std.ArrayList(AST.Stmt.Accessor).init(self.arena);
                 while (true) {
-                    if (self.check(.REF)) {
+                    if (self.consume(.REF)) |reftok| {
                         try accessors.append(.{ .tBefore = innerTy, .acc = .Deref });
 
                         const ptr = (try self.defined(.Ptr)).dataInst;
 
-                        try self.typeContext.unify(innerTy, ptr.t);
+                        try self.typeContext.unify(innerTy, ptr.t, &.{ .l = self.loc(v), .r = self.loc(reftok) });
                         innerTy = ptr.tyArgs[0];
-                    } else if (self.check(.DOT)) {
+                    } else if (self.consume(.DOT)) |dottok| {
                         const name = try self.expect(.IDENTIFIER);
                         const field = name.literal(self.lexer.source);
                         try accessors.append(.{
@@ -618,7 +628,10 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                             .acc = .{ .Access = field },
                         });
 
-                        const ft = try self.typeContext.field(innerTy, field);
+                        const ft = try self.typeContext.field(innerTy, field, &.{
+                            .l = self.loc(v),
+                            .r = self.loc(dottok).between(self.loc(name)),
+                        });
                         innerTy = ft;
                     } else break;
                 }
@@ -628,7 +641,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 const pm = self.foldFromHere();
                 const e = try self.expression();
 
-                try self.typeContext.unify(innerTy, e.t);
+                try self.typeContext.unify(innerTy, e.t, &.{ .l = self.loc(v), .r = e.l });
 
                 // TEMP
                 // if (vtsc.sc != self.scope.currentScope()) {
@@ -646,7 +659,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 // try parsing expression yo as a variable n shiii
                 const pm = self.foldFromHere();
                 const vv = try self.instantiateVar(&.{}, v);
-                const e = try self.finishExpression(try self.allocExpr(.{ .t = vv.t, .e = .{ .Var = .{ .v = vv.v, .match = vv.m } } }));
+                const e = try self.finishExpression(try self.allocExpr(.{
+                    .t = vv.t,
+                    .e = .{ .Var = .{ .v = vv.v, .match = vv.m } },
+                    .l = self.loc(v),
+                }));
                 try self.finishFold(pm);
                 break :b .{ .Expr = e };
             }
@@ -701,7 +718,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
         } // type
         else if (self.check(.IF)) {
             const cond = try self.expression();
-            try self.typeContext.unify(cond.t, try self.definedType(.Bool));
+            try self.typeContext.unify(cond.t, try self.definedType(.Bool), &.{ .l = cond.l });
             const bTrueBod = try self.body();
             const bTrue = bTrueBod.stmts.items;
             var returnStatus = bTrueBod.returnStatus;
@@ -709,7 +726,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             var elifs = std.ArrayList(AST.Stmt.Elif).init(self.arena);
             while (self.check(.ELIF)) {
                 const elifCond = try self.expression();
-                try self.typeContext.unify(elifCond.t, try self.definedType(.Bool));
+                try self.typeContext.unify(elifCond.t, try self.definedType(.Bool), &.{ .l = elifCond.l });
                 const elifBodyAndStatus = try self.body();
                 returnStatus = returnStatus.alternative(elifBodyAndStatus.returnStatus);
                 try elifs.append(AST.Stmt.Elif{ .cond = elifCond, .body = elifBodyAndStatus.stmts.items });
@@ -737,7 +754,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
         else if (self.check(.WHILE)) {
             const cond = try self.expression();
             const boolTy = try self.definedType(.Bool);
-            try self.typeContext.unify(cond.t, boolTy);
+            try self.typeContext.unify(cond.t, boolTy, &.{ .l = cond.l });
             const bod = try self.body();
             self.returned = bod.returnStatus;
             break :b .{ .While = .{
@@ -754,7 +771,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             self.scope.beginScope(null);
             while (!self.check(.DEDENT)) {
                 const decon = try self.deconstruction();
-                try self.typeContext.unify(switchOn.t, decon.t);
+                try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
                 const bod = try self.body();
                 try cases.append(.{ .decon = decon, .body = bod.stmts.items });
                 returnStatus = returnStatus.alternative(bod.returnStatus);
@@ -816,7 +833,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             const instantiatedSelfType = try self.typeContext.newType(.{
                 .Con = .{
                     .type = data,
-                    .application = try self.instantiateScheme(data.scheme),
+                    .application = try self.instantiateScheme(data.scheme, qtypeName.loc),
                 },
             });
             self.selfType = instantiatedSelfType;
@@ -832,7 +849,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     .name = funName.literal(self.lexer.source),
                     .uid = self.gen.vars.newUnique(),
                 };
-                const fun = try self.function(funptr);
+                const fun = try self.function(funptr, self.loc(funName));
 
                 // now, "associate it" with a class function
                 for (class.classFuns) |classFun| {
@@ -924,7 +941,7 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
             const pname = try self.expect(.IDENTIFIER);
             const v = try self.newVar(pname); // pointless fresh.
             const t = try Type.init(self, .{ .Function = uid }).sepTyo();
-            try params.append(.{ .pn = v.v, .pt = t });
+            try params.append(.{ .pn = v.v, .pt = t.e });
 
             if (self.check(.RIGHT_PAREN)) {
                 break;
@@ -956,7 +973,7 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
             .uid = uid,
         },
         .params = params.items,
-        .ret = ret,
+        .ret = ret.e,
         .scheme = scheme,
         .anns = annotations,
     });
@@ -999,13 +1016,14 @@ fn parseAnnotation(self: *Self) ![]AST.Annotation {
     return annotations.items;
 }
 
-fn unitReturn(self: *Self) !AST.Stmt {
+fn unitReturn(self: *Self, culprit: Loc) !AST.Stmt {
     const t = try self.definedType(.Unit);
     const con = &self.typeContext.getType(t).Con.type.stuff.cons[0]; // WARNING: funny casts
-    try self.typeContext.unify(t, self.returnType.?);
+    try self.typeContext.unify(t, self.returnType.?, &.{ .l = culprit });
     return .{ .Return = try self.allocExpr(.{
         .t = t,
         .e = .{ .Con = con },
+        .l = culprit,
     }) };
 }
 
@@ -1037,7 +1055,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         // consume identifier if possible.
         if (self.check(.IDENTIFIER)) {}
 
-        try params.append(.{ .t = try Type.init(self, .{ .ClassFunction = uid }).sepTyo() });
+        try params.append(.{ .t = (try Type.init(self, .{ .ClassFunction = uid }).sepTyo()).e });
 
         if (self.check(.RIGHT_PAREN)) {
             break;
@@ -1047,7 +1065,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     };
 
     // another new eye candy - default Unit
-    const ret = if (self.check(.RIGHT_ARROW)) try Type.init(self, .{ .ClassFunction = uid }).sepTyo() else try self.definedType(.Unit);
+    const ret = if (self.check(.RIGHT_ARROW)) (try Type.init(self, .{ .ClassFunction = uid }).sepTyo()).e else try self.definedType(.Unit);
 
     // constraints
     const constraints_ = try self.constraints();
@@ -1128,18 +1146,21 @@ fn deconstruction(self: *Self) !*AST.Decon {
         const v = try self.newVar(vn);
         break :b .{
             .t = v.t,
+            .l = vn.toLocation(self.lexer.source),
             .d = .{ .Var = v.v },
         };
     } // var
-    else if (self.check(.UNDERSCORE)) b: {
+    else if (self.consume(.UNDERSCORE)) |ut| b: {
         break :b .{
             .t = try self.typeContext.fresh(),
+            .l = ut.toLocation(self.lexer.source),
             .d = .{ .None = .{} },
         };
     } // ignore var
     else if (self.consume(.INTEGER)) |numTok| b: {
         break :b .{
             .t = try self.definedType(.Int),
+            .l = numTok.toLocation(self.lexer.source),
             .d = .{ .Num = self.parseInt(numTok) },
         };
     } // number
@@ -1148,6 +1169,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
             if (self.check(.DOT)) {
                 var modpath = std.ArrayList(Str).init(self.arena);
                 try modpath.append(cn.literal(self.lexer.source));
+                // TODO: oof. what is this? I need to check it if it's duplicate code.
                 loop: while (true) {
                     if (self.consume(.TYPE)) |tn| {
                         if (self.check(.DOT)) {
@@ -1164,8 +1186,12 @@ fn deconstruction(self: *Self) !*AST.Decon {
                 break :bb try self.instantiateCon(&.{}, cn);
             }
         };
+
+        const conLocation = cn.toLocation(self.lexer.source); // TODO: incorrect in case of qualified types
+
         var decons: []*AST.Decon = &.{};
         var args: []AST.Type = &.{};
+        var tysLoc: ?Loc = null;
         if (self.check(.LEFT_PAREN)) {
             var ds = std.ArrayList(*AST.Decon).init(self.arena);
             var tys = std.ArrayList(AST.Type).init(self.arena);
@@ -1174,6 +1200,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
                 const d = try self.deconstruction();
                 try ds.append(d);
                 try tys.append(d.t);
+                tysLoc = if (tysLoc) |l| l.between(d.l) else d.l;
 
                 if (self.check(.RIGHT_PAREN)) break;
 
@@ -1184,9 +1211,13 @@ fn deconstruction(self: *Self) !*AST.Decon {
             args = tys.items;
         }
 
-        try self.typeContext.unifyParams(con.tys, args);
+        try self.typeContext.unifyParams(con.tys, args, &.{
+            .l = conLocation,
+            .r = tysLoc,
+        });
         break :b .{
             .t = con.t,
+            .l = conLocation.between(tysLoc),
             .d = .{
                 .Con = .{
                     .con = con.con,
@@ -1195,7 +1226,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
             },
         };
     } // con decon
-    else if (self.check(.LEFT_BRACE)) b: {
+    else if (self.consume(.LEFT_BRACE)) |leftBraceTok| b: {
         const t = try self.typeContext.fresh();
 
         var fields = std.ArrayList(AST.Decon.Field).init(self.arena);
@@ -1203,32 +1234,41 @@ fn deconstruction(self: *Self) !*AST.Decon {
             const fieldTok = try self.expect(.IDENTIFIER);
             const fieldName = fieldTok.literal(self.lexer.source);
 
-            const fieldTy = try self.typeContext.field(t, fieldName);
+            const fieldTy = try self.typeContext.field(t, fieldName, null);
 
             if (self.check(.COLON)) {
                 const decon = try self.deconstruction();
-                try self.typeContext.unify(fieldTy, decon.t);
+                try self.typeContext.unify(fieldTy, decon.t, null);
                 try fields.append(.{
                     .field = fieldName,
                     .decon = decon,
                 });
             } else {
                 const vnt = try self.newVar(fieldTok);
-                try self.typeContext.unify(fieldTy, vnt.t);
-                try fields.append(.{ .field = fieldName, .decon = try Common.allocOne(self.arena, AST.Decon{ .t = fieldTy, .d = .{ .Var = vnt.v } }) });
+                try self.typeContext.unify(fieldTy, vnt.t, null);
+                try fields.append(.{
+                    .field = fieldName,
+                    .decon = try Common.allocOne(self.arena, AST.Decon{
+                        .t = fieldTy,
+                        .d = .{ .Var = vnt.v },
+                        .l = fieldTok.toLocation(self.lexer.source),
+                    }),
+                });
             }
             if (!self.check(.COMMA)) break;
         }
-        try self.devour(.RIGHT_BRACE);
+        const rightBraceTok = try self.expect(.RIGHT_BRACE);
+        const dloc = self.loc(leftBraceTok).between(self.loc(rightBraceTok));
 
         // TODO: right now we only care that the deconstructed struct has all the fields defined. basically { <whatever we write>, ... }
         // later expect the user to write `...` to ignore extra fields.
         break :b .{
             .t = t,
             .d = .{ .Record = fields.items },
+            .l = dloc,
         };
     } // record deccon
-    else if (self.check(.LEFT_SQBR)) b: {
+    else if (self.consume(.LEFT_SQBR)) |ltok| b: {
         var left = std.ArrayList(*AST.Decon).init(self.arena);
         var right = std.ArrayList(*AST.Decon).init(self.arena);
         const listTy = try self.typeContext.fresh();
@@ -1240,7 +1280,9 @@ fn deconstruction(self: *Self) !*AST.Decon {
         var decons = &left;
         var spreadVar: ?AST.Var = null;
         var hadSpread = false;
-        if (!self.check(.RIGHT_SQBR)) {
+        const dloc = if (self.consume(.RIGHT_SQBR)) |rtok| bb: {
+            break :bb self.loc(ltok).between(self.loc(rtok));
+        } else bb: {
             while (true) {
                 if (!hadSpread and self.check(.DOT)) {
                     // scuffed spread xddddd
@@ -1249,7 +1291,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
 
                     if (self.consume(.IDENTIFIER)) |svtok| {
                         const sv = try self.newVar(svtok);
-                        try self.typeContext.unify(sv.t, spreadInnerTy);
+                        try self.typeContext.unify(sv.t, spreadInnerTy, &.{ .l = self.loc(svtok) });
                         spreadVar = sv.v;
                     }
 
@@ -1257,27 +1299,27 @@ fn deconstruction(self: *Self) !*AST.Decon {
                     decons = &right;
                 } else {
                     const decon = try self.deconstruction();
-                    try self.typeContext.unify(decon.t, elemTy);
+                    try self.typeContext.unify(decon.t, elemTy, &.{ .l = decon.l });
                     try decons.append(decon);
                 }
 
-                if (self.check(.RIGHT_SQBR)) {
-                    break;
+                if (self.consume(.RIGHT_SQBR)) |rtok| {
+                    break :bb self.loc(ltok).between(self.loc(rtok));
                 }
                 try self.devour(.COMMA);
             }
-        }
+        };
 
         const class: *AST.Class = self.prelude.?.definedClass(.ListLike); // NOTE: assumes, that we won't be doing any deconstructing of lists in prelude (a fair assumption)
         const cfun = class.classFuns[0]; // assume only one function! no need create another enum or search by string!
 
         // NOTE COPYPASTA: copied from instantiating class function.!!
         // typical class instantiation stuff (TODO: later extract this behavior and share it between class fun instantiations and this (and later Hashmap deconstructions n premade class stuff))
-        const match = try self.instantiateScheme(cfun.scheme);
+        const match = try self.instantiateScheme(cfun.scheme, dloc);
         const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
         const instances = try self.getInstancesForClass(class);
         const classSelf = try self.typeContext.mapType(match, cfun.self);
-        try self.typeContext.unify(classSelf, listTy);
+        try self.typeContext.unify(classSelf, listTy, null); // TODO: null?
 
         // mk new, instantiated type
         var params = std.ArrayList(AST.Type).init(self.arena);
@@ -1300,16 +1342,16 @@ fn deconstruction(self: *Self) !*AST.Decon {
             const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
             const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
             // this is to allow modification, while allowing types which don't have a stable pointer to any element.
-            try self.typeContext.unify(elemPtr.tyArgs[0], elemTy);
-            try self.typeContext.unify(elemPtrPtr.tyArgs[0], elemPtr.t);
+            try self.typeContext.unify(elemPtr.tyArgs[0], elemTy, null); // TODO: nulls here, we'll see if this place can error out.
+            try self.typeContext.unify(elemPtrPtr.tyArgs[0], elemPtr.t, null);
 
-            try self.typeContext.unify(params.items[1], elemPtrPtr.t);
-            try self.typeContext.unify(params.items[4], elemPtrPtr.t);
+            try self.typeContext.unify(params.items[1], elemPtrPtr.t, null);
+            try self.typeContext.unify(params.items[4], elemPtrPtr.t, null);
 
             const spread = (try self.defined(.ListSpread)).dataInst;
-            try self.typeContext.unify(spread.tyArgs[0], spreadInnerTy);
-            try self.typeContext.unify(params.items[3], spread.t);
-            try self.typeContext.unify(spread.t, spreadTy);
+            try self.typeContext.unify(spread.tyArgs[0], spreadInnerTy, null);
+            try self.typeContext.unify(params.items[3], spread.t, null);
+            try self.typeContext.unify(spread.t, spreadTy, null);
         }
 
         try self.addAssociation(.{
@@ -1318,10 +1360,12 @@ fn deconstruction(self: *Self) !*AST.Decon {
             .classFun = cfun,
             .instances = instances,
             .ref = ref,
+            .loc = dloc,
         });
 
         break :b .{
             .t = listTy,
+            .l = dloc,
             .d = .{ .List = .{
                 .l = left.items,
                 .r = if (hadSpread) .{
@@ -1386,14 +1430,17 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
 
         if (binop == .Call) {
             var params = std.ArrayList(*AST.Expr).init(self.arena);
-            if (!self.check(.RIGHT_PAREN)) {
+            const leftLoc = self.loc(optok);
+            const rightLoc = if (self.consume(.RIGHT_PAREN)) |rightTok| b: {
+                break :b self.loc(rightTok);
+            } else b: {
                 while (true) {
                     try params.append(try self.expression());
                     if (!self.check(.COMMA)) break;
                 }
 
-                try self.devour(.RIGHT_PAREN);
-            }
+                break :b self.loc(try self.expect(.RIGHT_PAREN));
+            };
 
             // how a function is represented.
             const paramTs = try self.arena.alloc(AST.Type, params.items.len);
@@ -1411,7 +1458,10 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 },
             });
 
-            try self.typeContext.unify(callType, left.t);
+            try self.typeContext.unify(left.t, callType, &.{
+                .l = left.l,
+                .r = leftLoc.between(rightLoc),
+            });
 
             return self.allocExpr(.{
                 .t = retType,
@@ -1419,6 +1469,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                     .callee = left,
                     .args = params.items,
                 } },
+                .l = left.l.between(rightLoc),
             });
         }
 
@@ -1428,14 +1479,16 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             var params = std.ArrayList(*AST.Expr).init(self.arena);
             try params.append(left);
             _ = try self.devour(.LEFT_PAREN);
-            if (!self.check(.RIGHT_PAREN)) {
+            const rightLoc = if (self.consume(.RIGHT_PAREN)) |rightTok| b: {
+                break :b self.loc(rightTok);
+            } else b: {
                 while (true) {
                     try params.append(try self.expression());
                     if (!self.check(.COMMA)) break;
                 }
 
-                try self.devour(.RIGHT_PAREN);
-            }
+                break :b self.loc(try self.expect(.RIGHT_PAREN));
+            };
 
             // how a function is represented.
             const paramTs = try self.arena.alloc(AST.Type, params.items.len);
@@ -1453,7 +1506,10 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 },
             });
 
-            try self.typeContext.unify(callType, funt.t);
+            try self.typeContext.unify(callType, funt.t, &.{
+                .l = funt.l,
+                .r = left.l.between(rightLoc),
+            });
 
             return self.allocExpr(.{
                 .t = retType,
@@ -1461,23 +1517,30 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                     .callee = funt,
                     .args = params.items,
                 } },
+                .l = left.l.between(rightLoc),
             });
         }
 
         if (binop == .Deref) {
             const ptr = (try self.defined(.Ptr)).dataInst;
-            try self.typeContext.unify(ptr.t, left.t);
+            const dl = self.loc(optok);
+            try self.typeContext.unify(ptr.t, left.t, &.{
+                .l = left.l,
+                .r = dl,
+            });
             return self.allocExpr(.{
                 .t = ptr.tyArgs[0],
                 .e = .{
                     .UnOp = .{ .op = .Deref, .e = left },
                 },
+                .l = left.l.between(dl),
             });
         }
 
         if (binop == .RecordAccess) {
             const mem = try self.expect(.IDENTIFIER);
-            const t = try self.typeContext.field(left.t, mem.literal(self.lexer.source));
+            const fieldLoc = self.loc(mem);
+            const t = try self.typeContext.field(left.t, mem.literal(self.lexer.source), &.{ .l = left.l, .r = fieldLoc });
             return self.allocExpr(.{
                 .t = t,
                 .e = .{ .UnOp = .{
@@ -1486,19 +1549,24 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                         .Access = mem.literal(self.lexer.source),
                     },
                 } },
+                .l = left.l.between(fieldLoc),
             });
         }
 
         if (binop == .As) {
             const t = try Type.init(self, null).sepTyo();
-            try self.typeContext.unify(t, left.t);
+            try self.typeContext.unify(t.e, left.t, &.{
+                .l = left.l,
+                .r = t.l,
+            });
             return self.allocExpr(.{
-                .t = t,
+                .t = t.e,
                 // NOTE: we generate a new node only for error reporting. we don't really need it otherwise.
                 .e = .{ .UnOp = .{
                     .e = left,
-                    .op = .{ .As = t },
+                    .op = .{ .As = t.e },
                 } },
+                .l = left.l.between(t.l),
             });
         }
 
@@ -1511,8 +1579,12 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .Divide,
             => b: {
                 const intTy = try self.definedType(.Int);
-                try self.typeContext.unify(left.t, intTy);
-                try self.typeContext.unify(right.t, intTy);
+                try self.typeContext.unify(left.t, intTy, &.{
+                    .l = left.l,
+                });
+                try self.typeContext.unify(right.t, intTy, &.{
+                    .l = right.l,
+                });
                 break :b intTy;
             },
 
@@ -1522,8 +1594,12 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .LessEqualThan,
             => b: {
                 const intTy = try self.definedType(.Int);
-                try self.typeContext.unify(left.t, intTy);
-                try self.typeContext.unify(right.t, intTy);
+                try self.typeContext.unify(left.t, intTy, &.{
+                    .l = left.l,
+                });
+                try self.typeContext.unify(right.t, intTy, &.{
+                    .l = right.l,
+                });
                 const boolTy = try self.definedType(.Bool);
                 break :b boolTy;
             },
@@ -1532,13 +1608,20 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .And,
             => b: {
                 const boolTy = try self.definedType(.Bool);
-                try self.typeContext.unify(left.t, boolTy);
-                try self.typeContext.unify(right.t, boolTy);
+                try self.typeContext.unify(left.t, boolTy, &.{
+                    .l = left.l,
+                });
+                try self.typeContext.unify(right.t, boolTy, &.{
+                    .l = right.l,
+                });
                 break :b boolTy;
             },
 
             .Equals, .NotEquals => b: {
-                try self.typeContext.unify(left.t, right.t);
+                try self.typeContext.unify(left.t, right.t, &.{
+                    .l = left.l,
+                    .r = right.l,
+                });
                 break :b try self.definedType(.Bool);
             },
 
@@ -1548,6 +1631,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
         return self.allocExpr(.{
             .t = exprType,
             .e = .{ .BinOp = .{ .op = binop, .l = left, .r = right } },
+            .l = left.l.between(right.l),
         });
     }
 }
@@ -1556,40 +1640,47 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     // parse unary prefix.
     // I'm not sure if this is good, but getting a reference of something is not really done outside of function calls / constructors.
     // If *nothing* has been parsed, you may get a reference.
-    if (minPrec == 0 and self.check(.REF)) {
+    if (minPrec == 0) if (self.consume(.REF)) |tokref| {
         const n = try self.expression();
         const ptr = (try self.defined(.Ptr)).dataInst;
-        try self.typeContext.unify(ptr.tyArgs[0], n.t);
+        const l = self.loc(tokref).between(n.l);
+        try self.typeContext.unify(ptr.tyArgs[0], n.t, &.{ .l = l });
         return self.allocExpr(.{
             .e = .{ .UnOp = .{ .op = .Ref, .e = n } },
             .t = ptr.t,
+            .l = l,
         });
-    }
+    };
 
     // not
-    if (self.check(.NOT) and minPrec <= comptime binOpPrecedence(.And)) {
+    if (minPrec <= comptime binOpPrecedence(.And)) if (self.consume(.NOT)) |nottok| {
         const n = try self.precedenceExpression(binOpPrecedence(.And) + 1); // higher than and
         const boolTy = try self.definedType(.Bool);
-        try self.typeContext.unify(n.t, boolTy);
+        try self.typeContext.unify(n.t, boolTy, &.{ .l = n.l });
+        const l = self.loc(nottok).between(n.l);
         return self.allocExpr(.{
             .e = .{ .UnOp = .{ .op = .Not, .e = n } },
             .t = boolTy,
+            .l = l,
         });
-    }
+    };
 
     // negation (-)
-    if (self.check(.MINUS) and minPrec <= comptime binOpPrecedence(.Divide)) {
+    if (minPrec <= comptime binOpPrecedence(.Divide)) if (self.consume(.MINUS)) |mintok| {
         const n = try self.precedenceExpression(binOpPrecedence(.Divide) + 1); // higher than and
         const intTy = try self.definedType(.Int);
-        try self.typeContext.unify(n.t, intTy);
+        try self.typeContext.unify(n.t, intTy, &.{ .l = n.l });
         return self.allocExpr(.{
             .e = .{ .UnOp = .{ .op = .Negate, .e = n } },
             .t = intTy,
+            .l = self.loc(mintok).between(n.l),
         });
-    }
+    };
 
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
-    if (self.check(.FN) or self.peek().type == .COLON) { // smol hack to allow quick empty lambdas.
+    const mtokfun = self.consume(.FN);
+    if (mtokfun != null or self.peek().type == .COLON) { // smol hack to allow quick empty lambdas.
+        var lamBegin = mtokfun;
         var params = std.ArrayList(*AST.Decon).init(self.arena);
 
         var env = Env.init(self.arena);
@@ -1608,8 +1699,12 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             }
 
             try self.devour(.COLON);
-        } else if (self.check(.COLON)) {
+        } else if (self.consume(.COLON)) |colonTok| {
             // no params
+            // NOTE: current syntax allows a lambda to start with a colon only.
+            if (lamBegin == null) {
+                lamBegin = colonTok;
+            }
         } else {
             // single param
             const decon = try self.deconstruction();
@@ -1617,8 +1712,12 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             try self.devour(.COLON);
         }
 
+        std.debug.assert(lamBegin != null);
+
         const expr = try self.expression();
         self.scope.endScope();
+
+        const l = self.loc(lamBegin.?).between(expr.l);
 
         // do the types for function type.
         const argTys = try self.arena.alloc(AST.Type, params.items.len);
@@ -1641,6 +1740,8 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     .env = env.items,
                 },
             },
+
+            .l = l,
         });
     } // lambda
     else if (self.consume(.IDENTIFIER)) |v| {
@@ -1648,9 +1749,11 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         return self.allocExpr(.{
             .t = dv.t,
             .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+            .l = self.loc(v),
         });
     } // var
     else if (self.consume(.INTRINSIC)) |intrTok| {
+        var l = self.loc(intrTok);
         // for intrinsics, we must IMMEDIATELY parse the call - we don't want to deal with them being passed around.
         if (Intrinsic.findByName(intrTok.literal(self.lexer.source)[1..])) |intr| {
             // parse any required arguments brah.
@@ -1662,7 +1765,8 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     if (i != intr.args - 1) {
                         try self.devour(.COMMA);
                     } else {
-                        try self.devour(.RIGHT_PAREN);
+                        const lastTok = try self.expect(.RIGHT_PAREN);
+                        l = l.between(self.loc(lastTok));
                     }
                 }
             }
@@ -1675,10 +1779,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     // arg 1
                     const ptr = (try self.defined(.Ptr)).dataInst;
                     std.debug.assert(args.items.len == 2); // right now, we have a parse error that aborts execution if number of args is not correct. When it changes,must change this.
-                    try self.typeContext.unify(ptr.t, args.items[0].t);
+                    try self.typeContext.unify(ptr.t, args.items[0].t, &.{ .l = args.items[0].l });
 
                     // arg 2
-                    try self.typeContext.unify(try self.definedType(.Int), args.items[1].t);
+                    try self.typeContext.unify(try self.definedType(.Int), args.items[1].t, &.{ .l = args.items[1].l });
 
                     break :b ptr.t;
                 },
@@ -1686,7 +1790,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .argc => try self.definedType(.Int),
                 .argv => b: {
                     const ptr = (try self.defined(.Ptr)).dataInst;
-                    try self.typeContext.unify(ptr.tyArgs[0], try self.definedType(.ConstStr));
+                    try self.typeContext.unify(ptr.tyArgs[0], try self.definedType(.ConstStr), null);
                     break :b ptr.t;
                 },
             };
@@ -1699,6 +1803,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .args = args.items,
                     },
                 },
+                .l = l,
             });
         } else {
             std.debug.print("{s}\n", .{intrTok.literal(self.lexer.source)[1..]});
@@ -1712,6 +1817,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         return self.allocExpr(.{
             .t = try self.definedType(.Int),
             .e = .{ .Int = self.parseInt(i) },
+            .l = self.loc(i),
         });
     } // var
     else if (self.consume(.STRING)) |s| {
@@ -1722,8 +1828,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         try self.devour(.RIGHT_PAREN);
         return expr;
     } // grouping
-    else if (self.check(.LEFT_BRACE)) {
-        const definitions = try self.someRecordDefinition();
+    else if (self.consume(.LEFT_BRACE)) |leftTok| {
+        const definitionsAndLoc = try self.someRecordDefinition();
+        const definitions = definitionsAndLoc.fields;
+        const rightLoc = definitionsAndLoc.rightLoc;
 
         // TODO: deduplicate (and, in this case, error out)
         const typeFields = try self.arena.alloc(AST.TypeF(AST.Type).Field, definitions.len);
@@ -1734,7 +1842,11 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             .Anon = typeFields,
         });
 
-        return self.allocExpr(.{ .e = .{ .AnonymousRecord = definitions }, .t = t });
+        return self.allocExpr(.{
+            .e = .{ .AnonymousRecord = definitions },
+            .t = t,
+            .l = self.loc(leftTok).between(rightLoc),
+        });
     } // anonymous struct.
     else {
         return try self.errorExpect("term");
@@ -1747,6 +1859,7 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
         return self.allocExpr(.{
             .t = dv.t,
             .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+            .l = self.loc(first),
         });
     } // single identifier
     else if (first.type == .TYPE) {
@@ -1763,10 +1876,12 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
     var modpath = std.ArrayList(Str).init(self.arena);
     try modpath.append(first.literal(self.lexer.source));
 
+    var l = self.loc(first);
     loop: while (true) {
         if (self.consume(.TYPE)) |possibleCon| {
             if (self.check(.DOT)) {
                 try modpath.append(possibleCon.literal(self.lexer.source));
+                l = l.between(self.loc(possibleCon));
                 continue :loop;
             } else if (self.check(.LEFT_BRACE)) {
                 return try self.namedRecordDefinition(modpath.items, possibleCon);
@@ -1778,6 +1893,7 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
             return self.allocExpr(.{
                 .t = dv.t,
                 .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+                .l = l,
             });
         } else {
             return try self.errorExpect("rest of qualification");
@@ -1786,7 +1902,8 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
 }
 
 fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.Expr {
-    const definitions = try self.someRecordDefinition();
+    const definitionsAndLoc = try self.someRecordDefinition();
+    const definitions = definitionsAndLoc.fields;
 
     // instantiate it.
     const mDataOrClass = try self.findQualifiedDataOrClass(modpath, name.literal(self.lexer.source), name.toLocation(self.lexer.source));
@@ -1802,7 +1919,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
                         for (dataFields) |dataField| {
                             for (definitions) |def| {
                                 if (Common.streq(dataField.field, def.field)) {
-                                    try self.typeContext.unify(def.value.t, try self.typeContext.mapType(match, dataField.t));
+                                    try self.typeContext.unify(def.value.t, try self.typeContext.mapType(match, dataField.t), &.{ .l = self.loc(name) });
                                     break;
                                 }
                             } else {
@@ -1811,12 +1928,16 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
                             }
                         }
 
-                        return self.allocExpr(.{ .t = dataInst.t, .e = .{
-                            .NamedRecord = .{
-                                .data = data,
-                                .fields = definitions,
+                        return self.allocExpr(.{
+                            .t = dataInst.t,
+                            .e = .{
+                                .NamedRecord = .{
+                                    .data = data,
+                                    .fields = definitions,
+                                },
                             },
-                        } });
+                            .l = self.loc(name),
+                        });
                     },
                     .cons => {
                         try self.reportError(.{ .DataIsNotARecord = .{ .data = data } });
@@ -1844,12 +1965,13 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
     return try self.allocExpr(.{
         .e = .{ .AnonymousRecord = &.{} },
         .t = try self.typeContext.fresh(),
+        .l = self.loc(name),
     });
 }
 
 // either anonymous or normal :)
 // checks for duplicates.
-fn someRecordDefinition(self: *Self) ![]AST.Expr.Field {
+fn someRecordDefinition(self: *Self) !struct { fields: []AST.Expr.Field, rightLoc: Loc } {
     var definitions = std.ArrayList(AST.Expr.Field).init(self.arena);
     while (true) {
         const fieldTok = try self.expect(.IDENTIFIER);
@@ -1861,6 +1983,7 @@ fn someRecordDefinition(self: *Self) ![]AST.Expr.Field {
             break :b try self.allocExpr(.{
                 .t = varInst.t,
                 .e = .{ .Var = .{ .v = varInst.v, .match = varInst.m } },
+                .l = self.loc(fieldTok),
             });
         };
 
@@ -1879,9 +2002,9 @@ fn someRecordDefinition(self: *Self) ![]AST.Expr.Field {
 
         if (!self.check(.COMMA)) break;
     }
-    try self.devour(.RIGHT_BRACE);
+    const rightLoc = try self.expect(.RIGHT_BRACE);
 
-    return definitions.items;
+    return .{ .fields = definitions.items, .rightLoc = self.loc(rightLoc) };
 }
 
 fn parseQualifiedType(self: *Self, first: Token) !struct { modpath: Module.Path, name: Str, loc: Common.Location } {
@@ -1891,29 +2014,29 @@ fn parseQualifiedType(self: *Self, first: Token) !struct { modpath: Module.Path,
 
     var fullPath = try std.ArrayList(Str).initCapacity(self.arena, 1);
     try fullPath.append(first.literal(self.lexer.source));
-    var loc = first.toLocation(self.lexer.source);
+    var qloc = first.toLocation(self.lexer.source);
     while (self.check(.DOT)) {
         const tt = try self.expect(.TYPE);
         try fullPath.append(tt.literal(self.lexer.source));
-        loc = loc.between(&tt.toLocation(self.lexer.source));
+        qloc = qloc.between(&tt.toLocation(self.lexer.source));
     }
 
     const modpath = fullPath.items[0 .. fullPath.items.len - 1];
     const tyname = fullPath.getLast();
 
-    return .{ .modpath = modpath, .name = tyname, .loc = loc };
+    return .{ .modpath = modpath, .name = tyname, .loc = qloc };
 }
 
 // right now only used for records. In the future, will be used for qualifying types themselves.
 // ALSO, TODO we might abstract away the stuff about getting the module, because it's annoying and it's not immediately obvious how I should handle that error. So, a fn (modpath) -> ?Module (but also throw error when module == null)
-fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, loc: Common.Location) !?Module.DataOrClass {
+fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, dloc: Common.Location) !?Module.DataOrClass {
     if (modpath.len == 0) {
         if (self.maybeLookupType(name)) |dataOrClass| {
             return dataOrClass;
         } else {
             try self.reportError(.{ .UndefinedType = .{
                 .typename = name,
-                .loc = loc,
+                .loc = dloc,
             } });
             return null;
         }
@@ -1926,7 +2049,7 @@ fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, loc: C
                     try self.reportError(.{
                         .UndefinedType = .{
                             .typename = name,
-                            .loc = loc,
+                            .loc = dloc,
                         },
                     });
                     return null;
@@ -1958,10 +2081,12 @@ fn constructorExpression(self: *Self, modpath: Module.Path, name: Token) !*AST.E
     return self.allocExpr(.{
         .e = .{ .Con = ct.con },
         .t = t,
+        .l = self.loc(name),
     });
 }
 
 // TODO: handle errors in literals
+// Also, make it legible.
 fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
     const og = st.literal(self.lexer.source); // this includes single quotes
     var e: ?*AST.Expr = null;
@@ -1983,6 +2108,12 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                                 .Str = try s.toOwnedSlice(),
                             },
                             .t = try self.definedType(.ConstStr),
+                            .l = .{
+                                .from = st.from + last, // this is probably incorrect.
+                                .to = st.from + ci,
+                                .line = self.lexer.line, // should be correct... right?
+                                .source = self.lexer.source,
+                            },
                         });
                         if (e) |ee| {
                             e = try self.strConcat(
@@ -1996,13 +2127,24 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
 
                     // BAD BAD BAD BAD
                     while (og[i] != ')' and og[i] != '.' and og[i] != '&') i += 1;
-                    const v = try self.instantiateVar(&.{}, .{ .from = st.from + start, .to = st.from + i, .type = .IDENTIFIER });
+                    const v = try self.instantiateVar(&.{}, .{
+                        .from = st.from + start,
+                        .to = st.from + i,
+                        .type = .IDENTIFIER,
+                        .line = st.line,
+                    });
                     var varExpr = try self.allocExpr(.{
                         .e = .{ .Var = .{
                             .v = v.v,
                             .match = v.m,
                         } },
                         .t = v.t,
+                        .l = .{
+                            .from = st.from + start,
+                            .to = st.from + i,
+                            .line = st.line,
+                            .source = self.lexer.source,
+                        },
                     });
 
                     while (true) {
@@ -2012,9 +2154,20 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                                 const lastLast = i;
                                 while (og[i] != ')' and og[i] != '.' and og[i] != '&') i += 1;
                                 const field = og[lastLast..i];
+                                const fieldLoc = Loc{
+                                    .from = st.from + lastLast,
+                                    .to = st.from + i,
+                                    .line = st.line,
+                                    .source = self.lexer.source,
+                                };
+
                                 const t = try self.typeContext.field(
                                     varExpr.t,
                                     field,
+                                    &.{
+                                        .l = varExpr.l,
+                                        .r = fieldLoc,
+                                    },
                                 );
                                 varExpr = try self.allocExpr(.{
                                     .t = t,
@@ -2024,17 +2177,32 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                                             .Access = field,
                                         },
                                     } },
+                                    .l = varExpr.l.between(fieldLoc),
                                 });
                             },
                             '&' => {
                                 i += 1;
                                 const ptr = (try self.defined(.Ptr)).dataInst;
-                                try self.typeContext.unify(ptr.t, varExpr.t);
+                                const l = Loc{
+                                    .from = st.from + i - 1,
+                                    .to = st.from + i,
+                                    .line = st.line,
+                                    .source = self.lexer.source,
+                                };
+                                try self.typeContext.unify(
+                                    ptr.t,
+                                    varExpr.t,
+                                    &.{
+                                        .l = varExpr.l,
+                                        .r = l,
+                                    },
+                                );
                                 varExpr = try self.allocExpr(.{
                                     .t = ptr.tyArgs[0],
                                     .e = .{
                                         .UnOp = .{ .op = .Deref, .e = varExpr },
                                     },
+                                    .l = l,
                                 });
                             },
                             ')' => {
@@ -2070,6 +2238,13 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                 .Str = try s.toOwnedSlice(),
             },
             .t = try self.definedType(.ConstStr),
+            .l = .{
+                // NOTE: same problem as the loc definition for string in the beginning.
+                .from = st.from + last,
+                .to = st.from + i,
+                .line = self.lexer.line,
+                .source = self.lexer.source,
+            },
         });
         if (e) |ee| {
             e = try self.strConcat(
@@ -2080,14 +2255,18 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
             e = se;
         }
     }
-    return e orelse self.allocExpr(.{ .e = .{ .Str = &.{} }, .t = try self.definedType(.ConstStr) });
+    return e orelse self.allocExpr(.{
+        .e = .{ .Str = &.{} },
+        .t = try self.definedType(.ConstStr),
+        .l = self.loc(st),
+    });
 }
 
 fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
     const sc = try self.defined(.StrConcat);
     const sci = sc.dataInst;
-    try self.typeContext.unify(sci.tyArgs[0], l.t);
-    try self.typeContext.unify(sci.tyArgs[1], r.t);
+    try self.typeContext.unify(sci.tyArgs[0], l.t, &.{ .l = l.l });
+    try self.typeContext.unify(sci.tyArgs[1], r.t, &.{ .l = r.l });
     const args = try self.arena.alloc(*AST.Expr, 2);
     args[0] = l;
     args[1] = r;
@@ -2101,9 +2280,11 @@ fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
                     .env = try self.typeContext.newEnv(&.{}),
                 } }),
                 .e = .{ .Con = &sc.data.stuff.cons[0] },
+                .l = l.l.between(r.l),
             }),
             .args = args,
         } },
+        .l = l.l.between(r.l),
     });
 }
 
@@ -2179,7 +2360,7 @@ const Type = struct {
     }
 
     // type-o
-    fn typ(this: *const @This()) ParserError!AST.Type {
+    fn typ(this: *const @This()) ParserError!LocdIn(AST.Type) {
         const self = this.parser;
         // temp
         if (self.consume(.TYPE)) |ty| {
@@ -2187,121 +2368,153 @@ const Type = struct {
             if (ity.tyArgs.len != 0) {
                 try self.reportError(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
             }
-            return ity.t;
+            return .{ .e = ity.t, .l = self.loc(ty) };
         } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
-            return self.typeContext.newType(.{ .TVar = try self.lookupTVar(tv, this.binding) });
+            return .{
+                .e = try self.typeContext.newType(.{
+                    .TVar = try self.lookupTVar(tv, this.binding),
+                }),
+                .l = self.loc(tv),
+            };
         } else if (self.check(.LEFT_PAREN)) {
             const ty = try this.sepTyo();
             try self.devour(.RIGHT_PAREN);
             return ty;
-        } else if (self.check(.UNDERSCORE)) {
+        } else if (self.consume(.UNDERSCORE)) |tok| {
             if (self.selfType) |t| {
-                return t;
+                return .{ .e = t, .l = self.loc(tok) };
             } else {
                 // TODO: signal error
                 unreachable;
             }
-        } else if (self.check(.LEFT_BRACE)) {
+        } else if (self.consume(.LEFT_BRACE)) |leftTok| {
             var fields = std.ArrayList(AST.TypeF(AST.Type).Field).init(self.arena);
             while (true) {
                 const field = try self.expect(.IDENTIFIER);
                 try self.devour(.COLON);
                 const t = try this.sepTyo();
                 try fields.append(.{
-                    .t = t,
+                    .t = t.e,
                     .field = field.literal(self.lexer.source),
                 });
 
                 if (!self.check(.COMMA)) break;
             }
-            try self.devour(.RIGHT_BRACE);
+            const rightTok = try self.expect(.RIGHT_BRACE);
+            const l = self.loc(leftTok).between(self.loc(rightTok));
 
-            return try self.typeContext.newType(.{ .Anon = fields.items });
+            return .{
+                .e = try self.typeContext.newType(.{ .Anon = fields.items }),
+                .l = l,
+            };
         } else {
             try self.errorExpect("type");
         }
         unreachable;
     }
 
-    fn sepTyo(this: *const @This()) !AST.Type {
+    fn sepTyo(this: *const @This()) !LocdIn(AST.Type) {
         const self = this.parser;
         if (self.consume(.TYPE)) |tyName| {
             const ty = try self.qualifiedType(tyName);
 
             var tyArgs = std.ArrayList(AST.Type).init(self.arena);
+            var l = self.loc(tyName);
             while (true) {
                 const tokType = self.peek().type;
                 if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE)) { // bad but works
                     break;
                 }
 
-                try tyArgs.append(try this.typ());
+                const lt = try this.typ();
+                l = l.between(lt.l);
+
+                try tyArgs.append(lt.e);
             }
 
             // simply check arity.
-            try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items);
+            try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items, &.{ .l = l });
 
             // there's a possibility it's a function!
             if (self.check(.RIGHT_ARROW)) {
                 const args = try self.arena.alloc(AST.Type, 1);
                 args[0] = ty.t;
                 const ret = try this.sepTyo();
-                return try self.typeContext.newType(.{
-                    .Fun = .{
-                        .args = args,
-                        .ret = ret,
-                        .env = if (this.binding != null)
-                            // in general case
-                            try self.typeContext.newEnv(null)
-                        else
-                            // in external functions, assume no environment.
-                            try self.typeContext.newEnv(&.{}),
-                    },
-                });
+                return .{
+                    .e = try self.typeContext.newType(.{
+                        .Fun = .{
+                            .args = args,
+                            .ret = ret.e,
+                            .env = if (this.binding != null)
+                                // in general case
+                                try self.typeContext.newEnv(null)
+                            else
+                                // in external functions, assume no environment.
+                                try self.typeContext.newEnv(&.{}),
+                        },
+                    }),
+                    .l = l.between(ret.l),
+                };
             } else {
-                return ty.t;
+                return .{ .e = ty.t, .l = l };
             }
-        } else if (self.check(.LEFT_PAREN)) {
+        } else if (self.consume(.LEFT_PAREN)) |ltok| {
             // try parse function (but it can also be an extra paren!)
+            var l = self.loc(ltok);
             var args = std.ArrayList(AST.Type).init(self.arena);
-            while (!self.check(.RIGHT_PAREN)) {
-                try args.append(try this.sepTyo());
-                if (self.peek().type != .RIGHT_PAREN) {
-                    try self.devour(.COMMA);
+            if (self.consume(.RIGHT_PAREN)) |rtok| {
+                l = l.between(self.loc(rtok));
+            } else {
+                while (true) {
+                    const t = try this.sepTyo();
+                    l = l.between(t.l);
+                    try args.append(t.e);
+
+                    if (!self.check(.COMMA)) {
+                        break;
+                    }
                 }
+                const rtok = try self.expect(.RIGHT_PAREN);
+                l = l.between(self.loc(rtok));
             }
 
             if (self.check(.RIGHT_ARROW)) {
                 const ret = try this.typ();
-                return try self.typeContext.newType(.{ .Fun = .{
-                    .ret = ret,
-                    .args = args.items,
-                    .env = try self.typeContext.newEnv(null),
-                } });
+                return .{
+                    .e = try self.typeContext.newType(.{ .Fun = .{
+                        .ret = ret.e,
+                        .args = args.items,
+                        .env = try self.typeContext.newEnv(null),
+                    } }),
+                    .l = l.between(ret.l),
+                };
             } else if (args.items.len == 1) { // just parens!
-                return args.items[0];
+                return .{ .e = args.items[0], .l = l };
             } else if (args.items.len == 0) {
                 // only Unit tuple is supported.
-                return try self.definedType(.Unit);
+                return .{ .e = try self.definedType(.Unit), .l = l };
             } else { // this LOOKS like a tuple, but we don't support tuples yet!
                 try self.reportError(.{ .TuplesNotYetSupported = .{} });
-                return self.typeContext.fresh();
+                return .{ .e = try self.typeContext.fresh(), .l = l };
             }
         } else if (self.consume(.IDENTIFIER)) |tv| {
             const tvt = try self.typeContext.newType(.{
                 .TVar = try self.lookupTVar(tv, this.binding),
             });
-            if (self.check(.RIGHT_ARROW)) {
+            if (self.consume(.RIGHT_ARROW)) |rtok| {
                 const args = try self.arena.alloc(AST.Type, 1);
                 args[0] = tvt;
                 const ret = try this.sepTyo();
-                return self.typeContext.newType(.{ .Fun = .{
-                    .args = args,
-                    .ret = ret,
-                    .env = try self.typeContext.newEnv(null),
-                } });
+                return .{
+                    .e = try self.typeContext.newType(.{ .Fun = .{
+                        .args = args,
+                        .ret = ret.e,
+                        .env = try self.typeContext.newEnv(null),
+                    } }),
+                    .l = self.loc(tv).between(self.loc(rtok)),
+                };
             } else {
-                return tvt;
+                return .{ .e = tvt, .l = self.loc(tv) };
             }
         } else {
             return try this.typ();
@@ -2394,11 +2607,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
         .uid = self.gen.vars.newUnique(),
     };
     try self.reportError(.{
-        .UndefinedVariable = .{ .varname = placeholderVar, .loc = .{
-            .from = varTok.from,
-            .to = varTok.to,
-            .source = self.lexer.source,
-        } },
+        .UndefinedVariable = .{ .varname = placeholderVar, .loc = varTok.toLocation(self.lexer.source) },
     });
     const t = try self.typeContext.fresh();
 
@@ -2426,7 +2635,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
             .m = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(AST.Scheme.empty())),
         },
         .Fun => |fun| b: {
-            const funTyAndMatch = try self.instantiateFunction(fun);
+            const funTyAndMatch = try self.instantiateFunction(fun, self.loc(varTok));
             break :b .{
                 .v = .{ .Fun = fun },
                 .t = funTyAndMatch.t,
@@ -2435,7 +2644,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
         },
 
         .ClassFun => |cfun| b: {
-            const match = try self.instantiateScheme(cfun.scheme);
+            const match = try self.instantiateScheme(cfun.scheme, self.loc(varTok));
 
             // mk new, instantiated type
             var params = std.ArrayList(AST.Type).init(self.arena);
@@ -2472,12 +2681,13 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
                 .classFun = cfun,
                 .instances = instances,
                 .ref = ref,
+                .loc = self.loc(varTok),
             });
             break :b varInst;
         },
 
         .Extern => |extfun| {
-            const match = try self.instantiateScheme(extfun.scheme);
+            const match = try self.instantiateScheme(extfun.scheme, self.loc(varTok));
 
             var params = std.ArrayList(AST.Type).init(self.arena);
             for (extfun.params) |p| {
@@ -2529,8 +2739,8 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
     };
 }
 
-fn instantiateFunction(self: *Self, fun: *AST.Function) !struct { t: AST.Type, m: *AST.Match(AST.Type) } {
-    const match = try self.instantiateScheme(fun.scheme);
+fn instantiateFunction(self: *Self, fun: *AST.Function, l: ?Loc) !struct { t: AST.Type, m: *AST.Match(AST.Type) } {
+    const match = try self.instantiateScheme(fun.scheme, l);
 
     // mk normal, uninstantiated type.
     var params = std.ArrayList(AST.Type).init(self.arena);
@@ -2600,9 +2810,10 @@ fn solveAvailableConstraints(self: *Self) !void {
                             //  Then here, we would return some placeholder (or the placeholder will be provided then)
                             unreachable;
                         };
-                        const funTyAndMatch = try self.instantiateFunction(fun);
+                        const funTyAndMatch = try self.instantiateFunction(fun, assoc.loc);
                         const funTy = funTyAndMatch.t;
-                        try self.typeContext.unify(assoc.to, funTy);
+
+                        try self.typeContext.unify(assoc.to, funTy, if (assoc.loc) |l| &.{ .l = l } else null);
 
                         assoc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
 
@@ -2686,7 +2897,7 @@ const DataInst = struct {
     match: *AST.Match(AST.Type),
 };
 fn instantiateData(self: *Self, data: *AST.Data) !DataInst {
-    const match = try self.instantiateScheme(data.scheme);
+    const match = try self.instantiateScheme(data.scheme, null);
 
     return .{
         .t = try self.typeContext.newType(.{ .Con = .{
@@ -2702,9 +2913,9 @@ fn qualifiedType(self: *Self, first: Token) !DataShit {
     const stuff = try self.parseQualifiedType(first);
     const modpath = stuff.modpath;
     const tyname = stuff.name;
-    const loc = stuff.loc;
+    const qloc = stuff.loc;
 
-    if (try self.findQualifiedDataOrClass(modpath, tyname, loc)) |dataOrClass| {
+    if (try self.findQualifiedDataOrClass(modpath, tyname, qloc)) |dataOrClass| {
         switch (dataOrClass) {
             .Data => |data| {
                 const dt = try self.instantiateData(data);
@@ -2722,11 +2933,10 @@ fn qualifiedType(self: *Self, first: Token) !DataShit {
             },
         }
     } else {
-        return try self.newPlaceholderType(tyname, .{
-            .from = first.from,
-            .to = first.to,
-            .source = self.lexer.source,
-        });
+        return try self.newPlaceholderType(
+            tyname,
+            first.toLocation(self.lexer.source),
+        );
     }
 }
 
@@ -2797,11 +3007,7 @@ fn lookupTVar(self: *Self, tvTok: Token, binding: ?AST.TVar.Binding) !AST.TVar {
         if (binding == null) {
             try self.reportError(.{ .UndefinedTVar = .{
                 .tvname = tvname,
-                .loc = .{
-                    .from = tvTok.from,
-                    .to = tvTok.to,
-                    .source = self.lexer.source,
-                },
+                .loc = tvTok.toLocation(self.lexer.source),
             } });
         }
         return try self.newTVar(tvTok.literal(self.lexer.source), binding);
@@ -2838,11 +3044,10 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
             };
             data.scheme = AST.Scheme.empty();
             try self.reportError(.{
-                .UndefinedCon = .{ .conname = conName, .loc = .{
-                    .from = conTok.from,
-                    .to = conTok.to,
-                    .source = self.lexer.source,
-                } },
+                .UndefinedCon = .{
+                    .conname = conName,
+                    .loc = conTok.toLocation(self.lexer.source),
+                },
             });
 
             // return placeholder var after an error.
@@ -2884,7 +3089,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
 }
 
 // SCHEMES
-fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
+fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match(AST.Type) {
     const tvars = try self.arena.alloc(AST.Type, scheme.tvars.len);
     for (scheme.tvars, 0..) |_, i| {
         tvars[i] = try self.typeContext.fresh();
@@ -2915,6 +3120,8 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
                 .{ .TVar = assoc.depends },
             )),
             .to = try self.typeContext.mapType(&tvarMatch, assoc.to),
+            .loc = l,
+
             .instances = try self.getInstancesForClass(assoc.classFun.class),
             .ref = ref,
         });
@@ -2923,8 +3130,8 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme) !*AST.Match(AST.Type) {
     // now members fields
     for (scheme.tvars, tvars) |tv, tyv| {
         for (tv.fields) |field| {
-            const fieldTy = try self.typeContext.field(tyv, field.field);
-            try self.typeContext.unify(fieldTy, try self.typeContext.mapType(&tvarMatch, field.t));
+            const fieldTy = try self.typeContext.field(tyv, field.field, null);
+            try self.typeContext.unify(fieldTy, try self.typeContext.mapType(&tvarMatch, field.t), null);
         }
     }
 
@@ -2993,7 +3200,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         };
         try tvars.append(tv);
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
-        try self.typeContext.unify(e.t, tvt);
+        try self.typeContext.unify(e.t, tvt, null);
     }
 
     var envs = std.ArrayList(AST.EnvRef).init(self.arena);
@@ -3049,7 +3256,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         };
                         try tvars.append(tv);
                         const tvt = try self.typeContext.newType(.{ .TVar = tv });
-                        try self.typeContext.unify(tyv.t, tvt);
+                        try self.typeContext.unify(tyv.t, tvt, null);
                     }
 
                     var assocEnvIt = assocFTVs.envs.iterator();
@@ -3092,6 +3299,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 pub const Association = struct {
     from: AST.Type,
     to: AST.Type,
+    loc: ?Loc,
 
     classFun: *AST.ClassFun,
     ref: *?AST.Match(AST.Type).AssocRef,
@@ -3201,7 +3409,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
     return if (self.prelude) |prelude| {
         const data = prelude.defined(predefinedType);
         return .{
-            .dataInst = try self.instantiateData(data),
+            .dataInst = try self.instantiateData(data), // no location, because it should not happen?
             .data = data,
         };
     } else b: {
@@ -3211,7 +3419,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
         };
 
         return .{
-            .dataInst = try self.instantiateData(data),
+            .dataInst = try self.instantiateData(data), // -||-
             .data = data,
         };
     };
@@ -3367,5 +3575,19 @@ fn parseInt(self: *const Self, tok: Token) i64 {
 }
 
 fn reportError(self: *const Self, ierr: Error) !void {
-    try self.errors.append(.{ .err = ierr, .module = self.name });
+    try self.errors.append(.{ .err = ierr, .module = .{
+        .name = self.name,
+        .source = self.lexer.source,
+    } });
+}
+
+fn LocdIn(t: type) type {
+    return struct {
+        l: Loc,
+        e: t,
+    };
+}
+
+fn loc(self: *const Self, t: Token) Loc {
+    return t.toLocation(self.lexer.source);
 }

@@ -8,6 +8,7 @@ const Error = @"error".Error;
 const common = @import("common.zig");
 const Str = common.Str;
 const Set = @import("Set.zig").Set;
+const Loc = common.Location;
 
 // Personal Note: bruh, I mean, an allocator for this would basically be the same.
 // I guess this is more local.
@@ -75,7 +76,8 @@ pub fn newEnv(self: *Self, e: ?ast.Env) !ast.EnvRef {
     return .{ .id = envid };
 }
 
-pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
+const Locs = ?*const struct { l: Loc, r: ?Loc = null }; // NOTE: when null, then mismatch should not happen!
+pub fn unify(self: *Self, t1: TyRef, t2: TyRef, locs: Locs) error{OutOfMemory}!void {
     const tt1 = self.getType(t1);
 
     // handle tyvars, cuz it's easier.
@@ -84,8 +86,8 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
         .TyVar => |tyv| {
             if (self.getFieldsForTVar(tyv)) |fields| {
                 for (fields) |f| {
-                    const t2f = try self.field(t2, f.field);
-                    try self.unify(t2f, f.t);
+                    const t2f = try self.field(t2, f.field, locs);
+                    try self.unify(t2f, f.t, locs);
                 }
             }
             self.setType(t1, t2);
@@ -98,8 +100,8 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
                     // COPYPASTA.
                     if (self.getFieldsForTVar(tyv)) |fields| {
                         for (fields) |f| {
-                            const t1f = try self.field(t1, f.field);
-                            try self.unify(t1f, f.t);
+                            const t1f = try self.field(t1, f.field, locs);
+                            try self.unify(t1f, f.t, locs);
                         }
                     }
                     self.setType(t2, t1);
@@ -116,63 +118,63 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
         .Anon => |fields1| {
             switch (tt2) {
                 .Anon => |fields2| {
-                    try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = fields2 });
+                    try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = fields2 }, locs);
                     self.setType(t1, t2);
                 },
                 .Con => |rcon| {
                     switch (rcon.type.stuff) {
                         .recs => |recs| {
-                            try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = recs });
+                            try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = recs }, locs);
                             self.setType(t1, t2);
                         },
                         .cons => unreachable, // error! (make it more specialized, explain that this constructor does not have fields)
                     }
                 },
-                else => try self.errMismatch(t1, t2),
+                else => try self.errMismatch(t1, t2, locs),
             }
         },
         .Con => |lcon| {
             switch (tt2) {
                 .Con => |rcon| {
                     if (!lcon.type.eq(rcon.type)) {
-                        try self.errMismatch(t1, t2);
+                        try self.errMismatch(t1, t2, locs);
                         return;
                     }
 
-                    try self.unifyMatch(lcon.application, rcon.application);
+                    try self.unifyMatch(lcon.application, rcon.application, locs);
                 },
 
                 .Anon => |fields2| {
                     switch (lcon.type.stuff) {
                         .recs => |recs| {
-                            try self.matchFields(.{ .t = t1, .fields = recs }, .{ .t = t2, .fields = fields2 });
+                            try self.matchFields(.{ .t = t1, .fields = recs }, .{ .t = t2, .fields = fields2 }, locs);
                             self.setType(t2, t1);
                         },
                         .cons => unreachable, // explain
                     }
                 },
-                else => try self.errMismatch(t1, t2),
+                else => try self.errMismatch(t1, t2, locs),
             }
         },
         .Fun => |lfun| {
             switch (tt2) {
                 .Fun => |rfun| {
-                    try self.unifyEnv(lfun.env, rfun.env);
-                    try self.unify(lfun.ret, rfun.ret);
-                    try self.unifyParams(lfun.args, rfun.args);
+                    try self.unifyEnv(lfun.env, rfun.env, locs);
+                    try self.unify(lfun.ret, rfun.ret, locs);
+                    try self.unifyParams(lfun.args, rfun.args, locs);
                 },
-                else => try self.errMismatch(t1, t2),
+                else => try self.errMismatch(t1, t2, locs),
             }
         },
         .TVar => |ltv| {
             switch (tt2) {
                 .TVar => |rtv| {
                     if (!ltv.eq(rtv)) {
-                        return try self.errMismatch(t1, t2);
+                        return try self.errMismatch(t1, t2, locs);
                     }
                 },
 
-                else => try self.errMismatch(t1, t2),
+                else => try self.errMismatch(t1, t2, locs),
             }
         }, // TODO
     }
@@ -181,13 +183,13 @@ pub fn unify(self: *Self, t1: TyRef, t2: TyRef) error{OutOfMemory}!void {
 // BUG: because we later unify the type, we report an error on a type that later gets unified. make it better.
 // BUG: make the error better, make one type as "the one that overwrites" and report "extraenous field".
 // NOTE: maybe make a union type (if dealing with two anons)
-fn matchFields(self: *Self, rec1: struct { t: ast.Type, fields: []ast.Record }, rec2: struct { t: ast.Type, fields: []ast.Record }) !void {
+fn matchFields(self: *Self, rec1: struct { t: ast.Type, fields: []ast.Record }, rec2: struct { t: ast.Type, fields: []ast.Record }, locs: Locs) !void {
     // TODO: unstupidify (look next)
     for (rec2.fields) |f2| {
         // assume deduplicated.
         for (rec1.fields) |f1| {
             if (common.streq(f2.field, f1.field)) {
-                try self.unify(f1.t, f2.t);
+                try self.unify(f1.t, f2.t, locs);
                 break;
             }
         } else {
@@ -200,7 +202,7 @@ fn matchFields(self: *Self, rec1: struct { t: ast.Type, fields: []ast.Record }, 
         // assume deduplicated.
         for (rec2.fields) |f2| {
             if (common.streq(f2.field, f1.field)) {
-                try self.unify(f1.t, f2.t);
+                try self.unify(f1.t, f2.t, locs);
                 break;
             }
         } else {
@@ -216,7 +218,8 @@ pub fn getFieldsForTVar(self: *const Self, tyv: ast.TyVar) ?[]ast.Record {
         null;
 }
 
-pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
+pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
+    _ = locs;
     switch (self.getType(t)) {
         .Anon => |recs| {
             for (recs) |rec| {
@@ -289,7 +292,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str) !ast.Type {
     }
 }
 
-fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef) !void {
+fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs) !void {
     // SLOW AND BAD! Structurally check if environments are the same (but it's BAD, because we are not deduplicating them!!)
     // Later (after we implement classes) we will probably have an id associated with it.
     // Then I can decide if I want structural equality.
@@ -306,13 +309,13 @@ fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef) !void {
     };
 
     if (lenv.len != renv.len) {
-        try self.envMismatch(lenv, renv);
+        try self.envMismatch(lenv, renv, locs);
         return;
     }
 
     for (lenv, renv) |lv, rv| {
         if (!std.meta.eql(lv, rv)) {
-            try self.envMismatch(lenv, renv);
+            try self.envMismatch(lenv, renv, locs);
             return;
         }
     }
@@ -350,31 +353,49 @@ fn setEnvRef(self: *Self, src: EnvRef, dest: EnvRef) void {
     }
 }
 
-pub fn unifyMatch(self: *Self, lm: *const ast.Match(ast.Type), rm: *const ast.Match(ast.Type)) !void {
-    try self.unifyParams(lm.tvars, rm.tvars);
+pub fn unifyMatch(self: *Self, lm: *const ast.Match(ast.Type), rm: *const ast.Match(ast.Type), locs: Locs) !void {
+    try self.unifyParams(lm.tvars, rm.tvars, locs);
 }
 
-pub fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef) !void {
+pub fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef, locs: Locs) !void {
     if (lps.len != rps.len) {
-        try self.paramLenMismatch(lps.len, rps.len);
+        try self.paramLenMismatch(lps.len, rps.len, locs);
         return;
     }
 
     for (lps, rps) |lp, rp| {
-        try self.unify(lp, rp);
+        try self.unify(lp, rp, locs);
     }
 }
 
-fn errMismatch(self: *Self, lt: TyRef, rt: TyRef) !void {
-    try self.reportError(.{ .MismatchingTypes = .{ .lt = lt, .rt = rt } });
+fn errMismatch(self: *Self, lt: TyRef, rt: TyRef, locs: Locs) !void {
+    std.debug.assert(locs != null);
+    try self.reportError(.{ .MismatchingTypes = .{
+        .lt = lt,
+        .lpos = locs.?.l,
+        .rt = rt,
+        .rpos = locs.?.r,
+    } });
 }
 
-fn envMismatch(self: *Self, lenv: ast.Env, renv: ast.Env) !void {
-    try self.reportError(.{ .MismatchingEnv = .{ .le = lenv, .re = renv } });
+fn envMismatch(self: *Self, lenv: ast.Env, renv: ast.Env, locs: Locs) !void {
+    std.debug.assert(locs != null);
+    try self.reportError(.{ .MismatchingEnv = .{
+        .le = lenv,
+        .re = renv,
+        .lpos = locs.?.l,
+        .rpos = locs.?.r,
+    } });
 }
 
-fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize) !void {
-    try self.reportError(.{ .MismatchingParamLen = .{ .lpl = lpl, .rpl = rpl } });
+fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize, locs: Locs) !void {
+    std.debug.assert(locs != null);
+    try self.reportError(.{ .MismatchingParamLen = .{
+        .lpl = lpl,
+        .rpl = rpl,
+        .lloc = locs.?.l,
+        .rloc = locs.?.r,
+    } });
 }
 
 // TODO: ignoring allocation failures to keep method signature. figure out a way to do a performant occurs check
@@ -636,7 +657,10 @@ fn mapEnv(self: *Self, match: *const ast.Match(ast.Type), envref: ast.EnvRef) !a
 }
 
 fn reportError(self: *const Self, ierr: Error) !void {
-    try self.errors.append(.{ .err = ierr, .module = "<TODO>" });
+    try self.errors.append(.{ .err = ierr, .module = .{
+        .name = "<TODO>",
+        .source = "<TODO>",
+    } });
 }
 
 // copied from parser.zig until I solve how I should report errors (probably an Errors struct that can be passed down to various components.)

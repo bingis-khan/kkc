@@ -6,14 +6,28 @@ pub fn streq(s1: Str, s2: Str) bool {
 pub const Location = struct {
     from: usize,
     to: usize,
+    line: usize,
     source: Str, // store this, because errors can come from diffent files.
 
     const Self = @This();
-    pub fn between(l: *const Self, r: *const Self) Self {
+    pub fn between(l: *const Self, mr: anytype) Self {
+        const r = b: {
+            if (@TypeOf(mr) == *const Self) {
+                break :b mr.*;
+            } else if (@TypeOf(mr) == Self) {
+                break :b mr;
+            } else if (@TypeOf(mr) == ?Self) {
+                if (mr == null) return l.*;
+                break :b mr.?;
+            } else {
+                @compileError("expect Location");
+            }
+        };
         if (l.source.ptr != r.source.ptr) {
             unreachable;
         }
         return .{
+            .line = @min(l.line, r.line),
             .from = @min(l.from, r.from),
             .to = @max(l.to, r.to),
             .source = l.source,

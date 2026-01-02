@@ -1,17 +1,9 @@
 #!./zig-out/bin/kkc
 
+fn miau()
+	println('cock!!')
+
 if True
-a s
-d
-a s
-d asd a
-d a  akj
+	miau(a, b)
 
-				sdlkjaklsdj
-
-					sdsa
-
-		dasdasdaklsjfkljcsxfkxcvkjx
-	fn miau()
-		pas ad miau(
-
+pass
