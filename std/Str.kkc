@@ -9,6 +9,7 @@ use Iter
 	all
 	for-each
 	Drop
+	TakeWhile
 use Mem
 use Math
 
@@ -231,9 +232,17 @@ inst Str Drop
 
 	chars (self): self
 
+inst Str TakeWhile
+	print-str (self)
+		self for-each(print-str)
+
+	chars (self): self
+
 
 ###### Functions ######
 
 fn nullchar() -> Cnile.Char: Mem.zeroed()  # HACK!!
 fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)
+
+
 

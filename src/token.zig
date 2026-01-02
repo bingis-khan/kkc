@@ -11,12 +11,15 @@ pub const Token = struct {
         return src[self.from..self.to];
     }
 
-    pub fn toLocation(self: Self, src: Str) common.Location {
+    pub fn toLocation(self: Self, src: Str, moduleName: Str) common.Location {
         return .{
             .from = self.from,
             .to = self.to,
-            .source = src,
             .line = self.line,
+            .module = .{
+                .name = moduleName,
+                .source = src,
+            },
         };
     }
 
@@ -75,6 +78,7 @@ pub const TokenType = enum {
     ELIF,
     ELSE,
     AS,
+    BREAK,
 
     WHILE,
     CASE,

@@ -1,0 +1,46 @@
+use Iter
+	IntoIter
+	into-iter
+	Iter
+	next
+	take-while
+	for-each
+	null
+	drop'
+	count
+use Term
+use Str
+	Str
+	chars
+use Str2
+	is-digit
+	parse-int
+
+# TODO: make definition something like:
+# Scanner
+#   s Str  <- spawns constraint
+
+Scanner str
+	s str
+
+
+inst Iter Scanner
+	next (self): (&self&.s) next()
+
+inst IntoIter Scanner
+	into-iter (self): self
+
+
+fn mk (s str) <= Str str:
+	Scanner { s: s chars() }
+
+fn scan-int (sc Ptr (Scanner s)) -> Maybe Int <= Iter s, IntoIter s
+	digit-chars = sc take-while(is-digit)
+
+	if digit-chars null()
+		return None
+
+	sc drop'(digit-chars count())
+	return digit-chars parse-int()
+
+	

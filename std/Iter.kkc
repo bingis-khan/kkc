@@ -180,6 +180,64 @@ fn zip(left, right)
 	return Zip { left-it: left-it, right-it: right-it }
 
 
+# comically inefficient
+TakeWhile it a
+	it it
+	pred a -> Bool
+
+inst IntoIter TakeWhile
+	into-iter(self): self
+
+inst Iter TakeWhile
+	next (self)
+		mx = (&self&.it) next()
+		case mx
+			None
+				return None
+
+			Just(x)
+				if self&.pred(x)
+					return Just(x)
+				else
+					return None
+	
+fn take-while(it, pred):
+	TakeWhile { it: it into-iter(), pred }
+
+
+# drop while
+DropWhile it a
+	it it
+	pred a -> Bool
+	finished Bool
+
+inst IntoIter DropWhile
+	into-iter (self): self
+
+inst Iter DropWhile
+	next (self)
+		if self&.finished
+			return (&self&.it) next()
+
+		while True
+			case (&self&.it) next()
+				None
+					self <&.finished= True
+					return None
+
+				Just(x)
+					if not self&.pred(x)
+						self <&.finished= True
+						return Just(x)
+
+fn drop-while (it, pred):
+	DropWhile { it: it into-iter(), pred, finished: False }
+
+# Haskell's `break`.
+fn split (it, pred):
+	Tuple2(it take-while(pred), it drop-while(pred))
+
+
 
 # consoomers
 
@@ -212,6 +270,8 @@ fn all(it, fun): it
 	reduce(True, fn (e, x): fun(e) and x)
 
 fn head(it): (&it into-iter()) next()
+
+fn null(it): it head() == None
 
 
 
@@ -250,3 +310,18 @@ inst ListLike Range
 			AssignedSpread(xptr)
 				xptr <&= Range(rf + lc, rt - rc)
 				return True
+
+
+
+# Effectful versions
+# Sometimes, I just want to consoooooom
+# effectful version will end with a `'`
+
+fn drop'(it, n)
+	1 to (n) for-each(fn _: it next())
+
+# fn split'(it, pred)
+# 	clone-it = it&
+# 	tit = (&clone-it) take-while(pred)
+# 	drop-num = tit count()
+# 	dit = it drop'()

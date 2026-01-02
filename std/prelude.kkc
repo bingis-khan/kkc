@@ -74,6 +74,11 @@ class ListLike
 Tuple2 a b
 	Tuple2 a b
 
+# maybe they should not be here?
+fn fst(Tuple2(l, _)): l
+fn snd(Tuple2(_, r)): r
+
+
 
 Maybe a
 	None
@@ -82,3 +87,30 @@ Maybe a
 Either e a
 	Left e
 	Right a
+
+
+
+
+
+##### INSTANCES !!!! #######
+
+inst Eq Int
+	eq (l, r): @memeq(l, r)
+
+inst Eq Bool
+	eq (l, r): @memeq(l, r)
+
+inst Eq ConstStr
+	eq (l, r): @memeq(l, r)
+
+inst Eq Maybe
+	eq (l, r)
+		case Tuple2(l, r)
+			Tuple2(None, None)
+				return True
+
+			Tuple2(Just(l), Just(r))
+				return l == r
+
+inst Eq Ptr
+	eq (Ptr(l), Ptr(r)): l == r

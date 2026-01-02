@@ -72,6 +72,9 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             self.returnValue = cv;
             return error.Return;
         },
+        .Break => {
+            return error.Break;
+        },
         .VarDec => |vd| {
             const v = try self.expr(vd.varValue);
             try self.putVar(vd.varDef, v, vd.varValue.t);
@@ -407,6 +410,15 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
 
                 .argv => return try self.val(.{ .extptr = @ptrCast(self.progArgs.ptr) }, @sizeOf(*anyopaque)),
                 .argc => return try self.intValue(@intCast(self.progArgs.len)),
+
+                .memeq => {
+                    const l = try self.expr(intr.args[0]);
+                    const r = try self.expr(intr.args[1]);
+                    const size = self.sizeOf(intr.args[0].t).size;
+                    const eqResult = std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size));
+                    const boolVal = try self.boolValue(eqResult);
+                    return boolVal;
+                },
             }
         },
         .Int => |x| {
@@ -433,13 +445,30 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     }
                 },
 
-                .Equals, .NotEquals => {
+                .Equals, .NotEquals => |ref| {
                     const l = try self.expr(op.l);
                     const r = try self.expr(op.r);
-                    const size = self.sizeOf(op.l.t).size;
-                    const eqResult = std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size));
-                    const boolVal = try self.boolValue(if (op.op == .Equals) eqResult else !eqResult);
-                    return boolVal;
+                    // const size = self.sizeOf(op.l.t).size;
+                    // const eqResult = std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size));
+                    // const boolVal = try self.boolValue(if (op.op == .Equals) eqResult else !eqResult);
+                    const instFunBoxed = switch (ref.*.?) {
+                        .Id => |uid| b: {
+                            const instfun = self.tymap.tryGetFunctionByID(uid).?;
+                            break :b try self.initFunction(instfun.fun, instfun.m);
+                        },
+                        .InstFun => |instfun| try self.initFunction(instfun.fun, instfun.m),
+                    };
+
+                    const instFun: *align(1) const RawValue = @ptrCast(&nunbox(instFunBoxed.ref.extptr).ptr);
+
+                    var args = [_]ValueMeta{ l, r };
+                    const eqResult = try self.function(instFun.fun, &args);
+
+                    return switch (op.op) {
+                        .Equals => eqResult,
+                        .NotEquals => self.boolValue(!isTrue(eqResult)),
+                        else => unreachable,
+                    };
                 },
 
                 // these ones don't short circuit, so we can simplify our structure.
@@ -782,7 +811,10 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
         error.Return => {
             return self.returnValue;
         },
-        error.Break => unreachable,
+        error.Break => {
+            std.debug.print("TRIED TO BREAK OUT OF FUNCTION\n", .{});
+            return error.Bruh;
+        },
         else => return err,
     };
 
@@ -1275,6 +1307,8 @@ const RealErr = error{
     CaseNotMatched,
 
     OutOfMemory,
+
+    Bruh,
 } || std.DynLib.Error;
 const Runtime = error{
     Return,

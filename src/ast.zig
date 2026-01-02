@@ -22,6 +22,62 @@ pub const Ctx = struct {
             .typeContext = typeContext,
         };
     }
+
+    pub fn Wrapped(t: type) type {
+        return struct {
+            t: t,
+
+            pub fn print(self: @This(), c: Ctx) void {
+                _ = c;
+                std.debug.print("{}", .{self.t});
+            }
+        };
+    }
+    pub fn wrap(t: anytype) Wrapped(@TypeOf(t)) {
+        return Wrapped(@TypeOf(t)){ .t = t };
+    }
+
+    pub fn OnlyIf(t: type) type {
+        return struct {
+            t: t,
+            cond: bool,
+
+            pub fn print(self: *const @This(), c: Ctx) void {
+                if (self.cond) {
+                    c.print(self.t);
+                }
+            }
+        };
+    }
+
+    pub fn onlyIf(cond: bool, p: anytype) OnlyIf(@TypeOf(p)) {
+        return OnlyIf(@TypeOf(p)){
+            .t = p,
+            .cond = cond,
+        };
+    }
+
+    pub fn Iter(itt: type, sept: type) type {
+        return struct {
+            it: itt,
+            sep: sept,
+
+            pub fn print(self: *const @This(), c: Ctx) void {
+                var it = self.it;
+                while (it.next()) |x| {
+                    x.key_ptr.*.print(c); // TODO: when needed, make it more general. (eg: take in a function.)
+                    c.s(self.sep);
+                }
+            }
+        };
+    }
+    pub fn iter(it: anytype, sep: anytype) Iter(@TypeOf(it), @TypeOf(sep)) {
+        return Iter(@TypeOf(it), @TypeOf(sep)){
+            .it = it,
+            .sep = sep,
+        };
+    }
+
     pub fn s(self: Self, ss: Str) void {
         var last_nl_i: usize = 0;
         for (ss, 0..) |c, i| {
@@ -56,7 +112,7 @@ pub const Ctx = struct {
     }
 
     // HACK: don't use newlines in format strings PLS
-    fn sp(self: Self, comptime fmt: []const u8, args: anytype) void {
+    pub fn sp(self: Self, comptime fmt: []const u8, args: anytype) void {
         if (fmt.len > 0 and self.hadNewline.*) {
             self.sindent();
             self.hadNewline.* = false;
@@ -164,7 +220,7 @@ pub const Env = []VarInst;
 pub const VarInst = struct {
     v: union(enum) {
         Fun: *Function,
-        ClassFun: struct { cfun: *ClassFun, ref: *?Match(Type).AssocRef },
+        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst },
         Var: Var,
     },
     m: *Match(Type),
@@ -229,6 +285,7 @@ pub const Stmt = union(enum) {
         cases: []Case,
     },
     Return: *Expr,
+    Break: struct {},
     Function: *Function,
     Instance: *Instance,
     Pass: ?i64,
@@ -312,6 +369,9 @@ pub const Stmt = union(enum) {
                 expr.print(c);
                 c.s("\n");
             },
+            .Break => {
+                c.s("break\n");
+            },
             .Function => |fun| {
                 fun.print(c);
             },
@@ -357,7 +417,7 @@ pub const Decon = struct {
             spreadTy: Type,
 
             // for class function "deconstruct"
-            assocRef: *?Match(Type).AssocRef,
+            assocRef: InstFunInst,
         },
     },
 
@@ -460,7 +520,10 @@ pub const Expr = struct {
 
     pub const VarType = union(enum) {
         Fun: *Function,
-        ClassFun: struct { cfun: *ClassFun, ref: *?Match(Type).AssocRef }, // SMELL: this one I have to allocate, because I'm returning the whole struct from a function, so the address will change.
+        ClassFun: struct {
+            cfun: *ClassFun,
+            ref: InstFunInst,
+        }, // SMELL: this one I have to allocate, because I'm returning the whole struct from a function, so the address will change.
         Var: Var,
         ExternalFun: *ExternalFunction,
 
@@ -581,14 +644,14 @@ pub const UnOp = union(enum) {
     Negate,
 };
 
-pub const BinOp = enum {
+pub const BinOp = union(enum) {
     Plus,
     Minus,
     Times,
     Divide,
 
-    Equals,
-    NotEquals,
+    Equals: InstFunInst,
+    NotEquals: InstFunInst,
     GreaterThan,
     LessThan,
     GreaterEqualThan,
@@ -618,6 +681,8 @@ pub const BinOp = enum {
         c.s(sop);
     }
 };
+
+pub const InstFunInst = *?Match(Type).AssocRef;
 
 pub const Type = TyRef;
 pub const TyRef = struct {

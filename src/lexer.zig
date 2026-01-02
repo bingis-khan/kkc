@@ -165,6 +165,7 @@ pub const Lexer = struct {
                 // from https://www.openmymind.net/Switching-On-Strings-In-Zig/
                 const Keyword = enum {
                     @"return",
+                    @"break",
                     @"if",
                     elif,
                     @"else",
@@ -187,6 +188,7 @@ pub const Lexer = struct {
 
                 break :b switch (keyword) {
                     .@"return" => .RETURN,
+                    .@"break" => .BREAK,
                     .@"if" => .IF,
                     .elif => .ELIF,
                     .@"else" => .ELSE,

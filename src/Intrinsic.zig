@@ -11,6 +11,7 @@ pub const Type = enum {
     @"size-of",
     argv,
     argc,
+    memeq,
     // inteq,
 };
 
@@ -21,6 +22,7 @@ const List = [_]Self{
     .{ .ty = .@"size-of", .args = 1 },
     .{ .ty = .argv, .args = 0 },
     .{ .ty = .argc, .args = 0 },
+    .{ .ty = .memeq, .args = 2 },
     // .{ .ty = .inteq, .args = 2 },
 };
 

@@ -4,6 +4,7 @@ const Str = Common.Str;
 const Loc = Common.Location;
 const ast = @import("ast.zig");
 const Module = @import("Module.zig");
+const ModuleInfo = Common.ModuleInfo;
 const token = @import("token.zig");
 const Token = token.Token;
 const TokenType = token.TokenType;
@@ -46,9 +47,16 @@ pub const Error = union(enum) {
         className: Str,
     },
 
+    UndefinedIntrinsic: struct {
+        name: Str,
+        loc: Loc,
+    },
+
     MismatchingTypes: struct {
+        lfull: ast.Type,
         lt: ast.Type,
         lpos: Loc,
+        rfull: ?ast.Type,
         rt: ast.Type,
         rpos: ?Loc,
     },
@@ -97,12 +105,10 @@ pub const Error = union(enum) {
         data: *ast.Data,
         class: *ast.Class,
         possibilities: Module.DataInstance,
+        loc: Loc,
     },
 
-    ConstraintsLeft: struct {
-        module: Str,
-        constraints: []parser.Association,
-    },
+    ConstraintsLeft: []parser.Association,
 
     TVarDoesNotImplementClass: struct {
         tv: ast.TVar,
@@ -152,36 +158,58 @@ pub const Error = union(enum) {
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
+
+    const ErrCtx = struct {
+        module: ModuleInfo,
+        c: ast.Ctx,
+
+        fn atLocation(self: *const @This(), loc: Loc, labels: anytype) void {
+            errorAtLocation(self.module, self.c, loc, labels);
+        }
+    };
     pub fn print(self: @This(), c: ast.Ctx, module: ModuleInfo) void {
+        const err = ErrCtx{
+            .module = module,
+            .c = c,
+        };
         switch (self) {
             .IncorrectIndent => p("incorrect indent", .{}),
             .UnexpectedToken => |e| {
-                module.errorAtLocation(e.got.toLocation(module.source), .{ .label = .{
-                    .fmt = "expected {}, but got {}",
-                    .args = .{ e.expected, e.got.type },
-                } });
+                err.atLocation(e.got.toLocation(module.source, module.name), .{
+                    .label = .{ "expected ", ast.Ctx.wrap(e.expected), ", but got ", ast.Ctx.wrap(e.got.type) },
+                });
                 // p("expected {}, but got {}", .{ e.expected, e.got });
             },
             .UnexpectedThing => |e| p("expect {s} at {}", .{ e.expected, e.at }),
             .UndefinedVariable => |uv| {
-                module.errorAtLocation(uv.loc, .{ .label = .{
-                    .fmt = "undefined variable {s}",
-                    .args = .{uv.varname.name},
-                } });
+                err.atLocation(uv.loc, .{
+                    .label = .{ "undefined variable ", uv.varname.name },
+                });
                 // p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to });
             },
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
             .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),
             .UndefinedTVar => |e| p("undefined tvar {s} at ({}, {})", .{ e.tvname, e.loc.from, e.loc.to }),
+            .UndefinedIntrinsic => |e| {
+                err.atLocation(e.loc, .{ .label = .{"undefined intrinsic"} });
+            },
             .RecursiveType => |e| {
                 c.print(.{ "tried to unify tyvar ", e.tyv, ", which is in type ", e.in, "\n" });
             },
             .MismatchingTypes => |e| {
-                c.s("Mismatching types: ");
-                e.lt.print(c); // UGLY
-                c.s(" =/= ");
-                e.rt.print(c);
-                p("", .{}); // newline
+                if (e.rpos) |rpos| {
+                    err.atLocation(e.lpos, .{ .label = .{ "expected type ", e.lt, ast.Ctx.onlyIf(!e.lt.eq(e.lfull), .{ " (", e.lfull, ")" }) } });
+                    err.atLocation(rpos, .{ .label = .{ "but got ", e.rt, ast.Ctx.onlyIf(e.rfull != null and !e.rt.eq(e.rfull.?), .{ " (", e.rfull.?, ")" }) } });
+                } else {
+                    err.atLocation(e.lpos, .{ .label = .{
+                        "expected type ",
+                        e.lt,
+                        ast.Ctx.onlyIf(!e.lt.eq(e.lfull), .{ " (", e.lfull, ")" }),
+                        ", but got ",
+                        e.rt,
+                        ast.Ctx.onlyIf(e.rfull != null and !e.rt.eq(e.rfull.?), .{ " (", e.rfull.?, ")" }),
+                    } });
+                }
             },
             .MismatchingEnv => |e| {
                 c.s("Mismatching envs: ");
@@ -192,10 +220,10 @@ pub const Error = union(enum) {
             },
             .MismatchingParamLen => |e| {
                 if (e.rloc) |rloc| {
-                    module.errorAtLocation(e.lloc, .{ .label = .{ .fmt = "mismatching param lengths. expected length of {}", .args = .{e.lpl} } });
-                    module.errorAtLocation(rloc, .{ .label = .{ .fmt = "but got length of {}", .args = .{e.rpl} } });
+                    err.atLocation(e.lloc, .{ .label = .{ "mismatching param lengths. expected length of ", e.lpl } });
+                    err.atLocation(rloc, .{ .label = .{ "but got length of ", e.rpl } });
                 } else {
-                    module.errorAtLocation(e.lloc, .{ .label = .{ .fmt = "mismatching param lengths. expected length of {}, but got {}", .args = .{ e.lpl, e.rpl } } });
+                    err.atLocation(e.lloc, .{ .label = .{ "mismatching param lengths. expected length of ", e.lpl, ", but got ", e.rpl } });
                 }
                 // p("Mismatching lengths: {} =/= {}", .{ e.lpl, e.rpl });
             },
@@ -212,19 +240,14 @@ pub const Error = union(enum) {
             .DataDoesNotExportThing => p("DataDoesNotExportThing", .{}),
             .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),
             .CouldNotFindInstanceForType => |e| {
-                c.print(.{ "Could not find instance of ", e.class, " for type ", e.data, ". Possible instances: " });
-                var it = e.possibilities.iterator();
-                while (it.next()) |ee| {
-                    ee.key_ptr.*.print(c);
-                    c.s(", ");
-                }
-                // p("could not find instance of class {s} for type {s}", .{ e.class.name, e.data.name })
+                err.atLocation(e.loc, .{
+                    .label = .{ "Could not find instance of ", e.class, " for type ", e.data, ". Possible instances: ", ast.Ctx.iter(e.possibilities.iterator(), ", ") },
+                });
             },
             .ConstraintsLeft => |e| {
-                p("{s}: constraints left {}:", .{ e.module, e.constraints.len });
-                for (e.constraints) |constr| {
-                    c.print(.{
-                        "\t",
+                p("{s}: constraints left {}:", .{ module.name, e.len });
+                for (e) |constr| {
+                    err.atLocation(constr.loc.?, .{ .label = .{
                         constr.from,
                         " => ",
                         constr.to,
@@ -233,8 +256,7 @@ pub const Error = union(enum) {
                         "(",
                         constr.classFun.class,
                         ")",
-                        "\n",
-                    });
+                    } });
                 }
             },
             .TVarDoesNotImplementClass => |e| p("tvar {s} does not implement class {s}", .{ e.tv.name, e.class.name }),
@@ -259,89 +281,84 @@ pub const Error = union(enum) {
 // const Formatted = struct { fmt: com, args: anytype };
 
 pub const Errors = std.ArrayList(struct { module: ModuleInfo, err: Error });
-pub const ModuleInfo = struct {
-    source: Str,
-    name: Str,
+fn errorAtLocation(module: ModuleInfo, c: ast.Ctx, loc: Loc, labels: anytype) void {
+    const label = @field(labels, "label");
+    c.print(.{ module.name, ": " });
+    c.print(label);
+    c.print("\n");
 
-    fn errorAtLocation(module: *const @This(), loc: Loc, labels: anytype) void {
-        const label = @field(labels, "label");
-        const labelFmt = @field(label, "fmt");
-        const labelArgs = @field(label, "args");
-        std.debug.print("{s}: " ++ labelFmt ++ "\n", .{module.name} ++ labelArgs);
+    // I actually don't know when it can happen, so TODO
+    if (loc.module.source[loc.from] == '\n') {
+        unreachable;
+    }
 
-        // I actually don't know when it can happen, so TODO
-        if (loc.source[loc.from] == '\n') {
-            unreachable;
+    var lineBeginIndex = loc.from;
+    while (true) {
+        if (lineBeginIndex == 0) break;
+        if (loc.module.source[lineBeginIndex] == '\n') {
+            lineBeginIndex += 1;
+            break;
         }
+        lineBeginIndex -= 1;
+    }
 
-        var lineBeginIndex = loc.from;
-        while (true) {
-            if (lineBeginIndex == 0) break;
-            if (loc.source[lineBeginIndex] == '\n') {
-                lineBeginIndex += 1;
-                break;
-            }
-            lineBeginIndex -= 1;
-        }
-
-        var tabsBeforeToken: u32 = 0;
-        for (lineBeginIndex..loc.from) |i| {
-            if (loc.source[i] == '\t') {
-                tabsBeforeToken += 1;
-            }
-        }
-
-        var lineEndIndex = loc.to;
-        while (true) {
-            if (lineEndIndex == loc.source.len or loc.source[lineEndIndex] == '\n') {
-                break;
-            }
-
-            lineEndIndex += 1;
-        }
-
-        var linesInBetween: u32 = 0;
-        for (loc.from..loc.to) |i| {
-            if (loc.source[i] == '\n') linesInBetween += 1;
-        }
-
-        if (linesInBetween == 0) {
-            std.debug.print(" {} | {s}\n", .{ loc.line, loc.source[lineBeginIndex..lineEndIndex] });
-
-            // PRINT THE UNDERLINE
-            // TEMP: with normal stdio, just count the number once.
-            var lineLengthMeasure = std.io.countingWriter(std.io.null_writer);
-            var measureWriter = lineLengthMeasure.writer();
-            measureWriter.print("{}", .{loc.line}) catch {};
-            for (0..lineLengthMeasure.bytes_written + 1) |_| {
-                std.debug.print(" ", .{}); // pad
-            }
-
-            // pad to match the length of the number.
-            std.debug.print(" | ", .{});
-
-            for (0..tabsBeforeToken) |_| {
-                std.debug.print("\t", .{});
-            }
-
-            const lineChars = loc.from - lineBeginIndex;
-            for (0..lineChars - tabsBeforeToken) |_| {
-                std.debug.print(" ", .{});
-            }
-
-            for (loc.from..loc.to) |_| {
-                std.debug.print("^", .{});
-            }
-            std.debug.print("\n", .{});
-        } else {
-            unreachable; // TODO
-        }
-
-        if (@hasField(@TypeOf(labels), "footnote")) {
-            const footFmt = @field(label, "fmt");
-            _ = footFmt; // autofix
-            const footArgs = @field(label, "args");
-            _ = footArgs; // autofix
+    var tabsBeforeToken: u32 = 0;
+    for (lineBeginIndex..loc.from) |i| {
+        if (loc.module.source[i] == '\t') {
+            tabsBeforeToken += 1;
         }
     }
-};
+
+    var lineEndIndex = loc.to;
+    while (true) {
+        if (lineEndIndex == loc.module.source.len or loc.module.source[lineEndIndex] == '\n') {
+            break;
+        }
+
+        lineEndIndex += 1;
+    }
+
+    var linesInBetween: u32 = 0;
+    for (loc.from..loc.to) |i| {
+        if (loc.module.source[i] == '\n') linesInBetween += 1;
+    }
+
+    if (linesInBetween == 0) {
+        c.sp(" {} | {s}\n", .{ loc.line, loc.module.source[lineBeginIndex..lineEndIndex] });
+
+        // PRINT THE UNDERLINE
+        // TEMP: with normal stdio, just count the number once.
+        var lineLengthMeasure = std.io.countingWriter(std.io.null_writer);
+        var measureWriter = lineLengthMeasure.writer();
+        measureWriter.print("{}", .{loc.line}) catch {};
+        for (0..lineLengthMeasure.bytes_written + 1) |_| {
+            c.print(" "); // pad
+        }
+
+        // pad to match the length of the number.
+        c.print(" | ");
+
+        for (0..tabsBeforeToken) |_| {
+            c.print("\t");
+        }
+
+        const lineChars = loc.from - lineBeginIndex;
+        for (0..lineChars - tabsBeforeToken) |_| {
+            c.print(" ");
+        }
+
+        for (loc.from..loc.to) |_| {
+            c.print("^");
+        }
+        c.print("\n");
+    } else {
+        unreachable; // TODO
+    }
+
+    if (@hasField(@TypeOf(labels), "footnote")) {
+        const footFmt = @field(label, "fmt");
+        _ = footFmt; // autofix
+        const footArgs = @field(label, "args");
+        _ = footArgs; // autofix
+    }
+}

@@ -3,11 +3,19 @@ pub const Str = []const u8;
 pub fn streq(s1: Str, s2: Str) bool {
     return std.mem.eql(u8, s1, s2);
 }
+
+pub const ModuleInfo = struct {
+    source: Str, // store this, because errors can come from diffent files.
+    name: Str,
+};
+
 pub const Location = struct {
     from: usize,
     to: usize,
     line: usize,
-    source: Str, // store this, because errors can come from diffent files.
+    module: ModuleInfo,
+
+    // TODO: but them together in some sort of "ModuleInfo"
 
     const Self = @This();
     pub fn between(l: *const Self, mr: anytype) Self {
@@ -23,14 +31,14 @@ pub const Location = struct {
                 @compileError("expect Location");
             }
         };
-        if (l.source.ptr != r.source.ptr) {
+        if (l.module.source.ptr != r.module.source.ptr) {
             unreachable;
         }
         return .{
             .line = @min(l.line, r.line),
             .from = @min(l.from, r.from),
             .to = @max(l.to, r.to),
-            .source = l.source,
+            .module = l.module,
         };
     }
 };

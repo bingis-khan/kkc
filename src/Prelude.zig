@@ -29,6 +29,8 @@ pub fn defined(self: *const Self, premade: PremadeType) *ast.Data {
 pub const PremadeTypeName = TypeNameArray(PremadeType);
 
 pub const PremadeClass = enum {
+    Eq,
+
     ListLike,
     // MapList,
 };

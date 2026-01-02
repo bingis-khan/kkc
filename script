@@ -1,9 +1,1 @@
 #!./zig-out/bin/kkc
-
-fn miau()
-	println('cock!!')
-
-if True
-	miau(a, b)
-
-pass

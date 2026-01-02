@@ -116,10 +116,9 @@ pub fn parse(self: *Self) !Module {
     try self.solveAvailableConstraints();
 
     if (self.associations.items.len > 0) {
-        try self.reportError(.{ .ConstraintsLeft = .{
-            .module = self.name,
-            .constraints = self.associations.items,
-        } });
+        try self.reportError(.{
+            .ConstraintsLeft = self.associations.items,
+        });
     }
 
     // std.debug.print("parsing success\n", .{});
@@ -449,7 +448,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 const con = &self.typeContext.getType(t).Con.type.stuff.cons[0]; // WARNING: funny casts
                 break :bb try self.allocExpr(.{
                     .t = t,
-                    .l = retTok.toLocation(self.lexer.source),
+                    .l = self.loc(retTok),
                     .e = .{ .Con = con },
                 });
             };
@@ -461,6 +460,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
 
             break :b .{ .Return = expr };
         } // return
+        else if (self.check(.BREAK)) {
+            try self.endStmt();
+            break :b .{ .Break = .{} };
+            //
+        } // break
         else if (self.check(.USE)) {
             var modpath = std.ArrayList(Str).init(self.arena);
             const firstMod = try self.expect(.TYPE);
@@ -491,7 +495,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                         const dataOrClass: ?Module.DataOrClass = bb: {
                             if (mmodule) |mod| {
                                 const doc = mod.lookupData(typeName) orelse {
-                                    try self.reportError(.{ .UndefinedType = .{ .typename = typeName, .loc = tt.toLocation(self.lexer.source) } });
+                                    try self.reportError(.{ .UndefinedType = .{ .typename = typeName, .loc = self.loc(tt) } });
                                     break :bb null;
                                 };
                                 try self.scope.currentScope().types.put(typeName, doc);
@@ -1146,21 +1150,21 @@ fn deconstruction(self: *Self) !*AST.Decon {
         const v = try self.newVar(vn);
         break :b .{
             .t = v.t,
-            .l = vn.toLocation(self.lexer.source),
+            .l = self.loc(vn),
             .d = .{ .Var = v.v },
         };
     } // var
     else if (self.consume(.UNDERSCORE)) |ut| b: {
         break :b .{
             .t = try self.typeContext.fresh(),
-            .l = ut.toLocation(self.lexer.source),
+            .l = self.loc(ut),
             .d = .{ .None = .{} },
         };
     } // ignore var
     else if (self.consume(.INTEGER)) |numTok| b: {
         break :b .{
             .t = try self.definedType(.Int),
-            .l = numTok.toLocation(self.lexer.source),
+            .l = self.loc(numTok),
             .d = .{ .Num = self.parseInt(numTok) },
         };
     } // number
@@ -1187,7 +1191,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
             }
         };
 
-        const conLocation = cn.toLocation(self.lexer.source); // TODO: incorrect in case of qualified types
+        const conLocation = self.loc(cn); // TODO: incorrect in case of qualified types
 
         var decons: []*AST.Decon = &.{};
         var args: []AST.Type = &.{};
@@ -1214,6 +1218,9 @@ fn deconstruction(self: *Self) !*AST.Decon {
         try self.typeContext.unifyParams(con.tys, args, &.{
             .l = conLocation,
             .r = tysLoc,
+        }, &.{
+            .lfull = con.t,
+            .rfull = null,
         });
         break :b .{
             .t = con.t,
@@ -1251,7 +1258,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
                     .decon = try Common.allocOne(self.arena, AST.Decon{
                         .t = fieldTy,
                         .d = .{ .Var = vnt.v },
-                        .l = fieldTok.toLocation(self.lexer.source),
+                        .l = self.loc(fieldTok),
                     }),
                 });
             }
@@ -1310,58 +1317,37 @@ fn deconstruction(self: *Self) !*AST.Decon {
             }
         };
 
-        const class: *AST.Class = self.prelude.?.definedClass(.ListLike); // NOTE: assumes, that we won't be doing any deconstructing of lists in prelude (a fair assumption)
+        const class: *AST.Class = try self.definedClass(.ListLike); // NOTE: assumes, that we won't be doing any deconstructing of lists in prelude (a fair assumption)
         const cfun = class.classFuns[0]; // assume only one function! no need create another enum or search by string!
 
-        // NOTE COPYPASTA: copied from instantiating class function.!!
-        // typical class instantiation stuff (TODO: later extract this behavior and share it between class fun instantiations and this (and later Hashmap deconstructions n premade class stuff))
-        const match = try self.instantiateScheme(cfun.scheme, dloc);
-        const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
-        const instances = try self.getInstancesForClass(class);
-        const classSelf = try self.typeContext.mapType(match, cfun.self);
-        try self.typeContext.unify(classSelf, listTy, null); // TODO: null?
+        const ifn = try self.instantiateClassFunction(cfun, dloc);
 
-        // mk new, instantiated type
-        var params = std.ArrayList(AST.Type).init(self.arena);
-        for (cfun.params) |p| {
-            try params.append(try self.typeContext.mapType(match, p.t));
-        }
+        // ====== Construct fun ty from here. ======
+        const params = try self.arena.alloc(AST.Type, 6);
 
-        const ret = try self.typeContext.mapType(match, cfun.ret);
+        params[0] = listTy;
+
+        const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
+        const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
+        // this is to allow modification, while allowing types which don't have a stable pointer to any element.
+        try self.typeContext.unify(elemPtr.tyArgs[0], elemTy, null); // TODO: nulls here, we'll see if this place can error out.
+        try self.typeContext.unify(elemPtrPtr.tyArgs[0], elemPtr.t, null);
+
+        try self.typeContext.unify(params[1], elemPtrPtr.t, null);
+        try self.typeContext.unify(params[4], elemPtrPtr.t, null);
+
+        const spread = (try self.defined(.ListSpread)).dataInst;
+        try self.typeContext.unify(spread.tyArgs[0], spreadInnerTy, null);
+        try self.typeContext.unify(params[3], spread.t, null);
+        try self.typeContext.unify(spread.t, spreadTy, null);
+
         const funTy = try self.typeContext.newType(.{ .Fun = .{
-            .args = params.items,
-            .ret = ret,
+            .args = params,
+            .ret = try self.definedType(.Bool),
             .env = try self.typeContext.newEnv(null),
         } });
 
-        // UNIFICATION SPECIFIC TO THIS FUNCTION DECLARATION.
-        // Expect type: (self, Ptr a, Int, Spread spreadTy, Ptr a, Int)
-        {
-            std.debug.assert(params.items.len == 6); // If this changed, the ListLike declaration might have changed.
-
-            const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
-            const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
-            // this is to allow modification, while allowing types which don't have a stable pointer to any element.
-            try self.typeContext.unify(elemPtr.tyArgs[0], elemTy, null); // TODO: nulls here, we'll see if this place can error out.
-            try self.typeContext.unify(elemPtrPtr.tyArgs[0], elemPtr.t, null);
-
-            try self.typeContext.unify(params.items[1], elemPtrPtr.t, null);
-            try self.typeContext.unify(params.items[4], elemPtrPtr.t, null);
-
-            const spread = (try self.defined(.ListSpread)).dataInst;
-            try self.typeContext.unify(spread.tyArgs[0], spreadInnerTy, null);
-            try self.typeContext.unify(params.items[3], spread.t, null);
-            try self.typeContext.unify(spread.t, spreadTy, null);
-        }
-
-        try self.addAssociation(.{
-            .from = listTy,
-            .to = funTy,
-            .classFun = cfun,
-            .instances = instances,
-            .ref = ref,
-            .loc = dloc,
-        });
+        try self.typeContext.unify(ifn.t, funTy, &.{ .l = dloc });
 
         break :b .{
             .t = listTy,
@@ -1372,7 +1358,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
                     .spreadVar = if (spreadVar) |v| .{ .v = v, .t = spreadInnerTy } else null,
                     .r = right.items,
                 } else null,
-                .assocRef = ref,
+                .assocRef = ifn.ref,
 
                 .elemTy = elemTy,
                 .spreadTy = spreadTy,
@@ -1420,7 +1406,7 @@ fn finishExpression(self: *Self, leftmost: *AST.Expr) ParserError!*AST.Expr {
 
 fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*AST.Expr {
     const optok = self.peek();
-    const binop = getBinOp(self.peek()) orelse return left;
+    var binop = getBinOp(self.peek()) orelse return left;
     const nextPrec = binOpPrecedence(binop);
 
     if (nextPrec <= minPrec) {
@@ -1618,11 +1604,29 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             },
 
             .Equals, .NotEquals => b: {
+                const eqClass = try self.definedClass(.Eq);
+                const eqFun = eqClass.classFuns[0];
+                const l = left.l.between(right.l);
+                const ifn = try self.instantiateClassFunction(eqFun, l);
+
                 try self.typeContext.unify(left.t, right.t, &.{
                     .l = left.l,
                     .r = right.l,
                 });
-                break :b try self.definedType(.Bool);
+
+                const boolTy = try self.definedType(.Bool);
+                const funTy = try self.makeType(.{ .Fun = .{
+                    .args = [_]AST.Type{ left.t, right.t },
+                    .ret = boolTy,
+                } });
+
+                try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
+
+                // TODO: FUNNY!
+                if (binop == .Equals) binop = .{ .Equals = ifn.ref };
+                if (binop == .NotEquals) binop = .{ .NotEquals = ifn.ref };
+
+                break :b boolTy;
             },
 
             else => unreachable,
@@ -1755,7 +1759,9 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     else if (self.consume(.INTRINSIC)) |intrTok| {
         var l = self.loc(intrTok);
         // for intrinsics, we must IMMEDIATELY parse the call - we don't want to deal with them being passed around.
-        if (Intrinsic.findByName(intrTok.literal(self.lexer.source)[1..])) |intr| {
+        const fullIntr = intrTok.literal(self.lexer.source);
+        const intrName = fullIntr[1..];
+        if (Intrinsic.findByName(intrName)) |intr| {
             // parse any required arguments brah.
             var args = std.ArrayList(*AST.Expr).init(self.arena);
             if (intr.args > 0) {
@@ -1793,6 +1799,13 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     try self.typeContext.unify(ptr.tyArgs[0], try self.definedType(.ConstStr), null);
                     break :b ptr.t;
                 },
+
+                .memeq => b: {
+                    try self.typeContext.unify(args.items[0].t, args.items[1].t, &.{
+                        .l = l,
+                    });
+                    break :b try self.definedType(.Bool);
+                },
             };
 
             return self.allocExpr(.{
@@ -1806,8 +1819,27 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .l = l,
             });
         } else {
-            std.debug.print("{s}\n", .{intrTok.literal(self.lexer.source)[1..]});
-            unreachable; // Error!
+            // NOTE: after this error there are bound to be shitty errors about trying to call some intrinsic type.
+            // Most likely, the intrinsic has args, BUT it's possible we are calling `@undefined` for example, but we end up consuming the call.
+            // TODO: think about it, I should probably implement that skipping.
+            try self.reportError(.{ .UndefinedIntrinsic = .{
+                .name = fullIntr,
+                .loc = l,
+            } });
+
+            return self.allocExpr(.{
+                .t = try self.typeContext.fresh(),
+                .e = .{
+                    .Intrinsic = .{ // placeholder
+                        .intr = .{
+                            .ty = .undefined,
+                            .args = 0,
+                        },
+                        .args = &.{},
+                    },
+                },
+                .l = l,
+            });
         }
     } // intrinsic
     else if (self.consume(.TYPE)) |con| {
@@ -1906,7 +1938,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
     const definitions = definitionsAndLoc.fields;
 
     // instantiate it.
-    const mDataOrClass = try self.findQualifiedDataOrClass(modpath, name.literal(self.lexer.source), name.toLocation(self.lexer.source));
+    const mDataOrClass = try self.findQualifiedDataOrClass(modpath, name.literal(self.lexer.source), self.loc(name));
     if (mDataOrClass) |dataOrClass| {
         switch (dataOrClass) {
             .Data => |data| {
@@ -2009,16 +2041,16 @@ fn someRecordDefinition(self: *Self) !struct { fields: []AST.Expr.Field, rightLo
 
 fn parseQualifiedType(self: *Self, first: Token) !struct { modpath: Module.Path, name: Str, loc: Common.Location } {
     if (self.peek().type != .DOT) {
-        return .{ .modpath = &.{}, .name = first.literal(self.lexer.source), .loc = first.toLocation(self.lexer.source) };
+        return .{ .modpath = &.{}, .name = first.literal(self.lexer.source), .loc = self.loc(first) };
     }
 
     var fullPath = try std.ArrayList(Str).initCapacity(self.arena, 1);
     try fullPath.append(first.literal(self.lexer.source));
-    var qloc = first.toLocation(self.lexer.source);
+    var qloc = self.loc(first);
     while (self.check(.DOT)) {
         const tt = try self.expect(.TYPE);
         try fullPath.append(tt.literal(self.lexer.source));
-        qloc = qloc.between(&tt.toLocation(self.lexer.source));
+        qloc = qloc.between(self.loc(tt));
     }
 
     const modpath = fullPath.items[0 .. fullPath.items.len - 1];
@@ -2112,7 +2144,10 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                                 .from = st.from + last, // this is probably incorrect.
                                 .to = st.from + ci,
                                 .line = self.lexer.line, // should be correct... right?
-                                .source = self.lexer.source,
+                                .module = .{
+                                    .source = self.lexer.source,
+                                    .name = self.name,
+                                },
                             },
                         });
                         if (e) |ee| {
@@ -2143,7 +2178,10 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                             .from = st.from + start,
                             .to = st.from + i,
                             .line = st.line,
-                            .source = self.lexer.source,
+                            .module = .{
+                                .source = self.lexer.source,
+                                .name = self.name,
+                            },
                         },
                     });
 
@@ -2158,7 +2196,10 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                                     .from = st.from + lastLast,
                                     .to = st.from + i,
                                     .line = st.line,
-                                    .source = self.lexer.source,
+                                    .module = .{
+                                        .name = self.name,
+                                        .source = self.lexer.source,
+                                    },
                                 };
 
                                 const t = try self.typeContext.field(
@@ -2187,7 +2228,10 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                                     .from = st.from + i - 1,
                                     .to = st.from + i,
                                     .line = st.line,
-                                    .source = self.lexer.source,
+                                    .module = .{
+                                        .name = self.name,
+                                        .source = self.lexer.source,
+                                    },
                                 };
                                 try self.typeContext.unify(
                                     ptr.t,
@@ -2243,7 +2287,10 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                 .from = st.from + last,
                 .to = st.from + i,
                 .line = self.lexer.line,
-                .source = self.lexer.source,
+                .module = .{
+                    .source = self.lexer.source,
+                    .name = self.name,
+                },
             },
         });
         if (e) |ee| {
@@ -2300,8 +2347,10 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .MINUS => .Minus,
         .TIMES => .Times,
         .SLASH => .Divide,
-        .EQEQ => .Equals,
-        .NOTEQ => .NotEquals,
+
+        // TODO: I think in the future, match on TokenTypes and only after map them. This is very iffy bruh.
+        .EQEQ => .{ .Equals = undefined },
+        .NOTEQ => .{ .NotEquals = undefined },
         .LT => .LessThan,
         .LTEQ => .LessEqualThan,
         .GT => .GreaterThan,
@@ -2433,7 +2482,10 @@ const Type = struct {
             }
 
             // simply check arity.
-            try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items, &.{ .l = l });
+            try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items, &.{ .l = l }, &.{
+                .lfull = ty.t,
+                .rfull = null,
+            });
 
             // there's a possibility it's a function!
             if (self.check(.RIGHT_ARROW)) {
@@ -2607,7 +2659,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
         .uid = self.gen.vars.newUnique(),
     };
     try self.reportError(.{
-        .UndefinedVariable = .{ .varname = placeholderVar, .loc = varTok.toLocation(self.lexer.source) },
+        .UndefinedVariable = .{ .varname = placeholderVar, .loc = self.loc(varTok) },
     });
     const t = try self.typeContext.fresh();
 
@@ -2644,45 +2696,19 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
         },
 
         .ClassFun => |cfun| b: {
-            const match = try self.instantiateScheme(cfun.scheme, self.loc(varTok));
+            const ifn = try self.instantiateClassFunction(cfun, self.loc(varTok));
 
-            // mk new, instantiated type
-            var params = std.ArrayList(AST.Type).init(self.arena);
-            for (cfun.params) |p| {
-                try params.append(try self.typeContext.mapType(match, p.t));
-            }
-
-            const ret = try self.typeContext.mapType(match, cfun.ret);
-            const funTy = try self.typeContext.newType(.{ .Fun = .{
-                .args = params.items,
-                .ret = ret,
-                .env = try self.typeContext.newEnv(null),
-            } });
-
-            const classSelf = try self.typeContext.mapType(match, cfun.self);
-
-            const instances = try self.getInstancesForClass(cfun.class);
-
-            const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
             const varInst = AST.VarInst{
                 .v = .{
                     .ClassFun = .{
                         .cfun = cfun,
-                        .ref = ref,
+                        .ref = ifn.ref,
                     },
                 },
-                .t = funTy,
-                .m = match,
+                .t = ifn.t,
+                .m = ifn.m,
             };
 
-            try self.addAssociation(.{
-                .from = classSelf,
-                .to = funTy,
-                .classFun = cfun,
-                .instances = instances,
-                .ref = ref,
-                .loc = self.loc(varTok),
-            });
             break :b varInst;
         },
 
@@ -2736,6 +2762,48 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
         },
         .t = varInst.t,
         .m = varInst.m,
+    };
+}
+
+fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
+    ref: AST.InstFunInst,
+    t: AST.Type,
+    m: *AST.Match(AST.Type),
+} {
+    const match = try self.instantiateScheme(cfun.scheme, l);
+
+    // mk new, instantiated type
+    var params = std.ArrayList(AST.Type).init(self.arena);
+    for (cfun.params) |p| {
+        try params.append(try self.typeContext.mapType(match, p.t));
+    }
+
+    const ret = try self.typeContext.mapType(match, cfun.ret);
+    const funTy = try self.typeContext.newType(.{ .Fun = .{
+        .args = params.items,
+        .ret = ret,
+        .env = try self.typeContext.newEnv(null),
+    } });
+
+    const classSelf = try self.typeContext.mapType(match, cfun.self);
+
+    const instances = try self.getInstancesForClass(cfun.class);
+
+    const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
+
+    try self.addAssociation(.{
+        .from = classSelf,
+        .to = funTy,
+        .classFun = cfun,
+        .instances = instances,
+        .ref = ref,
+        .loc = l,
+    });
+
+    return .{
+        .ref = ref,
+        .t = funTy,
+        .m = match,
     };
 }
 
@@ -2816,19 +2884,21 @@ fn solveAvailableConstraints(self: *Self) !void {
                         try self.typeContext.unify(assoc.to, funTy, if (assoc.loc) |l| &.{ .l = l } else null);
 
                         assoc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
-
-                        _ = self.associations.orderedRemove(i); // TODO: not very efficient with normal ArrayList.
-                        i -%= 1; // make sure to adjust index.
                     } else {
                         // error
-                        try self.reportError(.{ .CouldNotFindInstanceForType = .{
-                            .data = con.type,
-                            .class = assoc.classFun.class,
-                            .possibilities = assoc.instances,
-                        } });
+                        try self.reportError(.{
+                            .CouldNotFindInstanceForType = .{
+                                .data = con.type,
+                                .class = assoc.classFun.class,
+                                .possibilities = assoc.instances,
+                                .loc = assoc.loc.?, // TODO: is this safe?
+                            },
+                        });
                         assoc.ref.* = null;
-                        _ = self.associations.orderedRemove(i);
                     }
+
+                    _ = self.associations.orderedRemove(i); // TODO: not very efficient with normal ArrayList.
+                    i -%= 1; // make sure to adjust index.
                     hadChanges = true;
                 },
                 .Anon => unreachable, // ??? i dunno
@@ -2935,7 +3005,7 @@ fn qualifiedType(self: *Self, first: Token) !DataShit {
     } else {
         return try self.newPlaceholderType(
             tyname,
-            first.toLocation(self.lexer.source),
+            self.loc(first),
         );
     }
 }
@@ -3007,7 +3077,7 @@ fn lookupTVar(self: *Self, tvTok: Token, binding: ?AST.TVar.Binding) !AST.TVar {
         if (binding == null) {
             try self.reportError(.{ .UndefinedTVar = .{
                 .tvname = tvname,
-                .loc = tvTok.toLocation(self.lexer.source),
+                .loc = self.loc(tvTok),
             } });
         }
         return try self.newTVar(tvTok.literal(self.lexer.source), binding);
@@ -3046,7 +3116,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
             try self.reportError(.{
                 .UndefinedCon = .{
                     .conname = conName,
-                    .loc = conTok.toLocation(self.lexer.source),
+                    .loc = self.loc(conTok),
                 },
             });
 
@@ -3394,6 +3464,31 @@ const CurrentScope = struct {
 const Env = std.ArrayList(AST.VarInst);
 
 // typechecking zone
+
+// TEST ZIG'S BIG BEAN BURRITO.
+fn makeType(self: *Self, t: anytype) !AST.Type {
+    if (@hasField(@TypeOf(t), "Fun")) {
+        const fun = @field(t, "Fun");
+        if (@hasField(@TypeOf(fun), "env")) @compileError("todo");
+
+        const ret = @field(fun, "ret");
+
+        const args = @field(fun, "args");
+        const params = try self.arena.alloc(AST.Type, args.len);
+        for (args, 0..) |a, i| {
+            params[i] = a;
+        }
+
+        return try self.typeContext.newType(.{ .Fun = .{
+            .args = params,
+            .ret = ret,
+            .env = try self.typeContext.newEnv(null),
+        } });
+    } else {
+        @compileError("trying to make unknown type brub");
+    }
+}
+
 fn getReturnType(self: *Self) !AST.Type {
     return self.returnType orelse try self.definedType(.Int);
 }
@@ -3421,6 +3516,17 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
         return .{
             .dataInst = try self.instantiateData(data), // -||-
             .data = data,
+        };
+    };
+}
+
+fn definedClass(self: *Self, predefinedType: Prelude.PremadeClass) !*AST.Class {
+    return if (self.prelude) |prelude| {
+        return prelude.definedClass(predefinedType);
+    } else b: {
+        return switch (self.maybeLookupType(Prelude.PremadeClassName.get(predefinedType)) orelse break :b error.PreludeError) {
+            .Data => |_| error.PreludeError,
+            .Class => |c| c,
         };
     };
 }
@@ -3589,5 +3695,5 @@ fn LocdIn(t: type) type {
 }
 
 fn loc(self: *const Self, t: Token) Loc {
-    return t.toLocation(self.lexer.source);
+    return t.toLocation(self.lexer.source, self.name);
 }

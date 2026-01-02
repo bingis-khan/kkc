@@ -92,6 +92,18 @@ inst Iter LineIter
 ###### Functions ######
 
 # kekkekekekekkekekek
+fn is-digit (c):
+	c == char('0') or
+	c == char('1') or
+	c == char('2') or
+	c == char('3') or
+	c == char('4') or
+	c == char('5') or
+	c == char('6') or
+	c == char('7') or
+	c == char('8') or
+	c == char('9')
+
 fn parse-digit (c)
 	if c == char('0')
 		return Just(0)

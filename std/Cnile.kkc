@@ -59,5 +59,8 @@ fn seek-end(): 2
 #[ctype 'char', bytes '1']
 Char
 
+inst Eq Char
+	eq (l, r): @memeq(l, r)
+
 
 # TODO: nullable CPtr and a function CPtr a -> Maybe (Ptr a)

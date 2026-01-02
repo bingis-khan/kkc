@@ -18,7 +18,7 @@ use Iter
 # TODO: make filename a general string
 fn try-read-contents (filename, al)
 	file = Cnile.fopen(filename, 'r')
-	if file == Mem.null-ptr()
+	if file Mem.is-ptr-null()
 		return None
 
 	Cnile.fseek(file, 0, Cnile.seek-end())
@@ -43,7 +43,7 @@ fn read-contents (filename, al):
 
 fn try-write-contents (filename, contents) -> Bool
 	file = Cnile.fopen(filename, 'w')
-	if file == Mem.null-ptr()
+	if file Mem.is-ptr-null()
 		return False
 
 	# oh no, this is soooo bad.
