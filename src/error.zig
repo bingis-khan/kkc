@@ -159,11 +159,11 @@ pub const Error = union(enum) {
         std.debug.print(fmt ++ "\n", args);
     }
 
-    const ErrCtx = struct {
+    pub const ErrCtx = struct {
         module: ModuleInfo,
         c: ast.Ctx,
 
-        fn atLocation(self: *const @This(), loc: Loc, labels: anytype) void {
+        pub fn atLocation(self: *const @This(), loc: Loc, labels: anytype) void {
             errorAtLocation(self.module, self.c, loc, labels);
         }
     };

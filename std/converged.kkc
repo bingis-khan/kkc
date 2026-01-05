@@ -30,6 +30,7 @@ use Iter
 	all
 	head
 	null
+	sum
 
 	drop'
 

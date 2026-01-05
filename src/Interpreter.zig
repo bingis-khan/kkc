@@ -6,6 +6,7 @@ const Str = common.Str;
 const endianness = @import("builtin").target.cpu.arch.endian();
 const TypeContext = @import("TypeContext.zig");
 const Args = @import("Args.zig");
+const errr = @import("error.zig");
 
 const Self = @This();
 
@@ -133,7 +134,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             }
         },
         .While => |whl| {
-            while (true) loop: {
+            loop: while (true) {
                 const cond = try self.expr(whl.cond);
                 if (!isTrue(cond)) break;
 
@@ -154,6 +155,13 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                     break;
                 }
             } else {
+                const l = sw.switchOn.l;
+                var hadNewline = false;
+                const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                (errr.Error.ErrCtx{
+                    .module = l.module,
+                    .c = ctx,
+                }).atLocation(l, .{ .label = .{"miau"} });
                 return error.CaseNotMatched;
             }
         },
@@ -803,7 +811,8 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
     }
 
     for (fun.params, args) |decon, a| {
-        if (!try self.tryDeconstruct(decon, a.ref)) {
+        const av = try self.copyValue(a.ref, decon.t); // we can pass in a "ref", so make sure to copy the actual value.
+        if (!try self.tryDeconstruct(decon, av)) {
             return error.CaseNotMatched;
         }
     }

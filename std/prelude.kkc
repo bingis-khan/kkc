@@ -112,5 +112,8 @@ inst Eq Maybe
 			Tuple2(Just(l), Just(r))
 				return l == r
 
+			_
+				return False
+
 inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r

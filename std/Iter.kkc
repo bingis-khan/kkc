@@ -266,6 +266,9 @@ fn reduce (iterable it, base a, fun (item, a) -> a) -> a <= IntoIter it
 fn count(it it) -> Int <= IntoIter it:
 	it reduce(0, fn (_, x): x + 1)
 
+fn sum(it):
+	it reduce(0, fn (v, s): v + s)
+
 fn all(it, fun): it
 	reduce(True, fn (e, x): fun(e) and x)
 

@@ -1,1 +1,8 @@
 #!./zig-out/bin/kkc
+fn reset (self Int)
+	self <= 0
+
+x = 123123123
+println(x)
+x reset()
+println(x)

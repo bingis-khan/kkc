@@ -61,6 +61,9 @@ IntStrIter
 	int Int
 	len Int
 
+inst IntoIter IntStrIter
+	into-iter(self): self
+
 inst Iter IntStrIter
 	next (self Ptr IntStrIter) -> Maybe Cnile.Char
 		if self&.len <= 0
@@ -91,7 +94,7 @@ fn count-digits (self Int) -> Int
 
 inst Str Int
 	print-str (self Int) -> Unit
-		Cnile.printf1('%d', self)
+		Cnile.printf1('%ld', self)
 
 	chars (self Int):
 		IntStrIter { int: self, len: self count-digits() }
