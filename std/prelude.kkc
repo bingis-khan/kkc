@@ -50,6 +50,15 @@ Ptr a
 class Eq
 	eq (_, _) -> Bool
 
+# Ord
+Ordering
+	LT
+	EQ
+	GT
+
+class Ord
+	compare (_, _) -> Ordering
+
 # Index
 class Gettable
 	# Key
@@ -101,6 +110,9 @@ inst Eq Bool
 	eq (l, r): @memeq(l, r)
 
 inst Eq ConstStr
+	eq (l, r): @memeq(l, r)
+
+inst Eq Ordering
 	eq (l, r): @memeq(l, r)
 
 inst Eq Maybe

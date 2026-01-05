@@ -278,8 +278,8 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
                             return try self.mapType(con.application, rec.t);
                         }
                     } else {
-                        // TODO: Better error bruh. Happens when this datatype does not have this field.
-                        try self.reportError(locs, .{ .MissingField = .{ .field = mem } });
+                        // TODO: this one has funny locations. associations should carry more location info, bruh.
+                        try self.typeDoesNotHaveField(t, mem, locs, t);
                         return try self.fresh();
                     }
                 },
@@ -405,6 +405,7 @@ fn typeDoesNotHaveField(self: *Self, t: ast.Type, f: Str, locs: Locs, full: ast.
     try self.reportError(locs, .{ .TypeDoesNotHaveField = .{
         .t = t,
         .field = f,
+        .loc = locs.?.l,
     } });
 }
 

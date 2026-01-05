@@ -9,6 +9,7 @@ use Iter
 	all
 	for-each
 	Drop
+	Take
 	TakeWhile
 use Mem
 use Math
@@ -101,6 +102,48 @@ inst Str Int
 
 
 
+####### Others, non-polymorphic #######
+
+inst Str Bool
+	print-str (self Bool) -> Unit
+		if self
+			print-str('True')
+		else
+			print-str('False')
+
+	chars (self)
+		if self
+			return 'True' chars()
+		else
+			return 'False' chars()
+
+inst Str Unit
+	print-str (self Unit) -> Unit
+		print-str('()')
+
+	chars (self): '()' chars()
+
+inst Str Ordering
+	print-str (self)
+		case self
+			LT
+				print-str('LT')
+			EQ
+				print-str('EQ')
+			GT
+				print-str('GT')
+
+	chars (self)
+		case self
+			LT
+				return 'LT' chars()
+			EQ
+				return 'EQ' chars()
+			GT
+				return 'GT' chars()
+
+
+
 ######## StrConcat #########
 
 StrConcatIter l r
@@ -169,24 +212,6 @@ inst Str StrCase
 
 
 
-inst Str Bool
-	print-str (self Bool) -> Unit
-		if self
-			print-str('True')
-		else
-			print-str('False')
-
-	chars (self)
-		if self
-			return 'True' chars()
-		else
-			return 'False' chars()
-
-inst Str Unit
-	print-str (self Unit) -> Unit
-		print-str('()')
-
-	chars (self): '()' chars()
 
 
 inst Str Ptr
@@ -228,6 +253,12 @@ inst Str Tuple2
 
 ##### Iterators (rn I've decided that treating strings as iterators should *just work*(TM)) (this MIGHT CHANGE IN THE FUTURE)
 
+inst Str Take
+	print-str (self)
+		self for-each(print-str)
+
+	chars (self): self
+	
 inst Str Drop
 	# this is barely typed. Assumes Item = Char
 	print-str (self)

@@ -5,6 +5,74 @@ Void
 #[ctype 'FILE']
 FILE
 
+#!temp here
+#[bytes '4']
+U32
+
+#[bytes '8']
+U64
+
+#[bytes '4']
+I32
+
+#[bytes '8']
+I64
+
+fn u64-int (x U64) -> Int: @cast(x)
+fn i64-int (x I64) -> Int: @cast(x)
+fn i32-int (x I32) -> Int: @cast(x)
+
+
+#[ctype 'struct timespec']
+Timespec
+	tv-sec I64
+	tv-nsec I64
+
+inst Ord Timespec
+	compare (l, r)
+		ls = l.tv-sec i64-int()
+		rs = r.tv-sec i64-int()
+
+		if ls > rs
+			return GT
+		elif ls < rs
+			return LT
+		else
+			ln = l.tv-nsec i64-int()
+			rn = r.tv-nsec i64-int()
+
+			if ln > rn
+				return GT
+			elif ln < rn
+				return LT
+			else
+				return EQ
+
+
+# Stat for x86_64 linux :)
+#[ctype 'struct Stat']
+Stat
+	dev U64
+	ino U64
+	nlink U64  #usize
+
+	mode U32
+	uid U32
+	gid U32
+	pad0 U32
+	rdev U64
+	size I64
+	blksize I64 #isize
+	blocks I64
+
+	atim Timespec
+	mtim Timespec
+	ctim Timespec
+
+	unused1 I64 # [3]isize
+	unused2 I64
+	unused3 I64
+
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
 external
@@ -49,6 +117,15 @@ external
 	fread (buf Ptr a, size Int, count Int, stream Ptr FILE) -> Int
 
 	getenv (s ConstStr) -> ConstStr
+
+
+	##### sys/stat.h #####
+	stat (path ConstStr, stat Ptr Stat) -> Void
+
+	#### ????
+	fork () -> I32  # pid_t
+	execvp (name ConstStr, args Ptr ConstStr) -> Void
+	waitpid (pid I32, status Ptr Int, options Int) -> I32
 	
 
 
@@ -61,6 +138,11 @@ Char
 
 inst Eq Char
 	eq (l, r): @memeq(l, r)
+
+
+
+fn wifexited (status Int):
+	status == 0
 
 
 # TODO: nullable CPtr and a function CPtr a -> Maybe (Ptr a)

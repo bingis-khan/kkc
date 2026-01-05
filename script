@@ -1,8 +1,17 @@
 #!./zig-out/bin/kkc
-fn reset (self Int)
-	self <= 0
+use Sh
+use Slice
+use Alloc
+	allocate
+use Mem
+	cast-ptr
+use Iter
+	Iter
+	next
+	into-iter
+use Term
 
-x = 123123123
-println(x)
-x reset()
-println(x)
+
+
+al = Alloc.idc()
+Sh.run('mb', al)

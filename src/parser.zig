@@ -1935,6 +1935,7 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
 
 fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.Expr {
     const definitionsAndLoc = try self.someRecordDefinition();
+    const fieldsLoc = definitionsAndLoc.rightLoc;
     const definitions = definitionsAndLoc.fields;
 
     // instantiate it.
@@ -1955,8 +1956,11 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
                                     break;
                                 }
                             } else {
-                                //missing field
-                                try self.reportError(.{ .MissingField = .{ .field = dataField.field } });
+                                // when a field is not defined.
+                                try self.reportError(.{ .DidNotDefineField = .{
+                                    .field = dataField.field,
+                                    .loc = fieldsLoc,
+                                } });
                             }
                         }
 

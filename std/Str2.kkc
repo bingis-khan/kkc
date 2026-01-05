@@ -14,6 +14,7 @@ use Iter
 	zip
 	from
 	for-each
+	drop-while'
 use Error
 	panic
 use Alloc
@@ -86,6 +87,31 @@ inst Iter LineIter
 		self <&.last= i
 
 		return Just(line)
+
+
+
+SplitWhitespaceIter it
+	it it
+	# TODO: in the future, add custom separator function.
+
+fn split(it)
+	it = it into-iter()
+	it = it drop-while'(is-whitespace)
+	return SplitWhitespaceIter { it }
+
+inst IntoIter SplitWhitespaceIter
+	into-iter (self): self
+
+inst Iter SplitWhitespaceIter
+	next (self Ptr (SplitWhitespaceIter it)) <= Iter it, IntoIter it
+		if self&.it Iter.null()
+			return None
+
+		itAndTaken = self&.it Iter.take-while'(fn x: not x is-whitespace())
+		case itAndTaken
+			Tuple2(it, taken)
+				self <&.it= it drop-while'(is-whitespace)
+				return Just(taken)
 
 
 

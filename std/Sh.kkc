@@ -1,0 +1,76 @@
+#!/bin/env kkc
+# A "shell" module. I want to test how an interface for such a module would look like.
+
+use Cnile
+	u64-int
+	i64-int
+	i32-int
+use Slice
+	Slice
+use Mem
+	undefined
+use Error
+	panic
+use Iter
+	map
+	append
+	for-each
+use Str2
+	split
+use List
+	to-list
+use StrBuilder
+use Alloc
+	free
+
+
+fn older-than (l, r)
+	stat = undefined()
+	Cnile.stat(l, &stat)
+	lmtim = stat.mtim
+
+	Cnile.stat(r, &stat)
+	rmtim = stat.mtim
+
+	return lmtim compare (rmtim) == LT
+
+
+fn run' (args Slice ConstStr)
+	pid = Cnile.fork()
+	pid' = pid i32-int()
+	if pid' < 0
+		panic('fork() failed')
+
+	# child
+	if pid' == 0
+		Cnile.execvp(args Slice.get(0), args.ptr)
+
+		panic('execvp() failed')
+		Cnile.exit(127)
+
+	# parent
+	else
+		status = 0
+		if Cnile.waitpid(pid, &status, 0) i32-int() < 0
+			panic('waitpid() failed')
+
+		if not Cnile.wifexited(status)
+			panic('something else happened to process; todo')
+	
+
+fn run (args, al)
+	args = args
+		split()
+		map(fn s: s StrBuilder.mk-const-str(al))
+		append(Mem.null-ptr() Mem.cast())
+		to-list(al)
+		List.to-slice()
+
+	ret = run'(args)  # no return value for now, but in the future it'll prolly return something.
+
+	# free all this stuff
+	args for-each(fn s: al free(Slice { ptr: s Mem.cast() as Ptr Cnile.Void, count: 0 }))
+	al free(args)
+
+	return ret
+

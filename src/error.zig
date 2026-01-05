@@ -136,6 +136,7 @@ pub const Error = union(enum) {
     TypeDoesNotHaveField: struct {
         t: ast.Type,
         field: Str,
+        loc: Loc,
     },
 
     TypeIsNotARecord: struct {
@@ -147,8 +148,9 @@ pub const Error = union(enum) {
         data: *ast.Data,
     },
 
-    MissingField: struct {
+    DidNotDefineField: struct {
         field: Str,
+        loc: Loc,
     },
 
     DuplicateField: struct {
@@ -265,13 +267,15 @@ pub const Error = union(enum) {
             .MissingReturn => p("missing return", .{}),
             .RecordsAndConstructorsPresent => p("records and constructors present", .{}),
             .TypeDoesNotHaveField => |e| {
-                c.print(.{ "type ", e.t, " does not implement field ", e.field, "\n" });
+                err.atLocation(e.loc, .{ .label = .{ "type ", e.t, " does not have field '", e.field, "'" } });
             },
             .TypeIsNotARecord => |e| {
                 c.print(.{ "type ", e.t, " is not a record, so it cannot have a field ", e.field, "\n" });
             },
             .DataIsNotARecord => |e| c.print(.{ "data ", e.data, " is not a record\n" }),
-            .MissingField => |e| c.print(.{ "missing field '", e.field, "'\n" }),
+            .DidNotDefineField => |e| {
+                err.atLocation(e.loc, .{ .label = .{ "you forgot to define field '", e.field, "', bruh" } });
+            },
             .DuplicateField => |e| c.print(.{ "duplicate field '", e.field, "'\n" }),
             .UndefinedClass => |e| c.print(.{ "undefined class ", e.className, "\n" }),
         }

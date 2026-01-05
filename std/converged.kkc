@@ -4,6 +4,7 @@ use Str
 use Str2
 	allocate-str
 	lines
+	split
 	char  # oof
 	is-blank
 	is-digit
@@ -21,8 +22,9 @@ use Iter
 	take
 	take-while
 	drop-while
-	split
+	break'
 	zip
+	append
 
 	for-each
 	reduce
@@ -33,6 +35,8 @@ use Iter
 	sum
 
 	drop'
+	drop-while'
+	take-while'
 
 # use Iter2
 # 	head

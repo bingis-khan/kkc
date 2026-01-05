@@ -234,8 +234,34 @@ fn drop-while (it, pred):
 	DropWhile { it: it into-iter(), pred, finished: False }
 
 # Haskell's `break`.
-fn split (it, pred):
+fn break' (it, pred):
 	Tuple2(it take-while(pred), it drop-while(pred))
+
+
+### append
+
+AppendIter e it
+	it it
+	elem e
+	appended Bool
+
+fn append(it, e):
+	AppendIter { it: it into-iter(), elem: e, appended: False }
+
+inst IntoIter AppendIter
+	into-iter (self): self
+
+inst Iter AppendIter
+	next (self)
+		case (&self&.it) next()
+			Just(x)
+				return Just(x)
+			None
+				if not self&.appended
+					self <&.appended= True
+					return Just(self&.elem)
+
+				return None
 
 
 
@@ -269,6 +295,8 @@ fn count(it it) -> Int <= IntoIter it:
 fn sum(it):
 	it reduce(0, fn (v, s): v + s)
 
+# todo: eager exit
+# (after we make a `for` statement.)
 fn all(it, fun): it
 	reduce(True, fn (e, x): fun(e) and x)
 
@@ -322,6 +350,46 @@ inst ListLike Range
 
 fn drop'(it, n)
 	1 to (n) for-each(fn _: it next())
+
+
+fn drop-while'(it iter, pred) -> iter <= Iter iter
+	# not into-iter()-ing on purpose - this modifies the iterator directly, so we should operate only on actual iterators.
+	it-copy = it
+	while True
+		case next(&it)
+			None
+				return it-copy
+
+			Just(x)
+				if not pred(x)
+					return it-copy
+
+		it-copy <= it # loops due to this
+
+	return @undefined
+
+
+
+# This is unholy
+fn take-while'(it iter, pred) <= Iter iter, IntoIter iter
+	# not into-iter()-ing on purpose - this modifies the iterator directly, so we should operate only on actual iterators.
+	og = it
+	took = 0
+	it-copy = it
+	while True
+		case next(&it)
+			None
+				return Tuple2(it-copy, og take(took))
+
+			Just(x)
+				if not pred(x)
+					return Tuple2(it-copy, og take(took))
+
+				took <= took + 1
+
+		it-copy <= it # loops due to this
+
+	return @undefined
 
 # fn split'(it, pred)
 # 	clone-it = it&

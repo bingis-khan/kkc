@@ -16,12 +16,16 @@ use Slice
 	subslice
 use DynStr
 	DynStr
+use Mem
 
 StrBuilder alloc
 	chars List alloc Char
 
 fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator alloc
 	s chars() for-each(fn c: List.add(&builder&.chars, c))
+
+fn write-char (builder Ptr (StrBuilder alloc), c Char) -> Unit <= Allocator alloc
+	List.add(&builder&.chars, c)
 
 fn writeln (builder, s):
 	builder write('\(s)\n')
@@ -49,3 +53,10 @@ inst Str StrBuilder
 inst IntoIter StrBuilder
 	into-iter (self): self chars()
 
+
+fn mk-const-str(s, al)
+	sb =& mk(al)
+	sb write(s)
+	sb write-char(Str.nullchar())
+
+	return sb as-str().contents.ptr Mem.cast() as ConstStr
