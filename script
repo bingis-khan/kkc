@@ -1,5 +1,6 @@
 #!./zig-out/bin/kkc
 use Sh
+	deps
 use Slice
 use Alloc
 	allocate
@@ -11,7 +12,9 @@ use Iter
 	into-iter
 use Term
 
-
-
 al = Alloc.idc()
-Sh.run('mb', al)
+
+
+if 'zig-out/bin/kkc' deps (nil() cons ('src/main.zig'))
+	println('rebuilding')
+	'zig build' Sh.run(al)

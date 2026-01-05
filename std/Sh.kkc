@@ -13,6 +13,7 @@ use Error
 	panic
 use Iter
 	map
+	any
 	append
 	for-each
 use Str2
@@ -34,6 +35,9 @@ fn older-than (l, r)
 
 	return lmtim compare (rmtim) == LT
 
+# depends-on (short name for faster typing)
+fn deps (d, it): it
+	any(fn origin: d older-than(origin))
 
 fn run' (args Slice ConstStr)
 	pid = Cnile.fork()

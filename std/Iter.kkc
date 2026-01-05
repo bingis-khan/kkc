@@ -12,6 +12,19 @@ inst IntoIter Ptr
 	into-iter (self): self& into-iter()
 
 
+# EMPTY
+
+EmptyIter
+	EmptyIter
+
+fn nil(): EmptyIter
+
+inst IntoIter EmptyIter
+	into-iter (self): self
+
+inst Iter EmptyIter
+	next(_): None
+
 # MAPPPP
 Map it from to
 	Map it (from -> to)
@@ -248,6 +261,9 @@ AppendIter e it
 fn append(it, e):
 	AppendIter { it: it into-iter(), elem: e, appended: False }
 
+# reverse cons to nicely compose with postfix calling
+fn cons(it, e): append(it, e)  # synonim for funi
+
 inst IntoIter AppendIter
 	into-iter (self): self
 
@@ -295,10 +311,15 @@ fn count(it it) -> Int <= IntoIter it:
 fn sum(it):
 	it reduce(0, fn (v, s): v + s)
 
+# design: maybe make them argument-less and just map() before using.
 # todo: eager exit
 # (after we make a `for` statement.)
 fn all(it, fun): it
 	reduce(True, fn (e, x): fun(e) and x)
+
+# todo: eager exit
+fn any(it, fun): it
+	reduce(False, fn (e, x): fun(e) or x)
 
 fn head(it): (&it into-iter()) next()
 

@@ -30,6 +30,7 @@ use Iter
 	reduce
 	count
 	all
+	any
 	head
 	null
 	sum
@@ -37,6 +38,10 @@ use Iter
 	drop'
 	drop-while'
 	take-while'
+
+	# funny ones, not sure if they'll state exported
+	cons
+	nil
 
 # use Iter2
 # 	head
@@ -65,3 +70,8 @@ use Alloc
 
 use Term
 	println
+
+# for build.kkc-type stuff
+# probably not fit for default exports, just let the user do `use Sh *`
+use Sh
+	deps
