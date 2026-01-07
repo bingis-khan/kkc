@@ -28,7 +28,7 @@ pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, pr
     const tymap = TypeMap{
         .prev = null,
         .scheme = &scheme,
-        .match = &ast.Match(ast.Type).empty(scheme),
+        .match = &ast.Match.empty(scheme),
     };
     var self: Self = .{
         .scope = &scope,
@@ -172,6 +172,15 @@ fn initEnvSnapshot(self: *Self, env: ast.Env) ![]RawValue.Fun.EnvSnapshot {
     const envSnapshot = try self.arena.alloc(RawValue.Fun.EnvSnapshot, env.len);
     for (env, 0..) |ei, i| {
         envSnapshot[i] = switch (ei.v) {
+            .TNum => |tnum| b: {
+                const tnumvar = tnum.asVar();
+                break :b .{
+                    .Snap = .{
+                        .v = tnumvar,
+                        .vv = self.getVar(tnumvar).ref,
+                    },
+                };
+            },
             .Var => |v| .{ .Snap = .{
                 .v = v,
                 .vv = try self.copyValue(self.getVar(v).ref, ei.t),
@@ -511,6 +520,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         },
         .Var => |v| {
             switch (v.v) {
+                .TNum => |tnum| {
+                    return self.getVar(tnum.asVar());
+                },
                 .Var => |vv| {
                     return self.getVar(vv);
                 },
@@ -772,7 +784,7 @@ fn getFieldFromFields(self: *Self, v: RawValueRef, fields: []ast.Record, mem: St
     }
 }
 
-fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match(ast.Type)) !ValueMeta {
+fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match) !ValueMeta {
     return try self.val(.{
         .fun = nanbox(try common.allocOne(self.arena, RawValue.Fun{
             .fun = fun,
@@ -819,6 +831,24 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
             return error.CaseNotMatched;
         }
     }
+
+    for (fun.scheme.tvars, match.tvars) |tvOrNum, mtvOrNum| {
+        switch (tvOrNum) {
+            .TVar => {},
+            .TNum => |tnum| {
+                try self.putVar(
+                    tnum.asVar(),
+                    switch (self.typeContext.getNum(mtvOrNum.Num)) {
+                        .Literal => |lit| try self.intValue(lit),
+                        .TNum => |tnum2| self.getVar(tnum2.asVar()),
+                        .Unknown => unreachable,
+                    },
+                    self.prelude.intTypeTemp,
+                );
+            },
+        }
+    }
+
     self.stmts(fun.body) catch |err| switch (err) {
         error.Return => {
             return self.returnValue;
@@ -876,7 +906,7 @@ const RawValue = extern union {
     const Fun = struct {
         fun: *ast.Function,
         env: []EnvSnapshot,
-        match: *ast.Match(ast.Type),
+        match: *ast.Match,
 
         const EnvSnapshot = union(enum) {
             // i forgot what it was gegegeg
@@ -1206,20 +1236,26 @@ const Scope = struct {
 const TypeMap = struct {
     prev: ?*const @This(),
     scheme: *const ast.Scheme,
-    match: *const ast.Match(ast.Type),
+    match: *const ast.Match,
 
     fn getTVar(self: *const @This(), tv: ast.TVar) ast.Type {
         // SLOW
         for (self.scheme.tvars, self.match.tvars) |s, m| {
-            if (s.eq(tv)) {
-                return m;
+            switch (s) {
+                .TVar => |stv| {
+                    if (stv.eq(tv)) {
+                        return m.Type;
+                    }
+                },
+
+                else => {},
             }
         } else {
             return (self.prev orelse unreachable).getTVar(tv);
         }
     }
 
-    fn tryGetFunctionByID(self: *const @This(), uid: ast.Association.ID) ?ast.Match(ast.Type).AssocRef.InstPair {
+    fn tryGetFunctionByID(self: *const @This(), uid: ast.Association.ID) ?ast.Match.AssocRef.InstPair {
         for (self.scheme.associations, self.match.assocs) |a, r| {
             if (a.uid == uid) {
                 return switch (r.?) {

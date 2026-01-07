@@ -118,6 +118,7 @@ pub const Lexer = struct {
             '{' => .LEFT_BRACE,
             '}' => .RIGHT_BRACE,
             '&' => .REF,
+            '^' => .CARET,
             '<' => b: {
                 if (self.check('=')) {
                     break :b .LTEQ;

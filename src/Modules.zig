@@ -74,7 +74,7 @@ pub fn loadPrelude(self: *Self) !Prelude {
 
     self.preludeExports = preludeModule.exports;
 
-    const prelude = try preludeModule.mkPrelude();
+    const prelude = try preludeModule.mkPrelude(self.typeContext);
     self.prelude = prelude;
 
     return prelude;

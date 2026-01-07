@@ -5,7 +5,9 @@
 	- not fully - type defaulting is kinda spaghetti (but behavior seems to be correct).
 - utf8 support (my own, inbuilt support!)
 - type synonyms
-- numbers in type parameters
+- [.] numbers in type parameters
+	- crappy code - separate tvars into tvars and tnums
+	- parse ^identifier together: `^  identifier` would become invalid.
 - array literals
 	- FromList typeclass.
 - basic type parameter number ops

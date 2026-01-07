@@ -6,6 +6,7 @@ const Str = common.Str;
 
 predefinedTypes: [NumPredefinedTypes]*ast.Data,
 predefinedClasses: [NumPredefinedClasses]*ast.Class,
+intTypeTemp: ast.Type,
 
 const Self = @This();
 

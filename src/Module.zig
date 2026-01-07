@@ -4,13 +4,15 @@ const Str = @import("common.zig").Str;
 const Prelude = @import("Prelude.zig");
 const Self = @This();
 const common = @import("common.zig");
+const TypeContext = @import("TypeContext.zig");
 
 pub const VarAndType = struct { v: ast.Var, t: ast.Type };
-pub const VarOrFun = union(enum) {
+pub const VarOrFun = union(enum) { // the name gegegggg
     Var: VarAndType,
     Fun: *ast.Function,
     ClassFun: *ast.ClassFun,
     Extern: *ast.ExternalFunction,
+    TNum: ast.TNum,
 };
 
 pub const DataOrClass = union(enum) {
@@ -104,7 +106,7 @@ pub fn lookupData(self: *const Self, dataName: Str) ?DataOrClass {
 }
 
 // should be const, but stack.Fixed's iterator can return pointers. This can be fixed by using two different types.
-pub fn mkPrelude(self: *const Self) !Prelude {
+pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
 
     // types
     var enums: [Prelude.NumPredefinedTypes]*ast.Data = .{undefined} ** Prelude.NumPredefinedTypes;
@@ -138,5 +140,9 @@ pub fn mkPrelude(self: *const Self) !Prelude {
     return .{
         .predefinedTypes = enums,
         .predefinedClasses = classEnums,
+        .intTypeTemp = try typeContext.newType(.{ .Con = .{
+            .type = self.lookupData("Int").?.Data,
+            .application = try common.allocOne(typeContext.arena, ast.Match.empty(ast.Scheme.empty())),
+        } }),
     };
 }

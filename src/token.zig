@@ -68,6 +68,7 @@ pub const TokenType = enum {
 
     REF, // &, both ref and deref
     DOT, // .member
+    CARET,
 
     LEFT_BRACE,
     RIGHT_BRACE,

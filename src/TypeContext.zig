@@ -25,6 +25,12 @@ const EnvStore = std.ArrayList(union(enum) {
     Env: ?ast.Env,
 });
 
+const NumRef = ast.NumRef;
+const NumStore = std.ArrayList(union(enum) {
+    Ref: NumRef,
+    Num: ast.TypeOrNum.TyNum,
+});
+
 // instead of putting it in tyvars, make a separate map (as only a minority of tyvars will have any fields.)
 const TyVarFields = std.HashMap(
     ast.TyVar,
@@ -35,6 +41,7 @@ const TyVarFields = std.HashMap(
 
 context: TyStore,
 envContext: EnvStore,
+numContext: NumStore,
 tyvarFields: TyVarFields,
 gen: UniqueGen,
 errors: *Errors, // pointer to the global error array (kinda bad design.)
@@ -47,6 +54,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
     return .{
         .context = context,
         .envContext = EnvStore.init(al),
+        .numContext = NumStore.init(al),
         .tyvarFields = TyVarFields.init(al),
         .gen = UniqueGen.init(),
         .errors = errors,
@@ -74,6 +82,34 @@ pub fn newEnv(self: *Self, e: ?ast.Env) !ast.EnvRef {
     try self.envContext.append(.{ .Env = e });
     const envid = self.envContext.items.len - 1;
     return .{ .id = envid };
+}
+
+pub fn newNum(self: *Self, n: ast.TypeOrNum.TyNum) !ast.NumRef {
+    try self.numContext.append(.{ .Num = n });
+    const numid = self.numContext.items.len - 1;
+    return .{ .id = numid };
+}
+
+pub fn getNum(self: *const Self, n: ast.NumRef) ast.TypeOrNum.TyNum {
+    var curref = n;
+    while (true) {
+        switch (self.numContext.items[curref.id]) {
+            .Num => |num| return num,
+            .Ref => |ref| curref = ref,
+        }
+    }
+}
+
+fn setNum(self: *Self, src: NumRef, dest: NumRef) void {
+    var curref = src;
+    while (true) {
+        const next = self.numContext.items[curref.id];
+        self.numContext.items[curref.id] = .{ .Ref = dest };
+        switch (next) {
+            .Ref => |ref| curref = ref,
+            .Num => return, // already mutated, so we just return
+        }
+    }
 }
 
 const Locs = ?*const struct { l: Loc, r: ?Loc = null }; // NOTE: when null, then mismatch should not happen!
@@ -352,8 +388,67 @@ fn setEnvRef(self: *Self, src: EnvRef, dest: EnvRef) void {
     }
 }
 
-pub fn unifyMatch(self: *Self, lm: *const ast.Match(ast.Type), rm: *const ast.Match(ast.Type), locs: Locs, full: Full) !void {
-    try self.unifyParams(lm.tvars, rm.tvars, locs, full);
+pub fn unifyMatch(self: *Self, lm: *const ast.Match, rm: *const ast.Match, locs: Locs, full: Full) !void {
+    try self.unifyParamsWithTNums(lm.tvars, rm.tvars, locs, full);
+}
+
+pub fn unifyParamsWithTNums(self: *Self, lps: []ast.TypeOrNum, rps: []ast.TypeOrNum, locs: Locs, full: Full) !void {
+    if (lps.len != rps.len) {
+        try self.paramLenMismatch(lps.len, rps.len, locs, full);
+        return;
+    }
+
+    for (lps, rps) |lp, rp| {
+        switch (lp) {
+            .Type => |lpt| try self.unify_(lpt, rp.Type, locs, full),
+            .Num => |lpn| try self.unifyNum(lpn, rp.Num, locs, full),
+        }
+    }
+}
+
+pub fn unifyNum(self: *Self, l: NumRef, r: NumRef, locs: Locs, full: Full) !void {
+    _ = locs;
+    _ = full;
+    if (l.id == r.id) return;
+
+    const ln = self.getNum(l);
+    const rn = self.getNum(r);
+    switch (ln) {
+        .Unknown => {
+            self.setNum(l, r);
+            return;
+        },
+        .Literal => |ll| switch (rn) {
+            .Unknown => {
+                self.setNum(r, l);
+                return;
+            },
+            .Literal => |rl| {
+                if (ll != rl) {
+                    unreachable; // TODO: error
+                }
+            },
+            .TNum => {
+                unreachable; // TODO: error
+            },
+        },
+        .TNum => |lt| {
+            switch (rn) {
+                .Unknown => {
+                    self.setNum(r, l);
+                    return;
+                },
+                .TNum => |rt| {
+                    if (lt.uid != rt.uid) {
+                        unreachable; // TODO: error
+                    }
+                },
+                .Literal => {
+                    unreachable; // TODO: error
+                },
+            }
+        },
+    }
 }
 
 pub fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef, locs: Locs, full: Full) !void {
@@ -471,8 +566,16 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
             }
         },
         .Con => |con| {
-            for (con.application.tvars) |mt| {
-                try self.ftvs(store, mt);
+            for (con.application.tvars) |mtOrNum| {
+                switch (mtOrNum) {
+                    .Type => |mt| try self.ftvs(store, mt),
+                    .Num => |num| {
+                        switch (self.getNum(num)) {
+                            .Unknown => try store.nums.insert(num),
+                            else => {},
+                        }
+                    },
+                }
             }
         },
         .Fun => |fun| {
@@ -516,14 +619,27 @@ pub const FTVs = struct {
             return k.id;
         }
     });
-    tyvars: TyVars,
+    const Nums = Set(ast.NumRef, struct {
+        pub fn eql(ctx: @This(), a: ast.NumRef, b: ast.NumRef) bool {
+            _ = ctx;
+            return a.id == b.id;
+        }
 
+        pub fn hash(ctx: @This(), k: ast.NumRef) u64 {
+            _ = ctx;
+            return k.id;
+        }
+    });
+
+    tyvars: TyVars,
     envs: Envs,
+    nums: Nums,
 
     pub fn init(al: std.mem.Allocator) @This() {
         return .{
             .tyvars = TyVars.init(al),
             .envs = Envs.init(al),
+            .nums = Nums.init(al),
         };
     }
 
@@ -544,7 +660,7 @@ pub const FTVs = struct {
 
 pub const FTV = struct { tyv: ast.TyVar, t: ast.Type };
 
-pub fn mapType(self: *Self, match: *const ast.Match(ast.Type), ty: ast.Type) error{OutOfMemory}!ast.Type {
+pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMemory}!ast.Type {
     const t = self.getType(ty);
     return switch (t) {
         .Con => |con| b: {
@@ -612,14 +728,23 @@ pub fn mapType(self: *Self, match: *const ast.Match(ast.Type), ty: ast.Type) err
 }
 
 // null when match did not change (so we can keep the same data structure)
-fn mapMatch(self: *Self, match: *const ast.Match(ast.Type), mm: *const ast.Match(ast.Type)) !?*ast.Match(ast.Type) {
+fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.Match {
     var changed = false;
 
-    var tvars = std.ArrayList(ast.Type).init(self.arena);
-    for (mm.tvars) |oldTy| {
-        const newTy = try self.mapType(match, oldTy);
-        changed = changed or !newTy.eq(oldTy);
-        try tvars.append(newTy);
+    var tvars = std.ArrayList(ast.TypeOrNum).init(self.arena);
+    for (mm.tvars) |oldTyOrNum| {
+        switch (oldTyOrNum) {
+            .Type => |oldTy| {
+                const newTy = try self.mapType(match, oldTy);
+                changed = changed or !newTy.eq(oldTy);
+                try tvars.append(.{ .Type = newTy });
+            },
+            .Num => |num| {
+                const nuNum = self.mapNum(match, num);
+                changed = changed or nuNum != null;
+                try tvars.append(.{ .Num = nuNum orelse num });
+            },
+        }
     }
 
     var envs = std.ArrayList(ast.EnvRef).init(self.arena);
@@ -635,7 +760,7 @@ fn mapMatch(self: *Self, match: *const ast.Match(ast.Type), mm: *const ast.Match
         return null;
     }
 
-    return try common.allocOne(self.arena, ast.Match(ast.Type){
+    return try common.allocOne(self.arena, ast.Match{
         .scheme = mm.scheme,
         .tvars = tvars.items,
         .envVars = envs.items,
@@ -643,7 +768,27 @@ fn mapMatch(self: *Self, match: *const ast.Match(ast.Type), mm: *const ast.Match
     });
 }
 
-fn mapEnv(self: *Self, match: *const ast.Match(ast.Type), envref: ast.EnvRef) !ast.EnvRef {
+fn mapNum(self: *Self, match: *const ast.Match, numref: ast.NumRef) ?ast.NumRef {
+    switch (self.getNum(numref)) {
+        .TNum => |tnum| {
+            for (match.scheme.tvars, match.tvars) |tvOrNum, tyOrNum| {
+                switch (tvOrNum) {
+                    .TNum => |tnum2| {
+                        if (tnum2.uid == tnum.uid) {
+                            return tyOrNum.Num;
+                        }
+                    },
+                    .TVar => {},
+                }
+            }
+        },
+        else => return numref,
+    }
+
+    return null;
+}
+
+fn mapEnv(self: *Self, match: *const ast.Match, envref: ast.EnvRef) !ast.EnvRef {
     const envAndBase = self.getEnv(envref);
     return if (envAndBase.env) |env| bb: {
         var envChanged = false;

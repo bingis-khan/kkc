@@ -1,2 +1,18 @@
 #!./zig-out/bin/kkc
-'r' println()
+
+
+# empty type
+
+Array ^count a
+
+NumProxy ^cock
+	NumProxy
+
+fn miau2(_ NumProxy osd)
+	osd println()
+
+fn miau (proxy NumProxy ^coo)
+	coo println()
+	miau2(proxy)
+
+miau(NumProxy as NumProxy 4)

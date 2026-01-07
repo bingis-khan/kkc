@@ -43,6 +43,11 @@ pub const Error = union(enum) {
         loc: Loc,
     },
 
+    UndefinedTNum: struct {
+        tvname: Str,
+        loc: Loc,
+    },
+
     UndefinedClass: struct {
         className: Str,
     },
@@ -196,6 +201,9 @@ pub const Error = union(enum) {
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
             .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),
             .UndefinedTVar => |e| p("undefined tvar {s} at ({}, {})", .{ e.tvname, e.loc.from, e.loc.to }),
+            .UndefinedTNum => |e| {
+                err.atLocation(e.loc, .{ .label = .{ "undefined tnum '", e.tvname, "'" } });
+            },
             .UndefinedIntrinsic => |e| {
                 err.atLocation(e.loc, .{ .label = .{"undefined intrinsic"} });
             },

@@ -164,14 +164,23 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
         defer self.scope.endScope();
 
         // tvars
-        var tvars = std.ArrayList(AST.TVar).init(self.arena);
+        var tvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
         if (extraTVar) |tvname| {
             const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
-            try tvars.append(tv);
+            try tvars.append(.{ .TVar = tv });
         }
-        while (self.consume(.IDENTIFIER)) |tvname| {
-            const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
-            try tvars.append(tv);
+
+        while (true) {
+            if (self.check(.CARET)) {
+                const numtyTok = try self.expect(.IDENTIFIER);
+                const numtv = try self.newTNum(numtyTok.literal(self.lexer.source), .{ .Data = uid });
+                try tvars.append(.{ .TNum = numtv });
+            } else if (self.consume(.IDENTIFIER)) |tvname| {
+                const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
+                try tvars.append(.{ .TVar = tv });
+            } else {
+                break;
+            }
         }
 
         if (!self.check(.INDENT)) {
@@ -637,7 +646,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                         const ptr = (try self.defined(.Ptr)).dataInst;
 
                         try self.typeContext.unify(innerTy, ptr.t, &.{ .l = self.loc(v), .r = self.loc(reftok) });
-                        innerTy = ptr.tyArgs[0];
+                        innerTy = ptr.tyArgs[0].Type;
                     } else if (self.consume(.DOT)) |dottok| {
                         const name = try self.expect(.IDENTIFIER);
                         const field = name.literal(self.lexer.source);
@@ -720,7 +729,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             }
 
             // BRITTLE AS HELL.
-            if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP) {
+            if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP or self.peek().type == .CARET) {
                 // TODO: parse non-qualified postfix expression alls.
                 try self.dataDef(typename, null, annotations);
                 break :b null;
@@ -981,7 +990,8 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     const ret = try Type.init(self, .{ .Function = uid }).sepTyo();
     try self.endStmt();
 
-    var definedTVars = std.ArrayList(AST.TVar).init(self.arena);
+    // TODO: Technically, we should be able to pass buffers. But we should not in general allow type integers.
+    var definedTVars = std.ArrayList(AST.TVarOrNum).init(self.arena);
     var it = self.scope.currentScope().tvars.valueIterator();
     while (it.next()) |tvar| {
         try definedTVars.append(tvar.*);
@@ -1103,8 +1113,8 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     self.scope.endScope();
 
     // make a scheme from deze vars yo.
-    var tvars = std.ArrayList(AST.TVar).init(self.arena);
-    try tvars.append(classSelf.tvar);
+    var tvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
+    try tvars.append(.{ .TVar = classSelf.tvar });
     var tvit = tvarsMap.valueIterator();
     while (tvit.next()) |tvar| {
         try tvars.append(tvar.*);
@@ -1143,10 +1153,15 @@ fn constraints(self: *Self) !Constraints {
                 switch (dataOrClass) {
                     .Class => |class| {
                         const tvarName = tvt.literal(self.lexer.source);
-                        const tvar = self.scope.currentScope().tvars.get(tvarName) orelse {
+                        const tvarOrNum = self.scope.currentScope().tvars.get(tvarName) orelse {
                             // NOTE: we're looking only at current scope, so we won't find any named tvars from other functions.
                             try self.reportError(.{ .ConstrainedNonExistentTVar = .{ .tvname = tvarName } });
                             break :b;
+                        };
+
+                        const tvar = switch (tvarOrNum) {
+                            .TVar => |tv| tv,
+                            .TNum => unreachable, // TODO: error
                         };
 
                         const e = try constraints_.getOrPutValue(tvar, std.ArrayList(*AST.Class).init(self.arena)); // NOTE: source says it's not allocating anything until an element is inserted.
@@ -1353,14 +1368,14 @@ fn deconstruction(self: *Self) !*AST.Decon {
         const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
         const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
         // this is to allow modification, while allowing types which don't have a stable pointer to any element.
-        try self.typeContext.unify(elemPtr.tyArgs[0], elemTy, null); // TODO: nulls here, we'll see if this place can error out.
-        try self.typeContext.unify(elemPtrPtr.tyArgs[0], elemPtr.t, null);
+        try self.typeContext.unify(elemPtr.tyArgs[0].Type, elemTy, null); // TODO: nulls here, we'll see if this place can error out.
+        try self.typeContext.unify(elemPtrPtr.tyArgs[0].Type, elemPtr.t, null);
 
         try self.typeContext.unify(params[1], elemPtrPtr.t, null);
         try self.typeContext.unify(params[4], elemPtrPtr.t, null);
 
         const spread = (try self.defined(.ListSpread)).dataInst;
-        try self.typeContext.unify(spread.tyArgs[0], spreadInnerTy, null);
+        try self.typeContext.unify(spread.tyArgs[0].Type, spreadInnerTy, null);
         try self.typeContext.unify(params[3], spread.t, null);
         try self.typeContext.unify(spread.t, spreadTy, null);
 
@@ -1538,7 +1553,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 .r = dl,
             });
             return self.allocExpr(.{
-                .t = ptr.tyArgs[0],
+                .t = ptr.tyArgs[0].Type,
                 .e = .{
                     .UnOp = .{ .op = .Deref, .e = left },
                 },
@@ -1671,7 +1686,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         const n = try self.expression();
         const ptr = (try self.defined(.Ptr)).dataInst;
         const l = self.loc(tokref).between(n.l);
-        try self.typeContext.unify(ptr.tyArgs[0], n.t, &.{ .l = l });
+        try self.typeContext.unify(ptr.tyArgs[0].Type, n.t, &.{ .l = l });
         return self.allocExpr(.{
             .e = .{ .UnOp = .{ .op = .Ref, .e = n } },
             .t = ptr.t,
@@ -1819,7 +1834,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .argc => try self.definedType(.Int),
                 .argv => b: {
                     const ptr = (try self.defined(.Ptr)).dataInst;
-                    try self.typeContext.unify(ptr.tyArgs[0], try self.definedType(.ConstStr), null);
+                    try self.typeContext.unify(ptr.tyArgs[0].Type, try self.definedType(.ConstStr), null);
                     break :b ptr.t;
                 },
 
@@ -2272,7 +2287,7 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                                     },
                                 );
                                 varExpr = try self.allocExpr(.{
-                                    .t = ptr.tyArgs[0],
+                                    .t = ptr.tyArgs[0].Type,
                                     .e = .{
                                         .UnOp = .{ .op = .Deref, .e = varExpr },
                                     },
@@ -2388,18 +2403,21 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
 fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
     const sc = try self.defined(.StrConcat);
     const sci = sc.dataInst;
-    try self.typeContext.unify(sci.tyArgs[0], l.t, &.{ .l = l.l });
-    try self.typeContext.unify(sci.tyArgs[1], r.t, &.{ .l = r.l });
+    try self.typeContext.unify(sci.tyArgs[0].Type, l.t, &.{ .l = l.l });
+    try self.typeContext.unify(sci.tyArgs[1].Type, r.t, &.{ .l = r.l });
     const args = try self.arena.alloc(*AST.Expr, 2);
     args[0] = l;
     args[1] = r;
+    const tyArgs = try self.arena.alloc(AST.Type, 2);
+    tyArgs[0] = args[0].t;
+    tyArgs[1] = args[1].t;
     return self.allocExpr(.{
         .t = sci.t,
         .e = .{ .Call = .{
             .callee = try self.allocExpr(.{
                 .t = try self.typeContext.newType(.{ .Fun = .{
                     .ret = sci.t,
-                    .args = sci.tyArgs,
+                    .args = tyArgs,
                     .env = try self.typeContext.newEnv(&.{}),
                 } }),
                 .e = .{ .Con = &sc.data.stuff.cons[0] },
@@ -2477,10 +2495,10 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 }
 
 const Type = struct {
-    binding: ?AST.TVar.Binding,
+    binding: ?AST.Binding,
     parser: *Self,
 
-    fn init(self: *Self, binding: ?AST.TVar.Binding) @This() {
+    fn init(self: *Self, binding: ?AST.Binding) @This() {
         return .{ .binding = binding, .parser = self };
     }
 
@@ -2543,22 +2561,45 @@ const Type = struct {
         if (self.consume(.TYPE)) |tyName| {
             const ty = try self.qualifiedType(tyName);
 
-            var tyArgs = std.ArrayList(AST.Type).init(self.arena);
+            var tyArgs = std.ArrayList(AST.TypeOrNum).init(self.arena);
             var l = self.loc(tyName);
+            var i: usize = 0; // bruh
             while (true) {
+                defer i += 1; // BRUH
                 const tokType = self.peek().type;
-                if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE)) { // bad but works
+                if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE or tokType == .CARET or tokType == .INTEGER)) { // bad but works
                     break;
                 }
 
+                if (i < ty.tyArgs.len and ty.tyArgs[i].isNum()) { // BRUHHHH
+                    const numTy: AST.TypeOrNum = b: {
+                        if (self.check(.CARET)) { // we also accept carets to make sure we are using a number type.
+                            const numtyTok = try self.expect(.IDENTIFIER);
+                            const tnum = try self.lookupTNum(numtyTok, this.binding);
+                            break :b .{ .Num = try self.typeContext.newNum(.{ .TNum = tnum }) };
+                        } else if (self.consume(.IDENTIFIER)) |numtyTok| {
+                            const tnum = try self.lookupTNum(numtyTok, this.binding);
+                            break :b .{ .Num = try self.typeContext.newNum(.{ .TNum = tnum }) };
+                        } else if (self.consume(.INTEGER)) |intTok| {
+                            const num = self.parseInt(intTok);
+                            break :b .{ .Num = try self.typeContext.newNum(.{ .Literal = num }) };
+                        } else if (self.consume(.TYPE)) |_| {
+                            unreachable; // TODO: assert that it's a numeric type and get stored value.
+                        } else {
+                            unreachable; // TODO: error (or just quit and let unification throw an error.)
+                        }
+                    };
+                    try tyArgs.append(numTy);
+                    continue;
+                }
                 const lt = try this.typ();
                 l = l.between(lt.l);
 
-                try tyArgs.append(lt.e);
+                try tyArgs.append(.{ .Type = lt.e });
             }
 
             // simply check arity.
-            try self.typeContext.unifyParams(ty.tyArgs, tyArgs.items, &.{ .l = l }, &.{
+            try self.typeContext.unifyParamsWithTNums(ty.tyArgs, tyArgs.items, &.{ .l = l }, &.{
                 .lfull = ty.t,
                 .rfull = null,
             });
@@ -2750,16 +2791,21 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
 fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
     v: AST.Expr.VarType,
     t: AST.Type,
-    m: *AST.Match(AST.Type),
+    m: *AST.Match,
 } {
     const vorfAndScope = try self.lookupVar(modpath, varTok);
     const vorf = vorfAndScope.vorf;
     const cursc = vorfAndScope.sc;
     const varInst: AST.VarInst = switch (vorf) {
+        .TNum => |tnum| .{
+            .v = .{ .TNum = tnum },
+            .t = try self.definedType(.Int),
+            .m = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
+        },
         .Var => |vt| .{
             .v = .{ .Var = vt.v },
             .t = vt.t,
-            .m = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(AST.Scheme.empty())),
+            .m = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
         },
         .Fun => |fun| b: {
             const funTyAndMatch = try self.instantiateFunction(fun, self.loc(varTok));
@@ -2826,6 +2872,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
     }
     return .{
         .v = switch (varInst.v) {
+            .TNum => |tnum| .{ .TNum = tnum },
             .Var => |vv| .{ .Var = vv },
             .Fun => |fun| .{ .Fun = fun },
             .ClassFun => |cfun| .{
@@ -2843,7 +2890,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
 fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
     ref: AST.InstFunInst,
     t: AST.Type,
-    m: *AST.Match(AST.Type),
+    m: *AST.Match,
 } {
     const match = try self.instantiateScheme(cfun.scheme, l);
 
@@ -2864,7 +2911,7 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
 
     const instances = try self.getInstancesForClass(cfun.class);
 
-    const ref: *?AST.Match(AST.Type).AssocRef = try Common.allocOne(self.arena, @as(?AST.Match(AST.Type).AssocRef, null));
+    const ref: *?AST.Match.AssocRef = try Common.allocOne(self.arena, @as(?AST.Match.AssocRef, null));
 
     try self.addAssociation(.{
         .from = classSelf,
@@ -2883,7 +2930,7 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
     };
 }
 
-fn instantiateFunction(self: *Self, fun: *AST.Function, l: ?Loc) !struct { t: AST.Type, m: *AST.Match(AST.Type) } {
+fn instantiateFunction(self: *Self, fun: *AST.Function, l: ?Loc) !struct { t: AST.Type, m: *AST.Match } {
     const match = try self.instantiateScheme(fun.scheme, l);
 
     // mk normal, uninstantiated type.
@@ -3071,8 +3118,8 @@ fn newClass(self: *Self, class: *AST.Class) !void {
 
 const DataInst = struct {
     t: AST.Type,
-    tyArgs: []AST.Type,
-    match: *AST.Match(AST.Type),
+    tyArgs: []AST.TypeOrNum,
+    match: *AST.Match,
 };
 fn instantiateData(self: *Self, data: *AST.Data) !DataInst {
     const match = try self.instantiateScheme(data.scheme, null);
@@ -3121,8 +3168,8 @@ fn qualifiedType(self: *Self, first: Token) !DataShit {
 const DataShit = struct {
     data: *AST.Data,
     t: AST.Type,
-    tyArgs: []AST.Type,
-    match: *AST.Match(AST.Type),
+    tyArgs: []AST.TypeOrNum,
+    match: *AST.Match,
 };
 fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !DataShit {
     const placeholderType = try Common.allocOne(self.arena, AST.Data{
@@ -3136,7 +3183,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         .UndefinedType = .{ .typename = typename, .loc = location },
     });
 
-    const match = try Common.allocOne(self.arena, AST.Match(AST.Type).empty(placeholderType.scheme));
+    const match = try Common.allocOne(self.arena, AST.Match.empty(placeholderType.scheme));
     return .{
         .data = placeholderType,
         .t = try self.typeContext.newType(.{ .Con = .{
@@ -3160,7 +3207,7 @@ fn maybeLookupType(self: *Self, typename: Str) ?Module.DataOrClass {
 }
 
 // TVar
-fn newTVar(self: *@This(), tvname: Str, binding: ?AST.TVar.Binding) !AST.TVar {
+fn newTVar(self: *@This(), tvname: Str, binding: ?AST.Binding) !AST.TVar {
     const tv: AST.TVar = .{
         .uid = self.gen.tvars.newUnique(),
         .name = tvname,
@@ -3168,17 +3215,24 @@ fn newTVar(self: *@This(), tvname: Str, binding: ?AST.TVar.Binding) !AST.TVar {
         .inferred = false,
         .fields = &.{},
     };
-    try self.scope.currentScope().tvars.put(tvname, tv);
+    try self.scope.currentScope().tvars.put(tvname, .{ .TVar = tv });
     return tv;
 }
 
 // basically, sometimes when we look up tvars in declarations, we want to define them. slightly hacky, but makes stuff easier.
-fn lookupTVar(self: *Self, tvTok: Token, binding: ?AST.TVar.Binding) !AST.TVar {
+fn lookupTVar(self: *Self, tvTok: Token, binding: ?AST.Binding) !AST.TVar {
     const tvname = tvTok.literal(self.lexer.source);
     var lastScopes = self.scope.scopes.iterateFromTop();
     while (lastScopes.next()) |cursc| {
-        if (cursc.tvars.get(tvname)) |tv| {
-            return tv;
+        if (cursc.tvars.get(tvname)) |tvOrNum| {
+            switch (tvOrNum) {
+                .TVar => |tv| {
+                    return tv;
+                },
+                .TNum => {
+                    unreachable; // TODO: error
+                },
+            }
         }
     } else {
         // create a new var then.
@@ -3189,6 +3243,44 @@ fn lookupTVar(self: *Self, tvTok: Token, binding: ?AST.TVar.Binding) !AST.TVar {
             } });
         }
         return try self.newTVar(tvTok.literal(self.lexer.source), binding);
+    }
+}
+
+// Num TVar
+fn newTNum(self: *Self, name: Str, binding: ?AST.Binding) !AST.TNum {
+    const tnum = AST.TNum{
+        .uid = self.gen.vars.newUnique(),
+        .name = name,
+        .binding = binding,
+    };
+    try self.scope.currentScope().tvars.put(name, .{ .TNum = tnum });
+    try self.scope.currentScope().vars.put(name, .{ .TNum = tnum });
+    return tnum;
+}
+
+fn lookupTNum(self: *Self, tnumTok: Token, binding: ?AST.Binding) !AST.TNum {
+    const tvname = tnumTok.literal(self.lexer.source);
+    var lastScopes = self.scope.scopes.iterateFromTop();
+    while (lastScopes.next()) |cursc| {
+        if (cursc.tvars.get(tvname)) |tvOrNum| {
+            switch (tvOrNum) {
+                .TNum => |tv| {
+                    return tv;
+                },
+                .TVar => {
+                    unreachable; // TODO: error
+                },
+            }
+        }
+    } else {
+        // create a new var then.
+        if (binding == null) {
+            try self.reportError(.{ .UndefinedTNum = .{
+                .tvname = tvname,
+                .loc = self.loc(tnumTok),
+            } });
+        }
+        return try self.newTNum(tnumTok.literal(self.lexer.source), binding);
     }
 }
 
@@ -3263,10 +3355,13 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
 }
 
 // SCHEMES
-fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match(AST.Type) {
-    const tvars = try self.arena.alloc(AST.Type, scheme.tvars.len);
-    for (scheme.tvars, 0..) |_, i| {
-        tvars[i] = try self.typeContext.fresh();
+fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
+    const tvars = try self.arena.alloc(AST.TypeOrNum, scheme.tvars.len);
+    for (scheme.tvars, 0..) |tvOrNum, i| {
+        tvars[i] = switch (tvOrNum) {
+            .TVar => .{ .Type = try self.typeContext.fresh() },
+            .TNum => .{ .Num = try self.typeContext.newNum(.Unknown) },
+        };
     }
 
     const envVars = try self.arena.alloc(AST.EnvRef, scheme.envVars.len);
@@ -3274,12 +3369,12 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match(AST.T
         envVars[i] = try self.typeContext.newEnv(null);
     }
 
-    const assocs = try self.arena.alloc(?AST.Match(AST.Type).AssocRef, scheme.associations.len);
+    const assocs = try self.arena.alloc(?AST.Match.AssocRef, scheme.associations.len);
     for (assocs) |*a| {
         a.* = null; // default VALUE YO
     }
 
-    const tvarMatch = AST.Match(AST.Type){
+    const tvarMatch = AST.Match{
         .tvars = tvars,
         .envVars = envVars,
         .assocs = assocs,
@@ -3302,18 +3397,26 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match(AST.T
     }
 
     // now members fields
-    for (scheme.tvars, tvars) |tv, tyv| {
-        for (tv.fields) |field| {
-            const fieldTy = try self.typeContext.field(tyv, field.field, null);
-            try self.typeContext.unify(fieldTy, try self.typeContext.mapType(&tvarMatch, field.t), null);
+    for (scheme.tvars, tvars) |tvOrNum, tyv| {
+        switch (tvOrNum) {
+            .TVar => |tv| {
+                for (tv.fields) |field| {
+                    const fieldTy = try self.typeContext.field(tyv.Type, field.field, null);
+                    try self.typeContext.unify(fieldTy, try self.typeContext.mapType(&tvarMatch, field.t), null);
+                }
+            },
+
+            .TNum => {
+                // no fields to instantiate
+            },
         }
     }
 
     return try Common.allocOne(self.arena, tvarMatch);
 }
 
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVar), params: []*AST.Decon, ret: AST.Type, env: AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
-    const expectedBinding = AST.TVar.Binding{
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVarOrNum), params: []*AST.Decon, ret: AST.Type, env: AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
+    const expectedBinding = AST.Binding{
         .Function = functionId,
     };
 
@@ -3329,6 +3432,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     for (env) |inst| {
         // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
         switch (inst.v) {
+            .TNum => {},
             .Var => try self.typeContext.ftvs(&envftvs, inst.t),
             .Fun => |fun| {
                 for (fun.params) |p| {
@@ -3373,7 +3477,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 
     // make tvars out of them
     // TODO: assign pretty names ('a, 'b, etc.).
-    var tvars = std.ArrayList(AST.TVar).init(self.arena);
+    var tvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
 
     // add defined tvars in this function.
     var tvit = alreadyDefinedTVars.valueIterator();
@@ -3396,7 +3500,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             .inferred = true,
             .fields = self.typeContext.getFieldsForTVar(e.tyv) orelse &.{},
         };
-        try tvars.append(tv);
+        try tvars.append(.{ .TVar = tv });
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
         try self.typeContext.unify(e.t, tvt, null);
     }
@@ -3457,7 +3561,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .inferred = true,
                             .fields = self.typeContext.getFieldsForTVar(tyv.tyv) orelse &.{},
                         };
-                        try tvars.append(tv);
+                        try tvars.append(.{ .TVar = tv });
                         const tvt = try self.typeContext.newType(.{ .TVar = tv });
                         try self.typeContext.unify(tyv.t, tvt, null);
                     }
@@ -3505,7 +3609,7 @@ pub const Association = struct {
     loc: ?Loc,
 
     classFun: *AST.ClassFun,
-    ref: *?AST.Match(AST.Type).AssocRef,
+    ref: *?AST.Match.AssocRef,
 
     instances: Module.DataInstance,
     default: ?*AST.Data = null, // for now, when generalizing, we DON'T keep defaults. I'm thinking of applying defaults before generalizing, so that returning strings works correctly. Or make a different default type: `late` and `eager`
@@ -3575,7 +3679,7 @@ const CurrentScope = struct {
     vars: std.StringHashMap(Module.VarOrFun),
     types: std.StringHashMap(Module.DataOrClass),
     cons: std.StringHashMap(*AST.Con),
-    tvars: std.StringHashMap(AST.TVar),
+    tvars: std.StringHashMap(AST.TVarOrNum),
     instances: std.AutoHashMap(*AST.Class, Module.DataInstance),
 
     env: ?*Env,
@@ -3585,7 +3689,7 @@ const CurrentScope = struct {
             .vars = std.StringHashMap(Module.VarOrFun).init(al),
             .types = std.StringHashMap(Module.DataOrClass).init(al),
             .cons = std.StringHashMap(*AST.Con).init(al),
-            .tvars = std.StringHashMap(AST.TVar).init(al),
+            .tvars = std.StringHashMap(AST.TVarOrNum).init(al),
             .instances = std.AutoHashMap(*AST.Class, Module.DataInstance).init(al),
             .env = env,
         };

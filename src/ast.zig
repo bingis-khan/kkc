@@ -222,8 +222,9 @@ pub const VarInst = struct {
         Fun: *Function,
         ClassFun: struct { cfun: *ClassFun, ref: InstFunInst },
         Var: Var,
+        TNum: TNum,
     },
-    m: *Match(Type),
+    m: *Match,
     t: Type,
 
     pub fn getVar(self: @This()) Var {
@@ -236,6 +237,10 @@ pub const VarInst = struct {
 
     fn print(self: @This(), c: Ctx) void {
         switch (self.v) {
+            .TNum => |tnum| {
+                tnum.print(c);
+            },
+
             .Fun => |fun| {
                 c.s("@"); // tag that it's a function instantiation.
                 fun.name.print(c);
@@ -477,7 +482,7 @@ pub const Expr = struct {
         BinOp: struct { l: Rec, op: BinOp, r: Rec },
         UnOp: struct { e: Rec, op: UnOp },
         Call: struct { callee: Rec, args: []Rec },
-        Var: struct { v: VarType, match: *Match(Type) }, // NOTE: Match is owned here!
+        Var: struct { v: VarType, match: *Match }, // NOTE: Match is owned here!
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: i64, // obv temporary.
@@ -527,6 +532,7 @@ pub const Expr = struct {
         }, // SMELL: this one I have to allocate, because I'm returning the whole struct from a function, so the address will change.
         Var: Var,
         ExternalFun: *ExternalFunction,
+        TNum: TNum,
 
         // pub fn getVar(self: @This()) Var {
         //     return switch (self) {
@@ -538,6 +544,9 @@ pub const Expr = struct {
 
         pub fn print(self: @This(), c: Ctx) void {
             switch (self) {
+                .TNum => |tnum| {
+                    tnum.print(c);
+                },
                 .Var => |v| {
                     v.print(c);
                 },
@@ -684,7 +693,7 @@ pub const BinOp = union(enum) {
     }
 };
 
-pub const InstFunInst = *?Match(Type).AssocRef;
+pub const InstFunInst = *?Match.AssocRef;
 
 pub const Type = TyRef;
 pub const TyRef = struct {
@@ -707,6 +716,13 @@ pub const EnvRef = struct {
         } else {
             c.s("[X]");
         }
+    }
+};
+pub const NumRef = struct {
+    id: usize,
+
+    pub fn print(eid: @This(), c: Ctx) void {
+        c.typeContext.getNum(eid).print(c);
     }
 };
 pub const TyVar = struct {
@@ -744,12 +760,6 @@ pub const TVar = struct {
     inferred: bool, // funny. it means if this tvar was made from a tyvar.
     fields: []Record,
 
-    pub const Binding = union(enum) {
-        Data: Unique,
-        Function: Unique,
-        ClassFunction: Unique,
-    };
-
     pub fn comparator() type {
         return struct {
             pub fn eql(ctx: @This(), a: TVar, b: TVar) bool {
@@ -775,6 +785,13 @@ pub const TVar = struct {
         }
     }
 };
+
+pub const Binding = union(enum) {
+    Data: Unique,
+    Function: Unique,
+    ClassFunction: Unique,
+};
+
 pub fn TypeF(comptime a: ?type) type {
     return union(enum) {
         const Rec = a orelse *@This();
@@ -787,7 +804,7 @@ pub fn TypeF(comptime a: ?type) type {
             }
         };
 
-        Con: struct { type: *Data, application: *Match(Rec) },
+        Con: struct { type: *Data, application: *Match },
         Fun: struct { args: []Rec, ret: Rec, env: EnvRef },
         TVar: TVar,
         TyVar: TyVar,
@@ -857,6 +874,7 @@ pub const Var = struct {
 pub const Data = struct {
     uid: Unique,
     name: Str,
+
     scheme: Scheme,
     stuff: union(enum) {
         cons: []Con,
@@ -909,7 +927,8 @@ pub const Data = struct {
 pub const Record = TypeF(Type).Field;
 
 pub const Scheme = struct {
-    tvars: []TVar,
+    tvars: []TVarOrNum,
+    // tnums: []TNum, // TODO: tnubs :) I think it's better because we don't do weird casts.
     envVars: []EnvRef, // like unions. same environments can appear in different places, and they need to be the same thing.
     associations: []Association,
 
@@ -927,6 +946,39 @@ pub const Scheme = struct {
         c.s("|");
         c.sepBy(self.associations, ", ");
         c.s("}");
+    }
+};
+
+pub const TVarOrNum = union(enum) {
+    TVar: TVar,
+    TNum: TNum,
+
+    fn print(self: @This(), c: Ctx) void {
+        switch (self) {
+            .TVar => |tv| tv.print(c),
+            .TNum => |n| n.print(c),
+        }
+    }
+
+    fn binding(self: @This()) Binding {
+        return switch (self) {
+            .TVar => |tv| tv.binding,
+            .TNum => |num| num.binding,
+        };
+    }
+};
+
+pub const TNum = struct {
+    uid: Unique,
+    name: Str,
+    binding: ?Binding,
+
+    fn print(self: @This(), c: Ctx) void {
+        c.print(.{ "^", self.name, "#", self.uid });
+    }
+
+    pub fn asVar(self: @This()) Var {
+        return .{ .name = self.name, .uid = self.uid };
     }
 };
 
@@ -950,56 +1002,88 @@ pub const Association = struct {
         c.s(")");
     }
 };
-// TODO: pointless T.
-pub fn Match(comptime T: type) type {
-    return struct {
-        scheme: Scheme,
-        envVars: []EnvRef,
-        tvars: []T,
-        assocs: []?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined"
+pub const Match = struct {
+    scheme: Scheme,
+    envVars: []EnvRef,
+    tvars: []TypeOrNum,
+    assocs: []?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined"
 
-        pub const AssocRef = union(enum) {
-            InstFun: InstPair, // some top level association.
-            Id: Association.ID, // this one means the assoc is contained in some Scheme.
+    pub const AssocRef = union(enum) {
+        InstFun: InstPair, // some top level association.
+        Id: Association.ID, // this one means the assoc is contained in some Scheme.
 
-            // I FUCKING HATE THESE NAMES
-            pub const InstPair = struct { fun: *Function, m: *Match(Type) };
-        };
-
-        pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
-            for (self.scheme.tvars, self.tvars) |tv, t| {
-                if (tv.eq(tvar)) {
-                    return t;
-                }
-            }
-
-            return null;
-        }
-
-        pub fn mapEnv(self: *const @This(), base: EnvRef) ?EnvRef {
-            for (self.scheme.envVars, self.envVars) |s, m| {
-                if (base.id == s.id) {
-                    return m;
-                }
-            }
-
-            return null;
-        }
-
-        pub fn empty(scheme: Scheme) @This() {
-            // sanity check. right now only used for placeholders in case of errors.
-            if (scheme.tvars.len > 0) {
-                unreachable;
-            }
-            return .{
-                .scheme = scheme,
-                .tvars = &.{},
-                .envVars = &.{},
-                .assocs = &.{},
-            };
-        }
+        // I FUCKING HATE THESE NAMES
+        pub const InstPair = struct { fun: *Function, m: *Match };
     };
-}
+
+    pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
+        for (self.scheme.tvars, self.tvars) |tvOrNum, t| {
+            switch (tvOrNum) {
+                .TVar => |tv| {
+                    if (tv.eq(tvar)) {
+                        return t.Type;
+                    }
+                },
+
+                .TNum => {},
+            }
+        }
+
+        return null;
+    }
+
+    pub fn mapEnv(self: *const @This(), base: EnvRef) ?EnvRef {
+        for (self.scheme.envVars, self.envVars) |s, m| {
+            if (base.id == s.id) {
+                return m;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn empty(scheme: Scheme) @This() {
+        // sanity check. right now only used for placeholders in case of errors.
+        if (scheme.tvars.len > 0) {
+            unreachable;
+        }
+        return .{
+            .scheme = scheme,
+            .tvars = &.{},
+            .envVars = &.{},
+            .assocs = &.{},
+        };
+    }
+};
+
+pub const TypeOrNum = union(enum) {
+    Type: Type,
+    Num: NumRef,
+
+    pub const TyNum = union(enum) {
+        TNum: TNum,
+        Literal: i64,
+        Unknown,
+    };
+
+    pub fn print(self: @This(), c: Ctx) void {
+        switch (self) {
+            .Type => |t| t.print(c),
+            .Num => |n| switch (c.typeContext.getNum(n)) {
+                .TNum => |tnum| tnum.print(c),
+                .Literal => |x| c.print(x),
+                .Unknown => c.print("#/#"),
+            },
+        }
+    }
+
+    pub fn isNum(self: @This()) bool {
+        return switch (self) {
+            .Num => true,
+            else => false,
+        };
+    }
+};
 
 pub const Con = struct {
     uid: Unique,
