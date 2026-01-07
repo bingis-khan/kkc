@@ -96,7 +96,11 @@ pub const Error = union(enum) {
 
     UnimportedModule: struct {},
 
-    ModuleDoesNotExportThing: struct {},
+    ModuleDoesNotExportThing: struct {
+        moduleName: Module.Path,
+        thing: Str,
+        l: Loc,
+    },
 
     DataDoesNotExportThing: struct {},
     ClassDoesNotExportThing: struct {},
@@ -237,7 +241,9 @@ pub const Error = union(enum) {
             .CircularModuleReference => p("circular module reference", .{}),
 
             .UnimportedModule => p("unimported module", .{}),
-            .ModuleDoesNotExportThing => p("ModuleDoesNotExportThing", .{}),
+            .ModuleDoesNotExportThing => |e| {
+                err.atLocation(e.l, .{ .label = .{ "Module '", e.moduleName[e.moduleName.len - 1], "' does not export '", e.thing, "'" } });
+            },
 
             .DataDoesNotExportThing => p("DataDoesNotExportThing", .{}),
             .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),

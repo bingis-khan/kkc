@@ -113,7 +113,7 @@ pub fn parse(self: *Self) !Module {
         if (dec != null) try decs.append(dec.?);
     }
 
-    try self.solveAvailableConstraints();
+    try self.solveAvailableConstraintsAndApplyDefaultsIfPossible();
 
     if (self.associations.items.len > 0) {
         try self.reportError(.{
@@ -437,9 +437,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             break :b .{ .Pass = label };
         } // pass
         else if (self.consume(.RETURN)) |retTok| {
+            var l = self.loc(retTok);
             const expr = if (!self.isEndStmt()) bb: {
                 const pm = self.foldFromHere();
                 const e = try self.expression();
+                l = l.between(e.l);
                 try self.finishFold(pm);
                 break :bb e;
             } else bb: {
@@ -456,7 +458,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             self.triedReturningAtAll = true;
             if (self.returned != .Errored) self.returned = .Returned;
 
-            try self.typeContext.unify(expr.t, try self.getReturnType(), &.{ .l = undefined });
+            try self.typeContext.unify(expr.t, try self.getReturnType(), &.{ .l = l });
 
             break :b .{ .Return = expr };
         } // return
@@ -486,7 +488,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                             if (mod.lookupVar(varName)) |vv| {
                                 try self.scope.currentScope().vars.put(varName, vv);
                             } else {
-                                try self.reportError(.{ .ModuleDoesNotExportThing = .{} });
+                                try self.reportError(.{ .ModuleDoesNotExportThing = .{
+                                    .moduleName = modpath.items,
+                                    .thing = varName,
+                                    .l = self.loc(v),
+                                } });
                             }
                         }
                     } else if (self.consume(.TYPE)) |tt| {
@@ -521,7 +527,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                                                     try self.reportError(.{ .ClassDoesNotExportThing = .{} });
                                                 }
                                             },
-                                            .Data => try self.reportError(.{ .ModuleDoesNotExportThing = .{} }),
+                                            .Data => try self.reportError(.{ .ModuleDoesNotExportThing = .{
+                                                .moduleName = modpath.items,
+                                                .thing = vname,
+                                                .l = self.loc(vt),
+                                            } }),
                                         }
                                     }
                                 } else if (self.consume(.TYPE)) |ct| {
@@ -538,7 +548,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                                                     try self.reportError(.{ .DataDoesNotExportThing = .{} });
                                                 }
                                             },
-                                            .Class => try self.reportError(.{ .ModuleDoesNotExportThing = .{} }),
+                                            .Class => try self.reportError(.{ .ModuleDoesNotExportThing = .{
+                                                .moduleName = modpath.items,
+                                                .thing = cname,
+                                                .l = self.loc(ct),
+                                            } }),
                                         }
                                     }
                                 } else {
@@ -805,6 +819,20 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             self.selfType = selfType;
 
             const class = try self.arena.create(AST.Class);
+            class.* = AST.Class{
+                .uid = uid,
+                .name = className.literal(self.lexer.source),
+                .selfType = selfVar,
+
+                .classFuns = undefined,
+                .default = null,
+            };
+
+            if (self.check(.COLON)) {
+                const qtypeName = try self.parseQualifiedType(try self.expect(.TYPE));
+                const data = (try self.findQualifiedDataOrClass(qtypeName.modpath, qtypeName.name, qtypeName.loc) orelse unreachable).Data;
+                class.default = data;
+            }
 
             var classFuns = std.ArrayList(*AST.ClassFun).init(self.arena);
             try self.devour(.INDENT);
@@ -816,12 +844,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
 
             self.selfType = oldSelf;
 
-            class.* = AST.Class{
-                .uid = uid,
-                .name = className.literal(self.lexer.source),
-                .classFuns = classFuns.items,
-                .selfType = selfVar,
-            };
+            class.classFuns = classFuns.items;
 
             try self.newClass(class);
 
@@ -2077,27 +2100,22 @@ fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, dloc: 
             return null;
         }
     } else {
-        if (self.importedModules.get(modpath)) |mmod| {
-            if (mmod) |mod| {
-                if (mod.lookupData(name)) |data| {
-                    return data;
-                } else {
-                    try self.reportError(.{
-                        .UndefinedType = .{
-                            .typename = name,
-                            .loc = dloc,
-                        },
-                    });
-                    return null;
-                }
+        if (try self.loadModuleFromPath(modpath)) |mod| {
+            if (mod.lookupData(name)) |data| {
+                return data;
             } else {
-                // circular dep??
-                // return null;
-                unreachable;
+                try self.reportError(.{
+                    .UndefinedType = .{
+                        .typename = name,
+                        .loc = dloc,
+                    },
+                });
+                return null;
             }
         } else {
-            try self.reportError(.{ .UnimportedModule = .{} });
-            return null;
+            // circular dep??
+            // return null;
+            unreachable;
         }
     }
 
@@ -2125,6 +2143,20 @@ fn constructorExpression(self: *Self, modpath: Module.Path, name: Token) !*AST.E
 // Also, make it legible.
 fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
     const og = st.literal(self.lexer.source); // this includes single quotes
+
+    // handling chars
+    // currently, a string of 1 character will always be a char.
+    // this is obviously bad, since we sometimes want one-char strings.
+    // The thing is: kc code should be polymorphic enough to support it,
+    // but we sometimes (incorrectly, but out of laziness) rely on ConstStr == const char*, which will be bad and will force us to allocate.
+    // if (og.len == 3) { // 1 + two `'`
+    //     return try self.allocExpr(.{
+    //         .e = .{ .Char = og[1] },
+    //         .l = self.loc(st),
+    //         .t = try self.definedType(.Char),
+    //     });
+    // }
+
     var e: ?*AST.Expr = null;
     var s = std.ArrayList(u8).init(self.arena);
     var i: usize = 1;
@@ -2139,19 +2171,13 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                     const start = i;
 
                     if (last != ci) {
-                        const se = try self.allocExpr(.{
-                            .e = .{
-                                .Str = try s.toOwnedSlice(),
-                            },
-                            .t = try self.definedType(.ConstStr),
-                            .l = .{
-                                .from = st.from + last, // this is probably incorrect.
-                                .to = st.from + ci,
-                                .line = self.lexer.line, // should be correct... right?
-                                .module = .{
-                                    .source = self.lexer.source,
-                                    .name = self.name,
-                                },
+                        const se = try self.constStr(try s.toOwnedSlice(), .{
+                            .from = st.from + last, // this is probably incorrect.
+                            .to = st.from + ci,
+                            .line = self.lexer.line, // should be correct... right?
+                            .module = .{
+                                .source = self.lexer.source,
+                                .name = self.name,
                             },
                         });
                         if (e) |ee| {
@@ -2281,20 +2307,14 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
     }
 
     if (last != i) {
-        const se = try self.allocExpr(.{
-            .e = .{
-                .Str = try s.toOwnedSlice(),
-            },
-            .t = try self.definedType(.ConstStr),
-            .l = .{
-                // NOTE: same problem as the loc definition for string in the beginning.
-                .from = st.from + last,
-                .to = st.from + i,
-                .line = self.lexer.line,
-                .module = .{
-                    .source = self.lexer.source,
-                    .name = self.name,
-                },
+        const se = try self.constStr(try s.toOwnedSlice(), .{
+            // NOTE: same problem as the loc definition for string in the beginning.
+            .from = st.from + last,
+            .to = st.from + i,
+            .line = self.lexer.line,
+            .module = .{
+                .source = self.lexer.source,
+                .name = self.name,
             },
         });
         if (e) |ee| {
@@ -2306,11 +2326,63 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
             e = se;
         }
     }
-    return e orelse self.allocExpr(.{
-        .e = .{ .Str = &.{} },
-        .t = try self.definedType(.ConstStr),
-        .l = self.loc(st),
-    });
+    return e orelse try self.constStr(&.{}, self.loc(st));
+}
+
+fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
+    if (s.len != 1) {
+        return try self.allocExpr(.{
+            .e = .{
+                .Str = s,
+            },
+            .t = try self.definedType(.ConstStr),
+            .l = l,
+        });
+    } else {
+        const retTy = try self.typeContext.fresh();
+        const class = try self.definedClass(.FromChar);
+        const cfun = class.classFuns[0];
+        const ifn = try self.instantiateClassFunction(cfun, l);
+        const funTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{try self.definedType(.ConstStr)},
+            .ret = retTy,
+        } });
+        try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
+
+        const arg = try self.allocExpr(.{
+            .e = .{
+                .Str = s,
+            },
+            .t = try self.definedType(.ConstStr),
+            .l = l,
+        });
+
+        const args = try self.arena.alloc(*AST.Expr, 1);
+        args[0] = arg;
+
+        const callee = try self.allocExpr(.{
+            .e = .{
+                .Var = .{
+                    .v = .{ .ClassFun = .{
+                        .cfun = cfun,
+                        .ref = ifn.ref,
+                    } },
+                    .match = ifn.m,
+                },
+            },
+            .t = funTy,
+            .l = l,
+        });
+
+        return try self.allocExpr(.{
+            .e = .{ .Call = .{
+                .callee = callee,
+                .args = args,
+            } },
+            .t = retTy,
+            .l = l,
+        });
+    }
 }
 
 fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
@@ -2581,6 +2653,10 @@ const Type = struct {
 
 // resolver zone
 fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
+    if (self.importedModules.get(path)) |mmod| {
+        return mmod;
+    }
+
     const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } }, .{});
     try self.importedModules.put(path, mmod);
 
@@ -2638,26 +2714,21 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
             }
         }
     } else {
-        if (self.importedModules.get(modpath)) |mmod| {
-            if (mmod) |mod| {
-                if (mod.lookupVar(varName)) |vorf| {
-                    return .{
-                        .vorf = vorf,
-                        .sc = null,
-                    };
-                } else {
-                    // FALLTHROUGH.
-                    // TODO: set source module to be of that found module.
-                }
+        if (try self.loadModuleFromPath(modpath)) |mod| {
+            if (mod.lookupVar(varName)) |vorf| {
+                return .{
+                    .vorf = vorf,
+                    .sc = null,
+                };
             } else {
-                // i dunno, probably some other error. Ignore ig?
-                unreachable; // TEMP. I JUST NEED TO SEE WHEN THAT HAPPENS.
+                // FALLTHROUGH.
+                // TODO: set source module to be of that found module.
             }
         } else {
-            try self.reportError(.{ .UnimportedModule = .{} });
+            // i dunno, probably some other error. Ignore ig?
+            unreachable; // TEMP. I JUST NEED TO SEE WHEN THAT HAPPENS.
         }
     }
-
     const placeholderVar = AST.Var{
         .name = varName,
         .uid = self.gen.vars.newUnique(),
@@ -2802,6 +2873,7 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
         .instances = instances,
         .ref = ref,
         .loc = l,
+        .default = cfun.class.default,
     });
 
     return .{
@@ -2850,6 +2922,36 @@ fn getInstancesForClass(self: *Self, class: *AST.Class) !Module.DataInstance {
     }
 
     return foundInsts;
+}
+
+// the function name bruh
+fn solveAvailableConstraintsAndApplyDefaultsIfPossible(self: *Self) !void {
+    while (true) {
+        try self.solveAvailableConstraints();
+
+        var appliedAnyDefaults = false;
+        if (self.associations.items.len > 0) {
+            // try solving defaults.
+            for (self.associations.items) |assoc| {
+                appliedAnyDefaults = appliedAnyDefaults or try self.maybeApplyDefault(&assoc);
+            }
+        }
+
+        if (!appliedAnyDefaults) {
+            break;
+        }
+    }
+}
+
+// TODO: this should not really be a function thooo
+fn maybeApplyDefault(self: *Self, assoc: *const Association) !bool {
+    if (assoc.default) |def| {
+        const data = try self.instantiateData(def);
+        try self.typeContext.unify(assoc.from, data.t, &.{ .l = assoc.loc.? });
+        return true;
+    }
+
+    return false;
 }
 
 fn solveAvailableConstraints(self: *Self) !void {
@@ -2907,6 +3009,8 @@ fn solveAvailableConstraints(self: *Self) !void {
                 },
                 .Anon => unreachable, // ??? i dunno
                 .Fun => unreachable, // error!
+
+                // BUG?(tvar-in-solving-constraints)
                 .TVar => |tv| { // what should i do here?
                     // const targetClass = assoc.classFun.class;
                     // // for (tv.classes.items) |class| {
@@ -3128,18 +3232,14 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
             return .{ .con = &data.stuff.cons[0], .t = try self.typeContext.fresh(), .tys = &.{} };
         }
     } else b: {
-        if (self.importedModules.get(modpath)) |mmod| {
-            if (mmod) |mod| {
-                if (mod.lookupCon(conName)) |con| {
-                    break :b con;
-                } else {
-                    unreachable; // TODO ERROR: could not find constructor.
-                }
+        if (try self.loadModuleFromPath(modpath)) |mod| {
+            if (mod.lookupCon(conName)) |con| {
+                break :b con;
             } else {
-                unreachable; // this might be a circular dependency?
+                unreachable; // TODO ERROR: could not find constructor.
             }
         } else {
-            unreachable; // TODO ERROR: Module not imported.
+            unreachable; // this might be a circular dependency?
         }
     };
 
@@ -3249,6 +3349,25 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         }
     }
 
+    // TEMP: detect free type variables and apply defaults in case they are not from outside.
+    // NOTE(invalidate-entries): we can invalidate entries.
+    while (true) {
+        var defaultsApplied = false;
+        for (self.associations.items) |assoc| {
+            const from = self.typeContext.getType(assoc.from);
+            if (assoc.default != null and !funftvs.tyvars.contains(.{ .t = assoc.from, .tyv = from.TyVar }) and !envftvs.contains(assoc.from, from.TyVar)) {
+                defaultsApplied = defaultsApplied or try self.maybeApplyDefault(&assoc);
+            }
+        }
+
+        if (!defaultsApplied) {
+            break;
+        }
+
+        // TODO: THIS SHOULD NOT BE HERE. BAD DESIGN (need better free variables detection)
+        try self.solveAvailableConstraints();
+    }
+
     // now, remove the tyvars from env here.
     funftvs.difference(&envftvs);
 
@@ -3264,6 +3383,11 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 
     var it = funftvs.tyvars.iterator();
     while (it.next()) |e| {
+        // NOTE(invalidate-entries): filter in case it was invalidated.
+        switch (self.typeContext.getType(e.t)) {
+            .TyVar => {},
+            else => continue,
+        }
         const name = try std.fmt.allocPrint(self.arena, "'{}", .{e.tyv.uid});
         const tv = AST.TVar{
             .name = name,
@@ -3280,6 +3404,11 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     var envs = std.ArrayList(AST.EnvRef).init(self.arena);
     var envIt = funftvs.envs.iterator();
     while (envIt.next()) |e| {
+
+        // NOTE(invalidate-entries): filter in case it was invalidated.
+        if (self.typeContext.getEnv(e.*).env != null) {
+            continue;
+        }
         try envs.append(e.*);
     }
 
@@ -3379,6 +3508,7 @@ pub const Association = struct {
     ref: *?AST.Match(AST.Type).AssocRef,
 
     instances: Module.DataInstance,
+    default: ?*AST.Data = null, // for now, when generalizing, we DON'T keep defaults. I'm thinking of applying defaults before generalizing, so that returning strings works correctly. Or make a different default type: `late` and `eager`
 };
 
 fn addAssociation(self: *Self, assoc: Association) !void {

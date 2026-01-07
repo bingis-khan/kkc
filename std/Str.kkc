@@ -50,9 +50,12 @@ inst Str ConstStr
 
 
 
-inst Str Cnile.Char
+inst Str Char
 	print-str (self _) -> Unit
 		Cnile.printf1('%c', self)
+
+	chars (self _):
+		Iter.single(self)
 
 
 
@@ -222,7 +225,6 @@ inst Str Ptr
 
 
 
-
 inst Str Maybe
 	print-str (self _)
 		case self
@@ -276,7 +278,12 @@ inst Str TakeWhile
 ###### Functions ######
 
 fn nullchar() -> Cnile.Char: Mem.zeroed()  # HACK!!
-fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)
+fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this is incorrect, because we zip() trims!
+fn streq(l, r): eq(l, r)
+fn char-int(c Char) -> Int:
+	Mem.cast-on-zeroed(c)
 
+###### Other Instances #####
 
-
+inst Eq ConstStr
+	eq (l, r): Cnile.strcmp(l, r) == 0

@@ -429,6 +429,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 },
             }
         },
+        .Char => |c| {
+            return self.val(.{ .char = c }, 1);
+        },
         .Int => |x| {
             return self.intValue(x);
         },
@@ -852,6 +855,7 @@ fn copyValueMeta(self: *Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
 // note about alignments: in C structs the alignments are variable (because we might represent different structs), so everything must be align(1)
 const RawValue = extern union {
     int: i64,
+    char: u8,
     extptr: *anyopaque,
     ptr: *align(1) RawValue,
     fun: *Fun,

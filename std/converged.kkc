@@ -5,7 +5,6 @@ use Str2
 	allocate-str
 	lines
 	split
-	char  # oof
 	is-blank
 	is-digit
 	parse-int

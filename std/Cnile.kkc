@@ -103,6 +103,7 @@ external
 
 	#### string.h #####
 	strlen (s ConstStr) -> Int
+	strcmp (l ConstStr, r ConstStr) -> Int
 
 
 	##### file ops #####
@@ -132,13 +133,6 @@ external
 fn seek-set(): 0
 fn seek-cur(): 1
 fn seek-end(): 2
-
-#[ctype 'char', bytes '1']
-Char
-
-inst Eq Char
-	eq (l, r): @memeq(l, r)
-
 
 
 fn wifexited (status Int):

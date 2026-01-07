@@ -14,6 +14,7 @@ pub const PremadeType = enum {
     Bool,
     Int,
     ConstStr,
+    Char,
     Ptr,
     StrConcat,
     ListSpread,
@@ -31,6 +32,7 @@ pub const PremadeTypeName = TypeNameArray(PremadeType);
 pub const PremadeClass = enum {
     Eq,
 
+    FromChar,
     ListLike,
     // MapList,
 };

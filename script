@@ -1,20 +1,6 @@
 #!./zig-out/bin/kkc
-use Sh
-	deps
-use Slice
-use Alloc
-	allocate
-use Mem
-	cast-ptr
-use Iter
-	Iter
-	next
-	into-iter
-use Term
+use Str
+	Str
+	print-str
 
-al = Alloc.idc()
-
-
-if 'zig-out/bin/kkc' deps (nil() cons ('src/main.zig'))
-	println('rebuilding')
-	'zig build' Sh.run(al)
+'r' println()

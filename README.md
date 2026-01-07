@@ -30,6 +30,7 @@ BUT, unifying envs is currently scuffed and I need to think more about how it sh
   - i forgot, did I do it???
 - add another namespace for other std modules? (basically, most std modules use the same set of em, so it's kinda annoying to import basic modules.)
 - do man or boy test
+- auto-import modules? eq. writing `Slice.get(...)` will trigger an import, like a `use Slice` statement. We can still later `use` it if we want to import modules in the namespace.
 
 
 ## Bugs

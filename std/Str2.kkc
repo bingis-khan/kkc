@@ -37,20 +37,10 @@ fn allocate-str (s, al) -> ConstStr
 	str Slice.set(len, Str.nullchar())
 	return str.ptr Mem.cast()
 
-fn char(s)
-	case s chars() head()
-		Just(c)
-			return c
-		None
-			# BAD! but this is not a good function, it should be called with constant strings n stuff
-			# later, when we add reexporting, I should make more fine grained modules and reexport stuff.
-			panic('char: empty string')
-			return Mem.undefined()
-
-fn newline(): char('\n')
+fn newline() -> Char: '\n'
 
 fn is-whitespace (c):
-	c == char(' ') or c == char('\n') or c == char('\t')
+	c == ' ' or c == '\n' or c == '\t'
 
 fn is-blank (s): s
 	chars()
@@ -119,38 +109,12 @@ inst Iter SplitWhitespaceIter
 
 # kekkekekekekkekekek
 fn is-digit (c):
-	c == char('0') or
-	c == char('1') or
-	c == char('2') or
-	c == char('3') or
-	c == char('4') or
-	c == char('5') or
-	c == char('6') or
-	c == char('7') or
-	c == char('8') or
-	c == char('9')
+	Str.char-int(c) >= Str.char-int('0') and Str.char-int(c) <= Str.char-int('9')
+
 
 fn parse-digit (c)
-	if c == char('0')
-		return Just(0)
-	elif c == char('1')
-		return Just(1)
-	elif c == char('2')
-		return Just(2)
-	elif c == char('3')
-		return Just(3)
-	elif c == char('4')
-		return Just(4)
-	elif c == char('5')
-		return Just(5)
-	elif c == char('6')
-		return Just(6)
-	elif c == char('7')
-		return Just(7)
-	elif c == char('8')
-		return Just(8)
-	elif c == char('9')
-		return Just(9)
+	if is-digit(c)
+		return Just(Str.char-int(c) - Str.char-int('0'))
 	else
 		return None
 

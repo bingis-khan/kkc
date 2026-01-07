@@ -482,6 +482,7 @@ pub const Expr = struct {
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: i64, // obv temporary.
         Str: Str,
+        Char: u8, // later RUNE!
         NamedRecord: struct {
             data: *Data,
             fields: []Field,
@@ -564,6 +565,7 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
+            .Char => |ch| c.sp("c'{}'", .{ch}),
             .Str => |s| {
                 std.debug.lockStdErr();
                 defer std.debug.unlockStdErr();
@@ -1020,6 +1022,7 @@ pub const Class = struct {
     name: Str,
     classFuns: []*ClassFun,
     selfType: TVar,
+    default: ?*Data,
 
     pub fn print(self: *const @This(), c: Ctx) void {
         c.print(.{ self.name, "@", self.uid });

@@ -22,6 +22,9 @@ Float
 #[ctype 'const char*']
 ConstStr  # TODO: later, make a ptr + length struct string.
 
+#[ctype 'char', bytes '1']
+Char  # later change to RUNE!
+
 
 # stolen from Str std module. used in string interpolation
 StrConcat l r
@@ -44,6 +47,13 @@ StrCase c1 c2  # big hack for alternative string representations. (ex: Maybe)
 #[actual-pointer-type]
 Ptr a
 	Ptr a
+
+
+# funny experiment-ahh class
+class FromChar: Char
+	from-charlike (s ConstStr) -> _
+
+# maybe instead of ConstStr, we should have a special datatypes to signal a one-char string?
 
 
 # Equality
@@ -103,16 +113,23 @@ Either e a
 
 ##### INSTANCES !!!! #######
 
+inst FromChar ConstStr
+	from-charlike (s): s
+
+inst FromChar Char
+	from-charlike (s): (@cast(s) as Ptr Char)&
+
+
 inst Eq Int
 	eq (l, r): @memeq(l, r)
 
 inst Eq Bool
 	eq (l, r): @memeq(l, r)
 
-inst Eq ConstStr
+inst Eq Ordering
 	eq (l, r): @memeq(l, r)
 
-inst Eq Ordering
+inst Eq Char
 	eq (l, r): @memeq(l, r)
 
 inst Eq Maybe

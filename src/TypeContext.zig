@@ -527,7 +527,7 @@ pub const FTVs = struct {
         };
     }
 
-    fn contains(self: *const @This(), t: ast.Type, tyv: ast.TyVar) bool {
+    pub fn contains(self: *const @This(), t: ast.Type, tyv: ast.TyVar) bool {
         return self.tyvars.contains(.{ .tyv = tyv, .t = t });
     }
 

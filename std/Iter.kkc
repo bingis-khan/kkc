@@ -264,6 +264,8 @@ fn append(it, e):
 # reverse cons to nicely compose with postfix calling
 fn cons(it, e): append(it, e)  # synonim for funi
 
+fn single(e): nil() cons(e)
+
 inst IntoIter AppendIter
 	into-iter (self): self
 

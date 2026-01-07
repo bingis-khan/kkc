@@ -26,6 +26,14 @@ fn zeroed() -> a
 	Cnile.memset(cast-ptr(&x), 0, size-of(x))
 	return x
 
+# make sure the second value's size is GREATER
+fn cast-on-zeroed(x a) -> b
+	# y =& Mem.zeroed()
+	# yp = y cast()
+	# yp <&= x
+	# return y&
+	return cast(x)
+
 # TODO: maybe make a module "Ptr"?
 # Also, this is only used for C shit... so this should not be here.
 # For undefined stuff we should have 0xabcdef and stuff.
@@ -33,10 +41,12 @@ fn null-ptr() -> Ptr a: zeroed()
 fn is-ptr-null(p Ptr a): @memeq(p, null-ptr())
 
 fn ptr-to-int(p Ptr a) -> Int: @cast(p)
+fn ptr-eq(l Ptr a, r Ptr a):
+	@memeq(l, r)
 
 
 fn from-nullable-c-str (s ConstStr)
-	if s == zeroed()  # == NULL?
+	if s cast() ptr-eq (null-ptr() as Ptr Unit)
 		return None
 	else
 		return Just(s)
