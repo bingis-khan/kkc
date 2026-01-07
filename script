@@ -1,6 +1,2 @@
 #!./zig-out/bin/kkc
-use Str
-	Str
-	print-str
-
 'r' println()

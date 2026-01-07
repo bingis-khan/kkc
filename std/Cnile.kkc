@@ -101,6 +101,8 @@ external
 	malloc (bytes Int) -> Ptr Void
 	free (x Ptr Void) -> Void
 
+	remove (s ConstStr) -> Int
+
 	#### string.h #####
 	strlen (s ConstStr) -> Int
 	strcmp (l ConstStr, r ConstStr) -> Int

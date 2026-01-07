@@ -1,6 +1,8 @@
 # Features
 
-- chars
+- I/UXX integers + appropriate typeclasses
+- [?] chars
+	- not fully - type defaulting is kinda spaghetti (but behavior seems to be correct).
 - utf8 support (my own, inbuilt support!)
 - type synonyms
 - numbers in type parameters
@@ -45,3 +47,4 @@ fn drop-while'(it, pred)
 ```
 - writing `Tuple2(iter, Whatever iter)` in type declaration produces a compiler error.
 - functions which were imported by name now visible outside (eg. it's possible to do Iter.Char, because it's defined in prelude, but it should be an error)
+- apostrophe in string interpolation breaks it (actually tokenize string interpolation? allow actual expressions? or just track parens?)
