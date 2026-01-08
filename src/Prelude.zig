@@ -17,6 +17,7 @@ pub const PremadeType = enum {
     ConstStr,
     Char,
     Ptr,
+    Array,
     StrConcat,
     ListSpread,
 };

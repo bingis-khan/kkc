@@ -45,6 +45,8 @@ use Iter
 # use Iter2
 # 	head
 
+use Array
+
 use Mem
 	undefined
 

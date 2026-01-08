@@ -1,0 +1,23 @@
+use Slice
+	Slice
+
+fn get-ptr (arr Ptr (Array count a), i Int) -> Ptr a
+	if i < 0 or i >= count
+		Error.panic('Access to array at index \(i). (max: \(count))')
+
+	p = Mem.cast(arr) as Ptr a
+	return Mem.offset-ptr(p, i)
+
+fn get (arr Ptr (Array count a), i Int) -> a:
+	arr get-ptr(i)&
+
+fn set (arr Ptr (Array count a), i Int, e a)
+	p = arr get-ptr(i)
+	p <&= e
+
+
+fn as-slice (arr Ptr (Array count a)) -> Slice a:
+	Slice { ptr: Mem.cast(arr), count }
+
+
+# NOT INTO ITER INSTANCE, BECAUSE WE REQUIRE A POINTER BRUV!!!!

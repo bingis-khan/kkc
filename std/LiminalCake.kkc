@@ -1,0 +1,52 @@
+# WTF is this name geg
+
+use Iter
+	IntoIter
+	into-iter
+	Iter
+	next
+
+# COLUMN MAJOR
+# later specify type? like: `Matrix ^col ^row a`.
+
+Vector ^e
+	backing Array e Int
+
+
+Matrix ^col ^row
+	backing Array col (Array row Int)
+
+
+fn transpose (m Matrix c r) -> Matrix r c
+	return Error.todo()
+
+fn mult (m Matrix n o, m' Matrix o p) -> Matrix n p
+	return Error.todo()
+
+
+
+# Why have an Iter instance for Vector, but not for Array?
+# Intent. Most vectors will probably have a size of 3, which is small enough to be passed by value, while Arrays are more used as buffers and can be big (IntoIter takes full values bruv).
+# Unless we change into-iter to take in pointers, we have to do it like this bruv.
+VectorIter ^count
+	backin' Vector count
+	cur Int
+
+inst IntoIter Vector
+	into-iter (self):
+		VectorIter { backin': self, cur: 0 }
+
+inst IntoIter VectorIter
+	into-iter (self): self
+
+
+inst Iter VectorIter
+	next (self Ptr (VectorIter count))
+		if self&.cur >= count
+			return None
+
+		e = (&self&.backin'.backing) Array.get(self&.cur)
+		self <&.cur= self&.cur + 1
+		return Just(e)
+
+

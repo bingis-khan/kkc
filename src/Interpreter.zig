@@ -1091,6 +1091,29 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                 return .{ .size = @sizeOf(*anyopaque), .alignment = @alignOf(*anyopaque) };
             }
 
+            // check if array
+            if (c.type.eq(self.prelude.defined(.Array))) {
+                // TODO: refactor
+                const count: usize = b: {
+                    var numref = c.application.tvars[0].Num;
+                    while (true) {
+                        switch (self.typeContext.getNum(numref)) {
+                            .TNum => |tnum| numref = self.tymap.getTNum(tnum),
+                            .Literal => |lit| break :b @intCast(lit),
+                            .Unknown => unreachable,
+                        }
+                    }
+                };
+                const ty = c.application.tvars[1].Type;
+                const sz = self.sizeOf(ty);
+
+                // NOTE: padding
+                // Then I compiler a ThreeChar struct in C, a 5 element 3 char array has 15 bytes, which means no padding between elements.
+                // Based on this, the algorithm seems correct.
+
+                return .{ .size = sz.size * count, .alignment = sz.alignment };
+            }
+
             switch (c.type.structureType()) {
                 // NOTE: not sure if it's correct, but assume pointer size, because that's what opaque types mostly are. I guess I should also use some annotations to check size.
                 //  I wonder if I should make sizes in annotations OR will the compiler just *know* about inbuilt types?
@@ -1252,6 +1275,22 @@ const TypeMap = struct {
             }
         } else {
             return (self.prev orelse unreachable).getTVar(tv);
+        }
+    }
+
+    fn getTNum(self: *const @This(), tnum: ast.TNum) ast.NumRef {
+        for (self.scheme.tvars, self.match.tvars) |s, m| {
+            switch (s) {
+                .TNum => |tn| {
+                    if (tn.uid == tnum.uid) {
+                        return m.Num;
+                    }
+                },
+
+                else => {},
+            }
+        } else {
+            return (self.prev orelse unreachable).getTNum(tnum);
         }
     }
 

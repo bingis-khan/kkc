@@ -48,6 +48,8 @@ StrCase c1 c2  # big hack for alternative string representations. (ex: Maybe)
 Ptr a
 	Ptr a
 
+# my array type bruh
+Array ^count a
 
 # funny experiment-ahh class
 class FromChar: Char
@@ -106,8 +108,6 @@ Maybe a
 Either e a
 	Left e
 	Right a
-
-
 
 
 

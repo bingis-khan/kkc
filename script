@@ -1,18 +1,7 @@
 #!./zig-out/bin/kkc
+use LiminalCake
+	Vector
 
+vec = [4, 8, 69] as Vector 3
 
-# empty type
-
-Array ^count a
-
-NumProxy ^cock
-	NumProxy
-
-fn miau2(_ NumProxy osd)
-	osd println()
-
-fn miau (proxy NumProxy ^coo)
-	coo println()
-	miau2(proxy)
-
-miau(NumProxy as NumProxy 4)
+vec for-each(println)
