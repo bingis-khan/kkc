@@ -8,8 +8,10 @@
 - [.] numbers in type parameters
 	- crappy code - separate tvars into tvars and tnums
 	- parse ^identifier together: `^  identifier` would become invalid.
-- array literals
-	- FromList typeclass.
+- [V] array literals
+	- [V] FromList typeclass.
+	- add nice errors (currently unreachable + "TODO: errors")
+	- smol cleanup (decide if I want to factor out the array allocation / sizing code)
 - basic type parameter number ops
 	- +
 	- -

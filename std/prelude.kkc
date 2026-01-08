@@ -79,7 +79,13 @@ class Gettable
 
 
 # List construction (but actually Array bruhhhhhh)
-class ListLike: Array
+
+# smol array type to seperate arrays that were created with an array literal.
+# the only difference is that a smol array can be iterated over (since we know a user typed it out, so it's probably small, like a makefile dependency list)
+SmolArray ^count a
+	arr Array count a
+
+class ListLike: SmolArray
 	# type Elem
 	# maybe take in pointer to it?
 	from-listlike (arr Array count elem) -> _
@@ -156,3 +162,6 @@ inst Eq Ptr
 
 inst ListLike Array
 	from-listlike (self): self
+
+inst ListLike SmolArray
+	from-listlike (arr): SmolArray { arr }

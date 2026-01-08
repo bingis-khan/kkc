@@ -41,3 +41,22 @@ Alternatively / additionally, maybe we can add tactical `if`s?
     Tuple2(l if l == some-int, r) if r == whatever()
       println('miau')
 ```
+
+
+# IntoIter for prelude's Array type?
+
+copied from `Array.kkc`:
+
+> DESIGN: Be VERY careful with this.
+> But it's just too useful to have....
+> Maybe I'll make a different type for buffers, so I don't accidentally iterate over them by value?
+> Since I want this for ListLike arrays, maybe make the default type be something like SmolArray, which has IntoIter, but default Array/Buffer does not? Since we want to be able to iterate over array literals, but not buffers.
+
+<!-- Right now I just implemented IntoIter for the default Array, but I think I should go with this soon! Update this text when I do. -->
+
+I've decided to implement a `SmolArray` type in prelude for just that. The only difference between it and normal array is that a smol array can be iterated over.
+
+This is useful when using array literals in Makefile deps, which need to be coerced to iterators.
+Is this good? Or should I just cave in and just implement an IntoIter for a normal array?
+
+Since it's an experiment, I've decided on the funny option. But I'm thinking I'll remove the SmolArray in the future, and just let people iterate over big big arrays and let em reap what their ignorance has sown.

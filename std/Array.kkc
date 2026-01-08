@@ -1,3 +1,8 @@
+use Iter
+	IntoIter
+	Iter
+	into-iter
+	next
 use Slice
 	Slice
 
@@ -20,4 +25,25 @@ fn as-slice (arr Ptr (Array count a)) -> Slice a:
 	Slice { ptr: Mem.cast(arr), count }
 
 
-# NOT INTO ITER INSTANCE, BECAUSE WE REQUIRE A POINTER BRUV!!!!
+# ARRAY YAH
+# It's here, because why not. It's still imported by default.
+
+SmolArrayIter ^count a
+	backing SmolArray count a
+	cur Int
+
+inst IntoIter SmolArray
+	into-iter (self):
+		SmolArrayIter { backing: self, cur: 0 }
+
+inst IntoIter SmolArrayIter
+	into-iter (self): self
+
+inst Iter SmolArrayIter
+	next (self Ptr (SmolArrayIter count a))
+		if self&.cur >= count
+			return None
+
+		e = (&self&.backing.arr) get(self&.cur)
+		self <&.cur= self&.cur + 1
+		return Just(e)
