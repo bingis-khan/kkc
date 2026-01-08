@@ -141,7 +141,7 @@ inst Str Slice
 			print-str(']')
 
 
-inst ListLike Slice
+inst ListDecon Slice
 	deconstruct (self, lp, lc, spread, rp, rc)
 		if lc > 0
 			if lc > self.count

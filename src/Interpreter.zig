@@ -737,6 +737,24 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
             }), .Lambda);
             return try self.val(.{ .lam = ptr }, @sizeOf(*const RawValue.Lam));
         },
+
+        .StaticArray => |arr| {
+            if (arr.len == 0) {
+                // I think this is correct, since we ain't gonna be accessing any elements.
+                // size should also be zero!
+                return valFromRef(@ptrFromInt(0xabcdabcdabcdabcd));
+            }
+
+            const elemSize = self.sizeOf(arr[0].t).size;
+            const array = try self.arena.alloc(u8, elemSize * arr.len); // NOTE: should be the same as sizeOf(Array). maybe we should factor this logic out?
+            for (arr, 0..) |elem, i| {
+                const ret = try self.expr(elem);
+                @memcpy(array[i * elemSize .. (i + 1) * elemSize], ret.ref.slice(elemSize));
+            }
+
+            const vptr: RawValueRef = @alignCast(@ptrCast(array.ptr));
+            return valFromRef(vptr);
+        },
     }
 
     unreachable;

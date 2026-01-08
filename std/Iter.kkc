@@ -329,7 +329,7 @@ fn null(it): it head() == None
 
 
 
-inst ListLike Range
+inst ListDecon Range
 	deconstruct (Range(rf, rt), lp, lc, spread, rp, rc)
 		count = rt - rf
 		fn set-ptr (p, i, e)

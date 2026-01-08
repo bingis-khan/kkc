@@ -1,7 +1,14 @@
 #!./zig-out/bin/kkc
 use LiminalCake
 	Vector
+	Matrix
 
-vec = [4, 8, 69] as Vector 3
-
+vec = [12, 8, 69] as Vector 3
 vec for-each(println)
+
+m =
+	[ [1, 2]
+	, [2, 3]
+	, [3, 4]
+	] as Matrix 3 2
+

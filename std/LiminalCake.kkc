@@ -12,10 +12,13 @@ use Iter
 Vector ^e
 	backing Array e Int
 
+inst ListLike Vector
+	from-listlike (arr):
+		Vector { backing: arr }
+
 
 Matrix ^col ^row
 	backing Array col (Array row Int)
-
 
 fn transpose (m Matrix c r) -> Matrix r c
 	return Error.todo()
@@ -23,6 +26,9 @@ fn transpose (m Matrix c r) -> Matrix r c
 fn mult (m Matrix n o, m' Matrix o p) -> Matrix n p
 	return Error.todo()
 
+inst ListLike Matrix
+	from-listlike (arr):
+		Matrix { backing: arr }
 
 
 # Why have an Iter instance for Vector, but not for Array?
@@ -48,5 +54,4 @@ inst Iter VectorIter
 		e = (&self&.backin'.backing) Array.get(self&.cur)
 		self <&.cur= self&.cur + 1
 		return Just(e)
-
 

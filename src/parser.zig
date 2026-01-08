@@ -1355,7 +1355,7 @@ fn deconstruction(self: *Self) !*AST.Decon {
             }
         };
 
-        const class: *AST.Class = try self.definedClass(.ListLike); // NOTE: assumes, that we won't be doing any deconstructing of lists in prelude (a fair assumption)
+        const class: *AST.Class = try self.definedClass(.ListDecon); // NOTE: assumes, that we won't be doing any deconstructing of lists in prelude (a fair assumption)
         const cfun = class.classFuns[0]; // assume only one function! no need create another enum or search by string!
 
         const ifn = try self.instantiateClassFunction(cfun, dloc);
@@ -1918,6 +1918,75 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             .l = self.loc(leftTok).between(rightLoc),
         });
     } // anonymous struct.
+    else if (self.consume(.LEFT_SQBR)) |ltok| {
+        var listLikeThing = std.ArrayList(*AST.Expr).init(self.arena);
+        const elemTy = try self.typeContext.fresh();
+        const l: Loc = if (self.consume(.RIGHT_SQBR)) |rtok| b: {
+            break :b self.loc(ltok).between(self.loc(rtok));
+        } else b: {
+            while (true) {
+                const expr = try self.expression();
+                try self.typeContext.unify(expr.t, elemTy, &.{ .l = expr.l }); // TODO: unify all of them AFTER. Then, you can use the location of the whole list to use as .{ .r } to stand for elemTy.
+                try listLikeThing.append(expr);
+                if (self.consume(.RIGHT_SQBR)) |rtok| {
+                    break :b self.loc(ltok).between(self.loc(rtok));
+                }
+                try self.devour(.COMMA);
+            }
+        };
+
+        const class = try self.definedClass(.ListLike);
+        const cfun = class.classFuns[0];
+        const ifn = try self.instantiateClassFunction(cfun, l);
+        const selfType = try self.typeContext.fresh();
+
+        const arrInst = try self.defined(.Array);
+        try self.typeContext.unifyNum(arrInst.dataInst.tyArgs[0].Num, try self.typeContext.newNum(.{
+            .Literal = @intCast(listLikeThing.items.len),
+        }), &.{ .l = l }, &.{ .lfull = arrInst.dataInst.t, .rfull = null });
+        try self.typeContext.unify(arrInst.dataInst.tyArgs[1].Type, elemTy, &.{ .l = l });
+
+        const funTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{arrInst.dataInst.t},
+            .ret = selfType,
+        } });
+
+        try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
+
+        const arg = try self.allocExpr(.{
+            .e = .{
+                .StaticArray = listLikeThing.items,
+            },
+            .t = arrInst.dataInst.t,
+            .l = l,
+        });
+
+        const args = try self.arena.alloc(*AST.Expr, 1);
+        args[0] = arg;
+
+        const callee = try self.allocExpr(.{
+            .e = .{
+                .Var = .{
+                    .v = .{ .ClassFun = .{
+                        .cfun = cfun,
+                        .ref = ifn.ref,
+                    } },
+                    .match = ifn.m,
+                },
+            },
+            .t = funTy,
+            .l = l,
+        });
+
+        return try self.allocExpr(.{
+            .e = .{ .Call = .{
+                .callee = callee,
+                .args = args,
+            } },
+            .t = selfType,
+            .l = l,
+        });
+    } // list-like thing
     else {
         return try self.errorExpect("term");
     }

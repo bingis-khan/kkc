@@ -78,13 +78,20 @@ class Gettable
 	get (_, key key) -> elem
 
 
+# List construction (but actually Array bruhhhhhh)
+class ListLike: Array
+	# type Elem
+	# maybe take in pointer to it?
+	from-listlike (arr Array count elem) -> _
+
+
 # List decostruction
 ListSpread spread
 	NoSpread
 	UnassignedSpread
 	AssignedSpread (Ptr spread)
 
-class ListLike
+class ListDecon
 	# Elem <- dependent type
 	# correct type would be (_, Slice elem, Maybe (Maybe (Ptr _), Slice elem)), but the current one is easier to call from the iterpreter.
 	deconstruct (self _, lp Ptr (Ptr elem), lc Int, spread ListSpread spread, rp Ptr (Ptr elem), rc Int) -> Bool
@@ -146,3 +153,6 @@ inst Eq Maybe
 
 inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r
+
+inst ListLike Array
+	from-listlike (self): self

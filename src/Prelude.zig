@@ -35,6 +35,7 @@ pub const PremadeClass = enum {
     Eq,
 
     FromChar,
+    ListDecon,
     ListLike,
     // MapList,
 };

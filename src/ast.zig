@@ -500,11 +500,12 @@ pub const Expr = struct {
         },
         AnonymousRecord: []Field,
         Lam: Lam,
+        StaticArray: []Rec,
     },
 
     pub const Lam = struct {
         params: []*Decon,
-        expr: *Expr,
+        expr: Rec,
         env: Env,
 
         pub fn print(self: *const @This(), c: Ctx) void {
@@ -638,6 +639,9 @@ pub const Expr = struct {
             },
             .Lam => |l| {
                 l.print(c);
+            },
+            .StaticArray => |arr| {
+                c.encloseSepBy(arr, ", ", "[", "]");
             },
         }
         c.s(" :: ");
