@@ -118,7 +118,10 @@ pub const Lexer = struct {
             '{' => .LEFT_BRACE,
             '}' => .RIGHT_BRACE,
             '&' => .REF,
-            '^' => .CARET,
+            '^' => b: {
+                self.identifier();
+                break :b .NUMTYNAME;
+            },
             '<' => b: {
                 if (self.check('=')) {
                     break :b .LTEQ;

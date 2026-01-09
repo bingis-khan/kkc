@@ -1,19 +1,4 @@
 #!./zig-out/bin/kkc
-use LiminalCake
-	Vector
-	Matrix
 
-vec = [12, 8, 69] as Vector 3
-vec for-each(println)
+1 to (5) cartesian(6 to (7)) for-each(println)
 
-m =
-	[ [1, 2]
-	, [2, 3]
-	, [3, 4]
-	] as Matrix 3 2
-
-
-arr = [1, 2, 4, 7] as Array 4 Int
-smol = [1, 2, 5, 123]
-
-smol for-each(println)

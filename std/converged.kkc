@@ -33,6 +33,8 @@ use Iter
 	head
 	null
 	sum
+	flatten
+	cartesian
 
 	drop'
 	drop-while'
@@ -64,6 +66,7 @@ use Slice
 	subslice
 
 use List
+	List
 	to-list
 
 use Alloc

@@ -19,6 +19,10 @@ fn cast (x): @cast(x)
 # safe cast for pointers
 fn cast-ptr (p Ptr a) -> Ptr b: @cast(p)
 
+# set a pointer if you're in a lambda :)
+fn set-ptr(x Ptr a, e a)
+	x <&= e
+
 
 use Cnile
 fn zeroed() -> a
@@ -28,11 +32,10 @@ fn zeroed() -> a
 
 # make sure the second value's size is GREATER
 fn cast-on-zeroed(x a) -> b
-	# y =& Mem.zeroed()
-	# yp = y cast()
-	# yp <&= x
-	# return y&
-	return cast(x)
+	y =& zeroed()
+	yp = y cast()
+	yp <&= x
+	return y&
 
 # TODO: maybe make a module "Ptr"?
 # Also, this is only used for C shit... so this should not be here.

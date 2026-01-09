@@ -171,9 +171,8 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
         }
 
         while (true) {
-            if (self.check(.CARET)) {
-                const numtyTok = try self.expect(.IDENTIFIER);
-                const numtv = try self.newTNum(numtyTok.literal(self.lexer.source), .{ .Data = uid });
+            if (self.consume(.NUMTYNAME)) |numtyTok| {
+                const numtv = try self.newTNum(numtyTok.literal(self.lexer.source)[1..], .{ .Data = uid });
                 try tvars.append(.{ .TNum = numtv });
             } else if (self.consume(.IDENTIFIER)) |tvname| {
                 const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
@@ -729,7 +728,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             }
 
             // BRITTLE AS HELL.
-            if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP or self.peek().type == .CARET) {
+            if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP or self.peek().type == .NUMTYNAME) {
                 // TODO: parse non-qualified postfix expression alls.
                 try self.dataDef(typename, null, annotations);
                 break :b null;
@@ -2636,14 +2635,13 @@ const Type = struct {
             while (true) {
                 defer i += 1; // BRUH
                 const tokType = self.peek().type;
-                if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE or tokType == .CARET or tokType == .INTEGER)) { // bad but works
+                if (!(tokType == .LEFT_PAREN or tokType == .TYPE or tokType == .IDENTIFIER or tokType == .UNDERSCORE or tokType == .NUMTYNAME or tokType == .INTEGER)) { // bad but works
                     break;
                 }
 
                 if (i < ty.tyArgs.len and ty.tyArgs[i].isNum()) { // BRUHHHH
                     const numTy: AST.TypeOrNum = b: {
-                        if (self.check(.CARET)) { // we also accept carets to make sure we are using a number type.
-                            const numtyTok = try self.expect(.IDENTIFIER);
+                        if (self.consume(.NUMTYNAME)) |numtyTok| { // we also accept carets to make sure we are using a number type.
                             const tnum = try self.lookupTNum(numtyTok, this.binding);
                             break :b .{ .Num = try self.typeContext.newNum(.{ .TNum = tnum }) };
                         } else if (self.consume(.IDENTIFIER)) |numtyTok| {
@@ -3328,7 +3326,9 @@ fn newTNum(self: *Self, name: Str, binding: ?AST.Binding) !AST.TNum {
 }
 
 fn lookupTNum(self: *Self, tnumTok: Token, binding: ?AST.Binding) !AST.TNum {
-    const tvname = tnumTok.literal(self.lexer.source);
+    var tvname = tnumTok.literal(self.lexer.source);
+    if (tvname[0] == '^') tvname = tvname[1..];
+
     var lastScopes = self.scope.scopes.iterateFromTop();
     while (lastScopes.next()) |cursc| {
         if (cursc.tvars.get(tvname)) |tvOrNum| {
@@ -3349,7 +3349,7 @@ fn lookupTNum(self: *Self, tnumTok: Token, binding: ?AST.Binding) !AST.TNum {
                 .loc = self.loc(tnumTok),
             } });
         }
-        return try self.newTNum(tnumTok.literal(self.lexer.source), binding);
+        return try self.newTNum(tvname, binding);
     }
 }
 
@@ -3528,6 +3528,10 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         var defaultsApplied = false;
         for (self.associations.items) |assoc| {
             const from = self.typeContext.getType(assoc.from);
+            switch (from) {
+                .TyVar => {},
+                else => continue, // NOTE: for some reason, it's possible for a non-tyvar to appear here (I guess after applying a default?) If so, continue and let this constraint be solved later.
+            }
             if (assoc.default != null and !funftvs.tyvars.contains(.{ .t = assoc.from, .tyv = from.TyVar }) and !envftvs.contains(assoc.from, from.TyVar)) {
                 defaultsApplied = defaultsApplied or try self.maybeApplyDefault(&assoc);
             }

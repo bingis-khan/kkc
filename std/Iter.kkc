@@ -194,6 +194,42 @@ fn zip(left, right)
 	return Zip { left-it: left-it, right-it: right-it }
 
 
+###### FLATTEN (unfinished)
+FlattenIter it it'
+	super it
+	inner it'
+
+inst IntoIter FlattenIter
+	into-iter (self): self
+
+inst Iter FlattenIter
+	next (self)
+		while True
+			case next(&self&.inner)
+				Just(x)
+					return Just(x)
+				None
+					case next(&self&.super)
+						Just(newit)
+							self <&.inner= newit into-iter()
+							# we can do `next(self)` here, but recursive functions don't work.
+						None
+							return None
+
+fn flatten (it)
+	it = it into-iter()
+	case next(&it)
+		Just(inner)
+			return FlattenIter { super: it, inner: inner into-iter() }
+
+		# should handle empty iterators!
+
+
+fn cartesian (lit, rit): lit
+	map(fn x: rit map(fn y: Tuple2(x, y)))
+	flatten()
+
+
 # comically inefficient
 TakeWhile it a
 	it it

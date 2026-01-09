@@ -7,7 +7,7 @@
 - type synonyms
 - [.] numbers in type parameters
 	- crappy code - separate tvars into tvars and tnums
-	- parse ^identifier together: `^  identifier` would become invalid.
+	- [V] parse ^identifier together: `^  identifier` would become invalid.
 - [V] array literals
 	- [V] FromList typeclass.
 	- add nice errors (currently unreachable + "TODO: errors")
@@ -22,6 +22,7 @@
 - put typeclasses in place of types and it just works
 - recursive datatypes + checking with the help of Ptr.
 - (fast!) occurs check
+- recursive functions!!!
 
 
 # I need a place for all the funny errors
@@ -52,3 +53,6 @@ fn drop-while'(it, pred)
 - writing `Tuple2(iter, Whatever iter)` in type declaration produces a compiler error.
 - functions which were imported by name now visible outside (eg. it's possible to do Iter.Char, because it's defined in prelude, but it should be an error)
 - apostrophe in string interpolation breaks it (actually tokenize string interpolation? allow actual expressions? or just track parens?)
+- it seems like I didn't add record updates ????
+- it seems like I didn't add `Joltage { first, second }` deconstruction syntax??
+- OOM when function has no body

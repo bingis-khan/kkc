@@ -47,6 +47,8 @@ pub const TokenType = enum {
     IDENTIFIER,
     INTRINSIC,
     TYPE,
+    NUMTYNAME,
+
     INTEGER,
     STRING,
     PASS,
@@ -68,7 +70,6 @@ pub const TokenType = enum {
 
     REF, // &, both ref and deref
     DOT, // .member
-    CARET,
 
     LEFT_BRACE,
     RIGHT_BRACE,

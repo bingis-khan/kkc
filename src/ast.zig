@@ -1002,7 +1002,7 @@ pub const Association = struct {
         self.depends.print(c);
         c.s(" => ");
         self.to.print(c);
-        c.sp(" :${}", .{self.classFun.uid});
+        c.print(.{ " :$", self.classFun });
         c.s(")");
     }
 };

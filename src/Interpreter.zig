@@ -168,10 +168,10 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     }
 }
 
-fn initEnvSnapshot(self: *Self, env: ast.Env) ![]RawValue.Fun.EnvSnapshot {
-    const envSnapshot = try self.arena.alloc(RawValue.Fun.EnvSnapshot, env.len);
+fn initEnvSnapshot(self: *Self, env: ast.Env) !EnvSnapshot {
+    const varSnapshot = try self.arena.alloc(EnvSnapshot.VarSnapshot, env.len);
     for (env, 0..) |ei, i| {
-        envSnapshot[i] = switch (ei.v) {
+        varSnapshot[i] = switch (ei.v) {
             .TNum => |tnum| b: {
                 const tnumvar = tnum.asVar();
                 break :b .{
@@ -201,6 +201,24 @@ fn initEnvSnapshot(self: *Self, env: ast.Env) ![]RawValue.Fun.EnvSnapshot {
             },
         };
     }
+
+    // now, slowly copy the tymaps!
+    const firstTyMap: *TypeMap = try common.allocOne(self.arena, self.tymap.*);
+
+    var oldTyMap = firstTyMap;
+    while (oldTyMap.prev) |tymap| {
+        const nextTyMap = try common.allocOne(self.arena, tymap.*);
+        oldTyMap.prev = nextTyMap;
+        oldTyMap = nextTyMap;
+    }
+
+    const lastPointer = &oldTyMap.prev;
+
+    const envSnapshot = EnvSnapshot{
+        .vars = varSnapshot,
+        .tymaps = firstTyMap,
+        .lastPtr = lastPointer,
+    };
 
     return envSnapshot;
 }
@@ -611,10 +629,21 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     self.scope = &scope;
                     defer self.scope = oldScope;
 
+                    // also, don't forget the new tymap!
+                    const env = lamAndEnv.env;
+
+                    // this is also copypasta :)
+                    const oldTyMap = self.tymap;
+                    env.lastPtr.* = self.tymap;
+                    self.tymap = env.tymaps;
+                    defer {
+                        self.tymap = oldTyMap;
+                        env.lastPtr.* = null;
+                    }
+
                     // COPYPASTA WARNING
                     const lam = lamAndEnv.lam;
-                    const env = lamAndEnv.env;
-                    for (env) |ee| {
+                    for (env.vars) |ee| {
                         switch (ee) {
                             .Snap => |eee| try self.putRef(eee.v, eee.vv),
                             .AssocID => |id| {
@@ -819,20 +848,35 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
     self.scope = &scope;
     defer self.scope = oldScope;
 
+    // first setup the environment type mapping.
+    // TOOD: here + self.function(). probably should factor it out?
+    // but it's using defer, so not really. but the lastPtr setting is sussy.
+    const env = funAndEnv.env;
+    const oldTyMap = self.tymap;
+    defer self.tymap = oldTyMap;
+
+    // in recursive functions, we might apply the same copy twice. In this case, we don't want to apply it again, because this will produce an infinite loop AND it's already accessible, so we should not re-add it.
+    const alreadyApplied = env.lastPtr.* == null;
+    if (!alreadyApplied) {
+        env.lastPtr.* = oldTyMap;
+    }
+    defer if (!alreadyApplied) {
+        env.lastPtr.* = null;
+    };
+
     // also new typemap yo.
     const match = funAndEnv.match;
-    const oldTyMap = self.tymap;
     var tymap = TypeMap{
-        .prev = oldTyMap,
+        .prev = self.tymap,
         .scheme = &funAndEnv.fun.scheme,
         .match = match,
     };
     self.tymap = &tymap;
-    defer self.tymap = oldTyMap;
+    // defer self.tymap = oldTyMap;
+    // no need to defer here. Previous defer will reset.
 
     const fun = funAndEnv.fun;
-    const env = funAndEnv.env;
-    for (env) |e| {
+    for (env.vars) |e| {
         switch (e) {
             .Snap => |ee| try self.putRef(ee.v, ee.vv),
             .AssocID => |id| {
@@ -918,19 +962,13 @@ const RawValue = extern union {
 
     const Lam = struct {
         lam: *const ast.Expr.Lam,
-        env: []Fun.EnvSnapshot,
+        env: EnvSnapshot,
     };
 
     const Fun = struct {
         fun: *ast.Function,
-        env: []EnvSnapshot,
+        env: EnvSnapshot,
         match: *ast.Match,
-
-        const EnvSnapshot = union(enum) {
-            // i forgot what it was gegegeg
-            Snap: struct { v: ast.Var, vv: *align(1) RawValue },
-            AssocID: ast.Association.ID,
-        };
     };
 
     fn offset(self: *align(1) @This(), off: usize) RawValueRef {
@@ -952,6 +990,21 @@ const RawValue = extern union {
 
     const Flexible = *anyopaque;
     const Tag = u32;
+};
+
+const EnvSnapshot = struct {
+    const VarSnapshot = union(enum) {
+        // i forgot what it was gegegeg
+        Snap: struct { v: ast.Var, vv: *align(1) RawValue },
+        AssocID: ast.Association.ID,
+    };
+
+    vars: []VarSnapshot,
+
+    // very hacky :)
+    // TODO: think about how to preserve typing context.
+    tymaps: *TypeMap,
+    lastPtr: *?*const TypeMap,
 };
 
 // const Header = extern struct {
@@ -1255,7 +1308,7 @@ const Scope = struct {
 
     const Vars = std.HashMap(ast.Var, RawValueRef, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 
-    const Funs = std.HashMap(ast.Var, []RawValue.Fun.EnvSnapshot, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
+    const Funs = std.HashMap(ast.Var, EnvSnapshot, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 
     fn init(prev: ?*@This(), al: std.mem.Allocator) @This() {
         return .{
@@ -1269,7 +1322,7 @@ const Scope = struct {
         return self.vars.get(v) orelse (self.prev orelse unreachable).getVar(v);
     }
 
-    fn getFun(self: *const @This(), v: ast.Var) []RawValue.Fun.EnvSnapshot {
+    fn getFun(self: *const @This(), v: ast.Var) EnvSnapshot {
         return self.funs.get(v) orelse (self.prev orelse unreachable).getFun(v);
     }
 };
