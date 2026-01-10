@@ -6,3 +6,4 @@ fn print(s)
 	
 fn println (s)
 	print-str('\(s)\n')
+

@@ -103,7 +103,6 @@ pub fn parse(self: *Self) !Module {
     while (self.consume(.EOF) == null) {
         const dec = self.statement() catch |e| {
             std.debug.print("Err {s}.\n", .{self.name});
-            sync_to_next_toplevel();
             return e;
         };
 
@@ -310,6 +309,17 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
 
     const constraints_ = try self.constraints();
 
+    // NOTE: make sure everything what's needed is assigned in case of recursive calls.
+    fun.* = AST.Function{
+        .name = fun.name,
+        .params = params.items,
+        .ret = ret,
+        .scheme = AST.Scheme.empty(), // in recursive calls, the scheme should be empty
+        .temp__isRecursive = true,
+        .env = &.{},
+        .body = undefined,
+    };
+
     const fnBody = if (self.check(.COLON)) b: {
         const pm = self.foldFromHere();
         const expr = try self.expression();
@@ -377,6 +387,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         .body = fnBody,
         .scheme = scheme,
         .env = env.items,
+        .temp__isRecursive = false,
     };
 
     return fun;
@@ -2848,7 +2859,15 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
         .uid = self.gen.vars.newUnique(),
     };
     const funPtr = try self.arena.create(AST.Function);
-    funPtr.name = thisVar;
+    funPtr.* = .{ // TODO: is this all really needed? The scheme is assigned empty in the function() anyways. I should inline all this code in the future.
+        .name = thisVar,
+        .scheme = AST.Scheme.empty(),
+        .env = &.{},
+        .params = undefined,
+        .ret = undefined,
+        .body = undefined,
+        .temp__isRecursive = true,
+    };
     try self.scope.currentScope().vars.put(varName, .{ .Fun = funPtr });
     return funPtr;
 }
@@ -2973,13 +2992,20 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
         },
     };
 
-    // TODO: I should make a separate function, but I'm still not sure about the interface.
-    var lastScope = self.scope.scopes.iterateFromTop();
-    while (lastScope.nextPtr()) |sc| {
-        if (sc == cursc) break; // we are in the scope the var was defined in, so don't add it to its env.
+    const isRecursive = switch (varInst.v) {
+        .Fun => |fun| fun.temp__isRecursive,
+        else => false,
+    };
 
-        if (sc.env) |env| {
-            try env.append(varInst);
+    if (!isRecursive) {
+        // TODO: I should make a separate function, but I'm still not sure about the interface.
+        var lastScope = self.scope.scopes.iterateFromTop();
+        while (lastScope.nextPtr()) |sc| {
+            if (sc == cursc) break; // we are in the scope the var was defined in, so don't add it to its env.
+
+            if (sc.env) |env| {
+                try env.append(varInst);
+            }
         }
     }
     return .{

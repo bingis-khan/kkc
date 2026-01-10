@@ -200,9 +200,10 @@ pub const Function = struct {
     body: []*Stmt,
     scheme: Scheme,
     env: Env,
+    temp__isRecursive: bool, // TODO(true-recursion): very hacky!!
 
     fn print(self: @This(), c: Ctx) void {
-        c.sp("{s} (", .{self.name.name});
+        c.print(.{ self.name, " (" });
         c.sepBy(self.params, ", ");
         c.s(")[");
         c.sepBy(self.env, ", ");
@@ -820,7 +821,11 @@ pub fn TypeF(comptime a: ?type) type {
         };
 
         Con: struct { type: *Data, application: *Match },
-        Fun: struct { args: []Rec, ret: Rec, env: EnvRef },
+        Fun: struct {
+            args: []Rec,
+            ret: Rec,
+            env: EnvRef,
+        },
         TVar: TVar,
         TyVar: TyVar,
         Anon: []Field,
