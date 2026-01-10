@@ -1,4 +1,4 @@
 #!./zig-out/bin/kkc
 
-1 to (5) cartesian(6 to (7)) for-each(println)
-
+for x in 1 to (10)
+	println(x)

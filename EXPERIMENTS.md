@@ -60,3 +60,16 @@ This is useful when using array literals in Makefile deps, which need to be coer
 Is this good? Or should I just cave in and just implement an IntoIter for a normal array?
 
 Since it's an experiment, I've decided on the funny option. But I'm thinking I'll remove the SmolArray in the future, and just let people iterate over big big arrays and let em reap what their ignorance has sown.
+
+
+# Replace `for .. in` loop with a normal `for-each()` + multiline lambda?
+
+That's an interesting idea, but the nice thing about `for` loops is is that I can break out of it easily. Still, it can stay in the back of my head (rent free)
+
+```
+  for x in 1 to (10)
+    println(x)
+
+  1 to (10) for–each(fn x @)
+    println(x)
+```

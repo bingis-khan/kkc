@@ -146,6 +146,50 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                 };
             }
         },
+        .For => |forl| {
+            const beforeIntoIter = try self.expr(forl.iter);
+            const intoIterFun = try self.getAndUnboxInstFunRef(forl.intoIterFun);
+            var intoIterArgs = [_]ValueMeta{beforeIntoIter};
+            const iterator = try self.function(intoIterFun.fun, &intoIterArgs);
+
+            // copied from .Ref case.
+            // TODO: make a function mkPtr() or something.
+            const itptr = try self.val(.{
+                .ptr = iterator.ref,
+            }, @sizeOf(*anyopaque));
+            const nextFun = try self.getAndUnboxInstFunRef(forl.nextFun);
+            loop: while (true) {
+                var nextArgs = [_]ValueMeta{itptr};
+                const nextVal = try self.function(nextFun.fun, &nextArgs);
+
+                // HACK HACK HACK
+                if (nextVal.ref.adt.tag == 0) {
+                    break;
+                }
+
+                const justValue = valFromRef(@ptrCast(&nextVal.ref.adt.data));
+
+                if (try self.tryDeconstruct(forl.decon, justValue.ref)) {
+                    self.stmts(forl.body) catch |err| switch (err) {
+                        error.Break => {
+                            break :loop;
+                        },
+                        else => return err,
+                    };
+                } else {
+                    const l = forl.decon.l;
+
+                    var hadNewline = false;
+                    const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                    (errr.Error.ErrCtx{
+                        .module = l.module,
+                        .c = ctx,
+                    }).atLocation(l, .{ .label = .{"miau"} });
+
+                    return error.CaseNotMatched;
+                }
+            }
+        },
         .Switch => |sw| {
             const switchOn = try self.expr(sw.switchOn);
 
@@ -294,15 +338,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             // NOTE COPYPASTA: from .Var in expr()
             // TODO: also, we should avoid allocating and boxing here, since we're gonna call it immediately anyway.
             //  (in the future :))
-            const instFunBoxed = switch (listDecon.assocRef.*.?) {
-                .Id => |uid| b: {
-                    const instfun = self.tymap.tryGetFunctionByID(uid).?;
-                    break :b try self.initFunction(instfun.fun, instfun.m);
-                },
-                .InstFun => |instfun| try self.initFunction(instfun.fun, instfun.m),
-            };
-
-            const instFun: *align(1) const RawValue = @ptrCast(&nunbox(instFunBoxed.ref.extptr).ptr);
+            const instFun = try self.getAndUnboxInstFunRef(listDecon.assocRef);
 
             // ALLOCATE DATA FOR DECONSTRUCTION.
             // TODO: note, it gets copied!!! (unlike general deconstruction)
@@ -489,15 +525,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     // const size = self.sizeOf(op.l.t).size;
                     // const eqResult = std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size));
                     // const boolVal = try self.boolValue(if (op.op == .Equals) eqResult else !eqResult);
-                    const instFunBoxed = switch (ref.*.?) {
-                        .Id => |uid| b: {
-                            const instfun = self.tymap.tryGetFunctionByID(uid).?;
-                            break :b try self.initFunction(instfun.fun, instfun.m);
-                        },
-                        .InstFun => |instfun| try self.initFunction(instfun.fun, instfun.m),
-                    };
-
-                    const instFun: *align(1) const RawValue = @ptrCast(&nunbox(instFunBoxed.ref.extptr).ptr);
+                    const instFun = try self.getAndUnboxInstFunRef(ref);
 
                     var args = [_]ValueMeta{ l, r };
                     const eqResult = try self.function(instFun.fun, &args);
@@ -829,6 +857,20 @@ fn getFieldFromFields(self: *Self, v: RawValueRef, fields: []ast.Record, mem: St
     } else {
         unreachable;
     }
+}
+
+fn getAndUnboxInstFunRef(self: *Self, assocRef: ast.InstFunInst) !*align(1) const RawValue {
+    const instFunBoxed = switch (assocRef.*.?) {
+        .Id => |uid| b: {
+            const instfun = self.tymap.tryGetFunctionByID(uid).?;
+            break :b try self.initFunction(instfun.fun, instfun.m);
+        },
+        .InstFun => |instfun| try self.initFunction(instfun.fun, instfun.m),
+    };
+
+    const ptrVal = try self.val(.{ .extptr = @ptrCast(nunbox(instFunBoxed.ref.extptr).ptr) }, @sizeOf(*anyopaque));
+    const instFun: *align(1) const RawValue = ptrVal.ref;
+    return instFun;
 }
 
 fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match) !ValueMeta {

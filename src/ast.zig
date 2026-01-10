@@ -285,6 +285,13 @@ pub const Stmt = union(enum) {
         cond: *Expr,
         body: []Rec,
     },
+    For: struct { // TODO: later, I should remove it and just generate some code. The only benefit is better type errors (which I can ensure, because we typecheck while parsing) and easier debuggability (only for compiler development, so whatever)
+        decon: *Decon,
+        iter: *Expr,
+        intoIterFun: InstFunInst,
+        nextFun: InstFunInst,
+        body: []Rec,
+    },
     Switch: struct {
         switchOn: *Expr,
         cases: []Case,
@@ -356,6 +363,10 @@ pub const Stmt = union(enum) {
             .While => |whl| {
                 c.print(.{ "while ", whl.cond, "\n" });
                 printBody(whl.body, c);
+            },
+            .For => |forl| {
+                c.print(.{ "for ", forl.decon, " in ", forl.iter, "\n" });
+                printBody(forl.body, c);
             },
             .Switch => |sw| {
                 c.s("case ");

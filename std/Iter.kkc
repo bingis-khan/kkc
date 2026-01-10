@@ -1,12 +1,5 @@
 use Mem  # might be temporary - for test ListLike instance for range.
 
-class IntoIter
-	into-iter (self _) -> itershit
-
-class Iter
-	next (self Ptr _) -> Maybe item
-
-
 # Basic instances
 inst IntoIter Ptr
 	into-iter (self): self& into-iter()

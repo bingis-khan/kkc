@@ -125,6 +125,9 @@ external
 	##### sys/stat.h #####
 	stat (path ConstStr, stat Ptr Stat) -> Void
 
+	#### unistd.h ####
+	chdir (path ConstStr) -> Int
+
 	#### ????
 	fork () -> I32  # pid_t
 	execvp (name ConstStr, args Ptr ConstStr) -> Void

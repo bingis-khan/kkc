@@ -103,6 +103,18 @@ class ListDecon
 	deconstruct (self _, lp Ptr (Ptr elem), lc Int, spread ListSpread spread, rp Ptr (Ptr elem), rc Int) -> Bool
 
 
+# Iter and IntoIter is directly used by `for .. in` loop.
+Maybe a
+	None
+	Just a
+
+class IntoIter
+	into-iter (self _) -> itershit
+
+class Iter
+	next (self Ptr _) -> Maybe item
+
+
 # this might be generated at compile time bruv. thats why im keeping it here.
 # Also, instead of Tuple, Treeple, Quantuple use Tuple2, Tuple3, etc. It'll be easier to parse.
 Tuple2 a b
@@ -113,10 +125,6 @@ fn fst(Tuple2(l, _)): l
 fn snd(Tuple2(_, r)): r
 
 
-
-Maybe a
-	None
-	Just a
 
 Either e a
 	Left e

@@ -83,6 +83,8 @@ pub const TokenType = enum {
     BREAK,
 
     WHILE,
+    FOR,
+    IN,
     CASE,
     FN,
     USE,

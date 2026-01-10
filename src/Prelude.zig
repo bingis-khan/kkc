@@ -20,6 +20,7 @@ pub const PremadeType = enum {
     Array,
     StrConcat,
     ListSpread,
+    Maybe,
 };
 pub const NumPredefinedTypes = NumEnums(PremadeType);
 
@@ -37,6 +38,10 @@ pub const PremadeClass = enum {
     FromChar,
     ListDecon,
     ListLike,
+
+    // needed for `for .. in`
+    Iter,
+    IntoIter,
     // MapList,
 };
 

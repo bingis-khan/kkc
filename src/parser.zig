@@ -788,6 +788,50 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 .body = bod.stmts.items,
             } };
         } // while
+        else if (self.check(.FOR)) {
+            const decon = try self.deconstruction();
+            try self.devour(.IN);
+            const itexpr = try self.expression();
+
+            // do the unifications!
+            // TODO: bruh, type and code generation is so annoying bruv. I should make it look nicer (and simpler repr will cause less bugs.)
+            //  Maybe I should make some convenience functions?
+            const intoIterClass = try self.definedClass(.IntoIter);
+            const intoIterFun = intoIterClass.classFuns[0];
+            const intoIterFunInst = try self.instantiateClassFunction(intoIterFun, itexpr.l);
+
+            const iterType = try self.typeContext.fresh();
+            try self.typeContext.unify(intoIterFunInst.t, try self.makeType(.{ .Fun = .{
+                .args = [_]AST.Type{itexpr.t},
+                .ret = iterType,
+            } }), &.{ .l = itexpr.l });
+
+            const iterClass = try self.definedClass(.Iter);
+            const nextFun = iterClass.classFuns[0];
+            const nextFunInst = try self.instantiateClassFunction(nextFun, itexpr.l);
+
+            const elemType = decon.t;
+            const maybeElem = (try self.defined(.Maybe)).dataInst;
+            try self.typeContext.unify(maybeElem.tyArgs[0].Type, elemType, &.{ .l = itexpr.l, .r = decon.l });
+
+            const ptrType = (try self.defined(.Ptr)).dataInst;
+            try self.typeContext.unify(ptrType.tyArgs[0].Type, iterType, &.{ .l = itexpr.l });
+
+            try self.typeContext.unify(nextFunInst.t, try self.makeType(.{ .Fun = .{
+                .args = [_]AST.Type{ptrType.t},
+                .ret = maybeElem.t,
+            } }), &.{ .l = itexpr.l, .r = decon.l });
+
+            const bod = try self.body();
+            self.returned = bod.returnStatus;
+            break :b .{ .For = .{
+                .decon = decon,
+                .iter = itexpr,
+                .intoIterFun = intoIterFunInst.ref,
+                .nextFun = nextFunInst.ref,
+                .body = bod.stmts.items,
+            } };
+        } // for
         else if (self.check(.CASE)) {
             const switchOn = try self.expression();
 
@@ -2835,6 +2879,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
         } else {
             // i dunno, probably some other error. Ignore ig?
             unreachable; // TEMP. I JUST NEED TO SEE WHEN THAT HAPPENS.
+            // RE: it happens when I try to import the module I'm currently in. (this can be handled before tho, to give the appropriate error)
         }
     }
     const placeholderVar = AST.Var{

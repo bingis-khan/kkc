@@ -13,3 +13,15 @@ fn mod(l, d)
 		return d + m
 	else
 		return m
+
+fn min(l, r)
+	if l < r
+		return l
+	else
+		return r
+
+fn max(l, r)
+	if l > r
+		return l
+	else
+		return r

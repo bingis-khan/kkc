@@ -49,6 +49,7 @@ inst IntoIter List
 		into-iter()
 
 
+
 # kek, should be `new`, but I'm trying out a new convention.
 fn mk (al alloc) -> List alloc a
 	elements = Slice.empty()
@@ -64,7 +65,7 @@ starting-size = 8
 growth-factor = 2
 shrink-factor = 8
 
-fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
+fn grow-if-full (list Ptr (List alloc a)) -> Unit <= Allocator alloc
 	# check if the list is empty
 	if list&.count == 0
 		list <&.elements= list&.al allocate(starting-size)
@@ -80,9 +81,25 @@ fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
 		list&.al Alloc.free(list&.elements)
 		list <&.elements= new-slice
 
+fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
+	list grow-if-full()
 	Slice.set(list&.elements, list&.count, elem)
 	list <&.count= list&.count + 1
-	return
+
+fn insert (list Ptr (List alloc a), i Int, elem a) -> Unit <= Allocator alloc
+	if i < 0 or i > list&.count
+		panic('Insertion at list index \(i) (count: \(list&.count))')
+
+	list grow-if-full()
+	# move elements back
+	# (maybe should use a reversed list iterator?)
+	ii = list&.count - 1  # (grow-if-full ensures that ii + 1 will be okay)
+	while ii >= i
+		list&.elements Slice.set(ii + 1, list get(ii))
+		ii <= ii - 1
+
+	list&.elements Slice.set(i, elem)
+	list <&.count= list&.count + 1
 
 
 fn remove (list Ptr (List alloc a), i Int) -> Unit <= Allocator alloc
