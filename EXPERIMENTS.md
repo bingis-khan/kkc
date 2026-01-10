@@ -1,4 +1,6 @@
-# Charlike
+I - implemented
+
+# (I) Charlike
 
 Writing `'o'` creates an implicit `from-charlike(ConstStr) -> a`, with default value being `Char`.
 
@@ -21,7 +23,7 @@ We don't need it for matching strings, because we can just make the compiler use
 Also, we might as well allow string interpolation.
 
 
-# Reference variables in `case` statement
+# (I) Reference variables in `case` statement
 
 eg.
 
@@ -43,7 +45,7 @@ Alternatively / additionally, maybe we can add tactical `if`s?
 ```
 
 
-# IntoIter for prelude's Array type?
+# (I) IntoIter for prelude's Array type?
 
 copied from `Array.kkc`:
 
@@ -73,3 +75,33 @@ That's an interesting idea, but the nice thing about `for` loops is is that I ca
   1 to (10) for–each(fn x @)
     println(x)
 ```
+
+But is a `for .. in` loop that useful? I'm not sure (since we have lambdas and shii). The only advantage is breaking out of it, but I can also make a special function like `for-each-break()` where I can return early or continue or something. I'll see if it's usefule and if not really I might remove it~!
+
+Maybe `for-each-break()` should use default values for structs, so:
+
+```
+  1 to (10) for-each-break(fn x @)
+    println(x)
+    return {}  # we must return it anyway, but at least we have a default value.
+```
+
+or with normal datatypes.
+
+```
+  1 to (10) for-each-break(fn x @)
+    println(x)
+    if x == 5
+      return Break
+
+    if x == 3
+      return Continue  # i guess it's literally like `Noop`.
+    return Noop
+```
+
+I guess we might also remove the `while` loop and replace it with `loop` and then have `break` statements to emulate?
+
+
+# `else` clause for loops when it's not broken out of?
+
+I found this pretty nice in zig. Duplicate this behavior? I'll wait until I need it in real code.
