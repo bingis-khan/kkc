@@ -38,3 +38,19 @@ This is obviously incorrect when it comes to functions with environments.
 # Temporary `fn` keyword
 
 actually, parsing functions vs variables has gotten a bit complicated. For now, I'll introduce a keyword for functions to make parsing easier. I still want to make it like it was before, but I'll have to think about maybe saving lexing state? I want to make this language work as soon as possible, so I'll handle other shit later.
+
+
+# Multiline lambda syntax
+
+```
+1 to (10) for-each(fn(x))
+  println(x)
+
+1 to (10)
+  map(fn(x))
+    println(x)
+    return x + 1
+  sum()
+```
+
+is this good?

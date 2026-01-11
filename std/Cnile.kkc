@@ -103,6 +103,8 @@ external
 
 	remove (s ConstStr) -> Int
 
+	time (p Ptr Void) -> Int
+
 	#### string.h #####
 	strlen (s ConstStr) -> Int
 	strcmp (l ConstStr, r ConstStr) -> Int
@@ -124,6 +126,7 @@ external
 
 	##### sys/stat.h #####
 	stat (path ConstStr, stat Ptr Stat) -> Void
+	mkdir (path ConstStr, mode Int) -> Int
 
 	#### unistd.h ####
 	chdir (path ConstStr) -> Int
@@ -143,5 +146,6 @@ fn seek-end(): 2
 fn wifexited (status Int):
 	status == 0
 
+fn errno-EEXIST(): @errno == 17
 
 # TODO: nullable CPtr and a function CPtr a -> Maybe (Ptr a)

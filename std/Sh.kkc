@@ -81,3 +81,5 @@ fn run (args, al)
 fn rm (s)
 	if Cnile.remove(s) /= 0
 		panic('remove() failed')
+
+

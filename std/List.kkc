@@ -165,3 +165,7 @@ fn to-list(it, al)
 fn to-slice(l)
 	ptr = l.elements.ptr
 	return Slice { ptr, count: l.count  }
+
+fn addresses (l): l
+	to-slice()
+	Slice.addresses()

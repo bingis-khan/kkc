@@ -72,7 +72,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str,
         // parser
         .lexer = l,
         .currentToken = undefined,
-        .mode = .Normal,
+        .mode = .{ .Simple = .Normal },
 
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
@@ -339,29 +339,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         var fnBody = fnBodyAndReturnStatus.stmts;
         const returnStatus = fnBodyAndReturnStatus.returnStatus;
 
-        if (!self.triedReturningAtAll) {
-            try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(nameLoc))); // TODO: add special location type for "midlines"
-            // eg.
-            //      askjdklasjdk
-            //  |-> ----------
-            //  |   aksdlkasjdkj
-            //  L some footnote
-
-        } else if (returnStatus == .Nah) retcheck: {
-            // We know we returned somewhere, but for this main program branch we did not for some reason.
-            // If the return type is Unit, we can just insert a return.
-            //  Otherwise, error obv.
-            switch (self.typeContext.getType(self.returnType.?)) {
-                .Con => |c| if (c.type.uid == (try self.defined(.Unit)).data.uid) {
-                    try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(nameLoc)));
-                    break :retcheck;
-                },
-                else => {
-                    // otherwise
-                    try self.reportError(.{ .MissingReturn = .{} });
-                },
-            }
-        }
+        try self.finishBodyAndInferReturnType(&fnBody, returnStatus, nameLoc);
 
         self.returnType = oldReturnType;
 
@@ -393,6 +371,33 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     return fun;
 }
 
+fn finishBodyAndInferReturnType(self: *Self, fnBody: *std.ArrayList(*AST.Stmt), returnStatus: ReturnStatus, l: Loc) !void {
+    // TODO: factor it out!
+    if (!self.triedReturningAtAll) {
+        try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(l))); // TODO: add special location type for "midlines"
+        // eg.
+        //      askjdklasjdk
+        //  |-> ----------
+        //  |   aksdlkasjdkj
+        //  L some footnote
+
+    } else if (returnStatus == .Nah) retcheck: {
+        // We know we returned somewhere, but for this main program branch we did not for some reason.
+        // If the return type is Unit, we can just insert a return.
+        //  Otherwise, error obv.
+        switch (self.typeContext.getType(self.returnType.?)) {
+            .Con => |c| if (c.type.uid == (try self.defined(.Unit)).data.uid) {
+                try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(l)));
+                break :retcheck;
+            },
+            else => {
+                // otherwise
+                try self.reportError(.{ .MissingReturn = .{} });
+            },
+        }
+    }
+}
+
 fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: ReturnStatus } {
     std.debug.assert(self.returned != .Returned);
     const oldReturned = self.returned;
@@ -422,12 +427,16 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
                 self.skip();
             }
 
-            // what to do in case of suddent indent??
+            // what to do in case of sudden indent??
             // maybe nothing? like, handle all indenting statemenets separately (if, case, etc.)
 
             switch (self.mode) {
-                .Normal => try self.endStmt(),
-                .CountIndent => try self.finishFold(.Normal),
+                .Simple => |nmode| switch (nmode) {
+                    .Normal => try self.endStmt(),
+                    .CountIndent => try self.finishFold(.{ .Simple = .Normal }),
+                },
+
+                else => unreachable,
             }
             return null;
         },
@@ -1497,7 +1506,14 @@ fn finishExpression(self: *Self, leftmost: *AST.Expr) ParserError!*AST.Expr {
 }
 
 fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*AST.Expr {
-    const optok = self.peek();
+    var optok = self.peek();
+
+    // FUNNY! Handle multiline lambdas.
+    if (optok.type == .INDENT and self.mode == .MultilineLambda) {
+        try self.multilineLambda(self.loc(optok));
+        optok = self.peek();
+    }
+
     var binop = getBinOp(self.peek()) orelse return left;
     const nextPrec = binOpPrecedence(binop);
 
@@ -1774,33 +1790,40 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     };
 
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
-    const mtokfun = self.consume(.FN);
-    if (mtokfun != null or self.peek().type == .COLON) { // smol hack to allow quick empty lambdas.
-        var lamBegin = mtokfun;
+    if (self.consume(.FN)) |tokfun| { // smol hack to allow quick empty lambdas.
         var params = std.ArrayList(*AST.Decon).init(self.arena);
 
-        var env = Env.init(self.arena);
-        self.scope.beginScope(&env);
+        const env = try Common.allocOne(self.arena, Env.init(self.arena));
+        self.scope.beginScope(env);
+
+        var needsBody = false;
+        var l = self.loc(tokfun);
 
         // WARNING: (): whatever gets parsed as a lambda with no args. this might be incorrect behavior when we add tuples.
         if (self.check(.LEFT_PAREN)) {
-            if (!self.check(.RIGHT_PAREN)) {
+            if (self.consume(.RIGHT_PAREN)) |rparen| {
+                l = l.between(self.loc(rparen));
+            } else {
                 while (true) {
                     const decon = try self.deconstruction();
                     try params.append(decon);
 
-                    if (self.check(.RIGHT_PAREN)) break;
+                    if (self.consume(.RIGHT_PAREN)) |rparen| {
+                        l = l.between(self.loc(rparen));
+                        break;
+                    }
                     try self.devour(.COMMA);
                 }
             }
 
-            try self.devour(.COLON);
+            if (!self.check(.COLON)) {
+                // multiline lambda bruh.
+                needsBody = true; // basically, I want the body thing to happen later.
+            }
         } else if (self.consume(.COLON)) |colonTok| {
             // no params
             // NOTE: current syntax allows a lambda to start with a colon only.
-            if (lamBegin == null) {
-                lamBegin = colonTok;
-            }
+            _ = colonTok;
         } else {
             // single param
             const decon = try self.deconstruction();
@@ -1808,37 +1831,78 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             try self.devour(.COLON);
         }
 
-        std.debug.assert(lamBegin != null);
-
-        const expr = try self.expression();
-        self.scope.endScope();
-
-        const l = self.loc(lamBegin.?).between(expr.l);
-
         // do the types for function type.
         const argTys = try self.arena.alloc(AST.Type, params.items.len);
         for (params.items, 0..) |p, i| {
             argTys[i] = p.t;
         }
 
-        return self.allocExpr(.{
-            .t = try self.typeContext.newType(.{
-                .Fun = .{
-                    .args = argTys,
-                    .env = try self.typeContext.newEnv(env.items),
-                    .ret = expr.t,
-                },
-            }),
-            .e = .{
-                .Lam = .{
-                    .params = params.items,
-                    .expr = expr,
-                    .env = env.items,
-                },
-            },
+        if (needsBody) {
+            const lamscopeSave = self.scope.currentScope().*;
+            self.scope.endScope();
 
-            .l = l,
-        });
+            const lamExpr = try self.allocExpr(.{
+                .t = try self.typeContext.newType(.{
+                    .Fun = .{
+                        .args = argTys,
+                        .env = try self.typeContext.newEnv(null),
+                        .ret = try self.typeContext.fresh(),
+                    },
+                }),
+                .e = .{
+                    .Lam = .{
+                        .params = params.items,
+                        .body = .{ .Body = &.{} }, // temporary empty list!
+                        .env = &.{},
+                    },
+                },
+
+                .l = l,
+            });
+
+            const oldMode = switch (self.mode) {
+                .Simple => |simp| simp,
+                .MultilineLambda => |ml| b: {
+                    // This means we are trying to define two multiline lambdas on the same line. This is BRUH!
+                    try self.reportError(.{
+                        .TriedDefiningSecondMultilineLambdaOnSameLine = .{ .loc = l },
+                    });
+
+                    break :b ml.prev;
+                },
+            };
+            self.mode = .{ .MultilineLambda = .{
+                .prev = oldMode,
+                .lamExpr = lamExpr,
+                .scope = lamscopeSave,
+            } };
+
+            return lamExpr;
+        } else {
+            const expr = try self.expression();
+            self.scope.endScope();
+
+            l = l.between(expr.l);
+
+            return self.allocExpr(.{
+                .t = try self.typeContext.newType(.{
+                    .Fun = .{
+                        .args = argTys,
+                        .env = try self.typeContext.newEnv(env.items),
+                        .ret = expr.t,
+                    },
+                }),
+                .e = .{
+                    .Lam = .{
+                        .params = params.items,
+                        .body = .{ .Expr = expr },
+                        .env = env.items,
+                    },
+                },
+
+                .l = l,
+            });
+        }
     } // lambda
     else if (self.consume(.IDENTIFIER)) |v| {
         const dv = try self.instantiateVar(&.{}, v);
@@ -1898,6 +1962,8 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     });
                     break :b try self.definedType(.Bool);
                 },
+
+                .errno => try self.definedType(.Int),
             };
 
             return self.allocExpr(.{
@@ -2044,6 +2110,40 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     else {
         return try self.errorExpect("term");
     }
+}
+
+// isolate this in a function, because its long AND it shares stuff with the normal function()
+fn multilineLambda(self: *Self, tempLoc: Loc) !void {
+    const lamMode = self.mode.MultilineLambda;
+    self.scope.restoreScope(lamMode.scope);
+
+    // CRAP CODE!!!
+    const ret = try self.typeContext.fresh();
+    try self.typeContext.unify(self.typeContext.getType(lamMode.lamExpr.t).Fun.ret, ret, null);
+    const oldReturnType = self.returnType;
+    defer self.returnType = oldReturnType;
+    self.returnType = ret;
+
+    // COPYPASTA, but needs defer, so its okay? I might group these statements together in a function?
+    const oldTriedReturningAtAll = self.triedReturningAtAll;
+    const oldReturned = self.returned;
+    defer {
+        self.triedReturningAtAll = oldTriedReturningAtAll;
+        self.returned = oldReturned;
+    }
+    self.triedReturningAtAll = false;
+    self.returned = .Nah;
+
+    const bod = try self.body();
+    var stmts = bod.stmts;
+    self.scope.endScope();
+
+    try self.finishBodyAndInferReturnType(&stmts, bod.returnStatus, tempLoc); // TEMP. I should return the location of the last statement (but I don''t have locations in statements yet.')
+
+    lamMode.lamExpr.e.Lam.body.Body = stmts.items;
+    lamMode.lamExpr.e.Lam.env = lamMode.scope.env.?.items;
+
+    self.mode = .{ .Simple = lamMode.prev };
 }
 
 fn qualified(self: *Self, first: Token) !*AST.Expr {
@@ -3802,6 +3902,10 @@ const Scope = struct {
         _ = self.scopes.pop();
     }
 
+    fn restoreScope(self: *@This(), scope: CurrentScope) void {
+        self.scopes.push(scope);
+    }
+
     // ENVS
     // pub fn beginEnv(self: *@This()) []VarInst {
     //     self.scopes.push(CurrentScope.init(self.al, CurrentScope.Env.init(self.al)));
@@ -3916,20 +4020,23 @@ fn definedClass(self: *Self, predefinedType: Prelude.PremadeClass) !*AST.Class {
 // parser zone
 fn foldFromHere(self: *Self) ParsingMode {
     const old = self.mode;
-    self.mode = .{ .CountIndent = 0 };
+    self.mode = .{ .Simple = .{ .CountIndent = 0 } };
     return old;
 }
 
 fn finishFold(self: *Self, mode: ParsingMode) !void {
     switch (self.mode) {
-        .Normal => unreachable,
-        .CountIndent => |i| {
-            if (i == 1) {
-                try self.devour(.DEDENT); // maybe make not consuming it `unreachable`? since this might not even be possible.
-            } else if (i == 0) {
-                try self.endStmt();
-            }
+        .Simple => |*nmode| switch (nmode.*) {
+            .Normal => unreachable,
+            .CountIndent => |i| {
+                if (i == 1) {
+                    try self.devour(.DEDENT); // maybe make not consuming it `unreachable`? since this might not even be possible.
+                } else if (i == 0) {
+                    try self.endStmt();
+                }
+            },
         },
+        else => unreachable,
     }
     self.mode = mode;
 }
@@ -3952,17 +4059,20 @@ fn check(self: *Self, tt: TokenType) bool {
 // PARSING PRIMITIVES
 fn peek(self: *Self) Token {
     switch (self.mode) {
-        .Normal => {},
-        .CountIndent => |*ind| while (true) {
-            if (!self.currentToken.isWhitespace()) break;
-            if (self.currentToken.type == .STMT_SEP and ind.* == 0) break;
-            if (self.currentToken.type == .INDENT) ind.* += 1;
-            if (self.currentToken.type == .DEDENT) {
-                if (ind.* <= 1) break;
-                ind.* -= 1;
-            }
-            self.skip();
+        .Simple => |*nmode| switch (nmode.*) {
+            .Normal => {},
+            .CountIndent => |*ind| while (true) {
+                if (!self.currentToken.isWhitespace()) break;
+                if (self.currentToken.type == .STMT_SEP and ind.* == 0) break;
+                if (self.currentToken.type == .INDENT) ind.* += 1;
+                if (self.currentToken.type == .DEDENT) {
+                    if (ind.* <= 1) break;
+                    ind.* -= 1;
+                }
+                self.skip();
+            },
         },
+        .MultilineLambda => {},
     }
     return self.currentToken;
 }
@@ -3970,18 +4080,22 @@ fn peek(self: *Self) Token {
 fn consume(self: *Self, tt: TokenType) ?Token {
     var tok = self.currentToken;
     switch (self.mode) {
-        .Normal => {},
-        .CountIndent => |*ind| while (tok.isWhitespace()) {
-            // TODO: COPYPASTA!
-            if (tok.type == .STMT_SEP and ind.* == 0) break;
-            if (tok.type == .INDENT) ind.* += 1;
-            if (tok.type == .DEDENT) {
-                if (ind.* <= 1) break;
-                ind.* -= 1;
-            }
-            self.skip();
-            tok = self.currentToken;
+        .Simple => |*nmode| switch (nmode.*) {
+            .Normal => {},
+            .CountIndent => |*ind| while (tok.isWhitespace()) {
+                // TODO: COPYPASTA!
+                if (tok.type == .STMT_SEP and ind.* == 0) break;
+                if (tok.type == .INDENT) ind.* += 1;
+                if (tok.type == .DEDENT) {
+                    if (ind.* <= 1) break;
+                    ind.* -= 1;
+                }
+                self.skip();
+                tok = self.currentToken;
+            },
         },
+
+        .MultilineLambda => {},
     }
 
     if (tok.type == tt) {
@@ -3999,8 +4113,16 @@ fn skip(self: *Self) void {
 }
 
 const ParsingMode = union(enum) {
-    Normal,
-    CountIndent: u32,
+    const Simple = union(enum) {
+        Normal,
+        CountIndent: u32,
+    };
+    Simple: Simple,
+    MultilineLambda: struct {
+        prev: Simple,
+        lamExpr: *AST.Expr,
+        scope: CurrentScope,
+    }, // <- old parsing mode. we can't have two multi line lambdas on the same line.
 };
 
 const LexingState = struct {

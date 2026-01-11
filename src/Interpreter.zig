@@ -490,6 +490,10 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     const boolVal = try self.boolValue(eqResult);
                     return boolVal;
                 },
+
+                .errno => {
+                    return self.intValue(std.c._errno().*);
+                },
             }
         },
         .Char => |c| {
@@ -689,10 +693,31 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         }
                     }
 
-                    const ret = try self.expr(lam.expr);
+                    switch (lam.body) {
+                        .Expr => |exp| {
+                            const ret = try self.expr(exp);
 
-                    // BUG(return-decon-ref): Remember to copy the value before returning - when returning a deconstructed value, it's possible to return a ref - in this case, we must copy it.
-                    return try self.copyValueMeta(ret, lam.expr.t);
+                            // BUG(return-decon-ref): Remember to copy the value before returning - when returning a deconstructed value, it's possible to return a ref - in this case, we must copy it.
+                            return try self.copyValueMeta(ret, exp.t);
+                        },
+                        .Body => |bod| {
+                            // COPYPASTA
+                            self.stmts(bod) catch |err| switch (err) {
+                                error.Return => {
+                                    return self.returnValue;
+                                },
+                                error.Break => {
+                                    std.debug.print("TRIED TO BREAK OUT OF LAMBDA FUNCTION\n", .{});
+                                    return error.Bruh;
+                                },
+                                else => return err,
+                            };
+
+                            // return statements
+
+                            unreachable;
+                        },
+                    }
                 },
 
                 .None => unreachable,
@@ -964,7 +989,7 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
         else => return err,
     };
 
-    unreachable; // TODO: return unit.
+    unreachable; // NOTE: Return should be automatically added while parsing bruv ㅠㅠㅠ
 }
 
 fn evaluateString(self: *const Self, s: Str) ![:0]u8 {

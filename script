@@ -1,23 +1,7 @@
 #!./zig-out/bin/kkc
 
-fn fib (n Int) -> Int
-	if n == 0
-		return 0
-	elif n == 1
-		return 1
-	else
-		return fib(n - 1) + fib(n - 2)
-
-fib(30) println()
-
-
-# what even should the environment look like here.
-# fn hard-boss (x Int)
-# 	fn soft-boss(y Int)
-# 		if y == 0
-# 			return 0
-# 		else
-# 			println(x)
-# 			return hard-boss(y - 1)
-
-# 	return soft-boss(x)
+1 to (10)
+	map(fn(x)) for-each(fn(x))
+		println('mioau')
+		println(x)
+		return x + 1

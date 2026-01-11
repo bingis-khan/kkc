@@ -12,6 +12,7 @@ pub const Type = enum {
     argv,
     argc,
     memeq,
+    errno,
     // inteq,
 };
 
@@ -23,6 +24,7 @@ const List = [_]Self{
     .{ .ty = .argv, .args = 0 },
     .{ .ty = .argc, .args = 0 },
     .{ .ty = .memeq, .args = 2 },
+    .{ .ty = .errno, .args = 0 },
     // .{ .ty = .inteq, .args = 2 },
 };
 

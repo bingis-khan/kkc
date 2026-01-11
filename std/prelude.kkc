@@ -168,6 +168,7 @@ inst Eq Maybe
 inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r
 
+
 inst ListLike Array
 	from-listlike (self): self
 

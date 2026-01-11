@@ -13,6 +13,11 @@ pub const Ctx = struct {
     hadNewline: *bool, // check newlines and automatically indent
     typeContext: *const TypeContext,
 
+    pub fn pp(typeContext: *const TypeContext, x: anytype) void {
+        var hadNewline = false;
+        Ctx.init(&hadNewline, typeContext).print(.{ x, "\n" });
+    }
+
     const Self = @This();
     pub fn init(hadNewline: *bool, typeContext: *const TypeContext) Self {
         hadNewline.* = true;
@@ -517,14 +522,28 @@ pub const Expr = struct {
 
     pub const Lam = struct {
         params: []*Decon,
-        expr: Rec,
+        body: union(enum) {
+            Expr: Rec,
+            Body: []*Stmt,
+
+            pub fn print(self: *const @This(), c: Ctx) void {
+                switch (self.*) {
+                    .Expr => |expr| c.print(.{ ": ", expr }),
+                    .Body => |body| {
+                        c.print("{\n");
+                        printBody(body, c);
+                        c.print("}");
+                    },
+                }
+            }
+        },
         env: Env,
 
         pub fn print(self: *const @This(), c: Ctx) void {
             c.print("fn ");
             c.encloseSepBy(self.params, ", ", "(", ")");
             c.encloseSepBy(self.env, ", ", "[", "]");
-            c.print(.{ ": ", self.expr });
+            c.print(self.body);
         }
     };
 

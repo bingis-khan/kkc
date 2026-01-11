@@ -25,3 +25,8 @@ fn max(l, r)
 		return l
 	else
 		return r
+
+
+# TODO: check actual digit sizes.
+fn from-octal(arr): arr
+	Iter.reduce(0, fn(elem, b): b * 8 + elem)
