@@ -69,7 +69,7 @@ Ordering
 	GT
 
 class Ord
-	compare (_, _) -> Ordering
+	cmp (_, _) -> Ordering
 
 # Index
 class Gettable
@@ -141,6 +141,8 @@ inst FromChar Char
 	from-charlike (s): (@cast(s) as Ptr Char)&
 
 
+# Eq
+
 inst Eq Int
 	eq (l, r): @memeq(l, r)
 
@@ -167,6 +169,8 @@ inst Eq Maybe
 
 inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r
+
+
 
 
 inst ListLike Array

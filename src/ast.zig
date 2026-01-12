@@ -1026,19 +1026,29 @@ pub const TNum = struct {
 // Also, I'm not planning to do real associated types YET, they will work the same as in kc.
 pub const Association = struct {
     depends: TVar,
-    to: Type,
-    classFun: *ClassFun,
+    class: *Class,
     uid: ID,
+
+    // when it's null, it's just a `constraint` and not based on a class function call.
+    // when it's a value, it's an actual association with an associated function call.
+    concrete: ?struct {
+        to: Type,
+        classFun: *ClassFun,
+    },
 
     pub const ID = Unique;
 
     fn print(self: @This(), c: Ctx) void {
-        c.s("(");
-        self.depends.print(c);
-        c.s(" => ");
-        self.to.print(c);
-        c.print(.{ " :$", self.classFun });
-        c.s(")");
+        if (self.concrete) |conc| {
+            c.s("(");
+            self.depends.print(c);
+            c.s(" => ");
+            conc.to.print(c);
+            c.print(.{ " :$", conc.classFun });
+            c.s(")");
+        } else {
+            c.print(.{ self.depends, ": ", self.class });
+        }
     }
 };
 pub const Match = struct {

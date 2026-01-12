@@ -268,16 +268,24 @@ pub const Error = union(enum) {
             .ConstraintsLeft => |e| {
                 p("{s}: constraints left {}:", .{ module.name, e.len });
                 for (e) |constr| {
-                    err.atLocation(constr.loc.?, .{ .label = .{
-                        constr.from,
-                        " => ",
-                        constr.to,
-                        " for class fun ",
-                        constr.classFun,
-                        "(",
-                        constr.classFun.class,
-                        ")",
-                    } });
+                    if (constr.concrete) |conc| {
+                        err.atLocation(constr.loc.?, .{ .label = .{
+                            constr.from,
+                            " => ",
+                            conc.to,
+                            " for class fun ",
+                            conc.classFun,
+                            "(",
+                            constr.class,
+                            ")",
+                        } });
+                    } else {
+                        err.atLocation(constr.loc.?, .{ .label = .{
+                            constr.from,
+                            " must implement class ",
+                            constr.class,
+                        } });
+                    }
                 }
             },
             .TVarDoesNotImplementClass => |e| p("tvar {s} does not implement class {s}", .{ e.tv.name, e.class.name }),

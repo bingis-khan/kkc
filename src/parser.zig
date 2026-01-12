@@ -199,11 +199,12 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
         const data = try Common.allocOne(self.arena, AST.Data{
             .uid = self.gen.types.newUnique(),
             .name = typename.literal(self.lexer.source),
-            .scheme = AST.Scheme{
-                .tvars = tvars.items,
-                .envVars = &.{}, // TEMP
-                .associations = &.{},
-            }, // TODO: check for repeating tvars and such.
+            .scheme = undefined, // NOTE: currently leave it undefined, but recursive structures might have a problem.
+            // .scheme = AST.Scheme{
+            //     .tvars = tvars.items,
+            //     .envVars = &.{}, // TEMP
+            //     .associations = &.{},
+            // }, // TODO: check for repeating tvars and such.
             .annotations = annotations,
             .stuff = undefined,
         });
@@ -211,10 +212,12 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
         var cons = std.ArrayList(AST.Con).init(self.arena);
         var recs = std.ArrayList(AST.Record).init(self.arena);
         var tag: u32 = 0;
+        var assocs = std.ArrayList(AST.Association).init(self.arena);
+        const tyconstr = Type.Constrain{ .Data = .{ .uid = data.uid, .assocs = &assocs } };
         while (!self.check(.DEDENT)) {
             if (self.consume(.IDENTIFIER)) |recname| {
                 // record
-                const t = try Type.init(self, .{ .Data = data.uid }).sepTyo();
+                const t = try Type.init(self, tyconstr).sepTyo();
                 try recs.append(.{
                     .field = recname.literal(self.lexer.source),
                     .t = t.e,
@@ -225,7 +228,7 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
                 var tys = std.ArrayList(AST.Type).init(self.arena);
                 while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                     // TODO: for now, no complicated types!
-                    const ty = try Type.init(self, .{ .Data = data.uid }).typ();
+                    const ty = try Type.init(self, tyconstr).typ();
                     try tys.append(ty.e);
                 }
                 self.consumeSeps();
@@ -243,6 +246,16 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
                 unreachable; // TODO: ERROR!
             }
         }
+
+        // don't forget to add associations at the end!!!!
+        for (assocs.items) |assoc| {
+            try tvars.append(.{ .TVar = assoc.depends });
+        }
+        data.scheme = .{
+            .tvars = tvars.items,
+            .envVars = &.{},
+            .associations = assocs.items,
+        };
 
         if (cons.items.len > 0 and recs.items.len > 0) {
             try self.reportError(.{ .RecordsAndConstructorsPresent = .{} });
@@ -275,6 +288,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     self.scope.beginScope(&env);
 
     var params = std.ArrayList(*AST.Decon).init(self.arena);
+    const tyconstr = Type.Constrain{ .Function = .{ .uid = fun.name.uid } };
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
             const decon = try self.deconstruction();
@@ -282,7 +296,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
                 const pt = try Type.init(
                     self,
-                    .{ .Function = fun.name.uid },
+                    tyconstr,
                 ).sepTyo();
                 try self.typeContext.unify(decon.t, pt.e, &.{ .l = decon.l, .r = pt.l });
             }
@@ -303,7 +317,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     // -> ty
     const ret = try self.typeContext.fresh();
     if (self.check(.RIGHT_ARROW)) {
-        const retTy = try Type.init(self, .{ .Function = fun.name.uid }).sepTyo();
+        const retTy = try Type.init(self, tyconstr).sepTyo();
         try self.typeContext.unify(ret, retTy.e, null);
     }
 
@@ -1035,11 +1049,12 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     try self.devour(.LEFT_PAREN);
 
     var params = std.ArrayList(AST.ExternalFunction.Param).init(self.arena);
+    const tyconstr = Type.Constrain{ .ExternalFunction = .{ .uid = uid } };
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
             const pname = try self.expect(.IDENTIFIER);
             const v = try self.newVar(pname); // pointless fresh.
-            const t = try Type.init(self, .{ .Function = uid }).sepTyo();
+            const t = try Type.init(self, tyconstr).sepTyo();
             try params.append(.{ .pn = v.v, .pt = t.e });
 
             if (self.check(.RIGHT_PAREN)) {
@@ -1050,7 +1065,7 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     }
 
     try self.devour(.RIGHT_ARROW);
-    const ret = try Type.init(self, .{ .Function = uid }).sepTyo();
+    const ret = try Type.init(self, tyconstr).sepTyo();
     try self.endStmt();
 
     // TODO: Technically, we should be able to pass buffers. But we should not in general allow type integers.
@@ -1150,12 +1165,14 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
 
     self.scope.beginScope(null); // let's capture all tvars.
     var params = std.ArrayList(AST.ClassFun.Param).init(self.arena);
+    var assocs = std.ArrayList(AST.Association).init(self.arena);
+    const tyconstr = Type.Constrain{ .ClassFunction = .{ .uid = uid, .assocs = &assocs } };
     try self.devour(.LEFT_PAREN);
     if (!self.check(.RIGHT_PAREN)) while (true) {
         // consume identifier if possible.
         if (self.check(.IDENTIFIER)) {}
 
-        try params.append(.{ .t = (try Type.init(self, .{ .ClassFunction = uid }).sepTyo()).e });
+        try params.append(.{ .t = (try Type.init(self, tyconstr).sepTyo()).e });
 
         if (self.check(.RIGHT_PAREN)) {
             break;
@@ -1165,11 +1182,10 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     };
 
     // another new eye candy - default Unit
-    const ret = if (self.check(.RIGHT_ARROW)) (try Type.init(self, .{ .ClassFunction = uid }).sepTyo()).e else try self.definedType(.Unit);
+    const ret = if (self.check(.RIGHT_ARROW)) (try Type.init(self, tyconstr).sepTyo()).e else try self.definedType(.Unit);
 
     // constraints
     const constraints_ = try self.constraints();
-    _ = constraints_;
 
     try self.endStmt();
     const tvarsMap = self.scope.currentScope().tvars;
@@ -1183,10 +1199,18 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         try tvars.append(tvar.*);
     }
 
+    // also append implicit tvars from inner class definitions.
+    for (assocs.items) |ass| {
+        try tvars.append(.{ .TVar = ass.depends });
+    }
+
+    // make sure to add the implicit tvars before this!
+    try self.addConstraintsToAssocs(&assocs, &constraints_);
+
     const scheme = AST.Scheme{
         .tvars = tvars.items,
         .envVars = &.{}, // TEMP
-        .associations = &.{}, // NOTE: this will change when class constraints are allowed on functions. EDIT: Or not??? We have no constraints to specify, because these constraints are not based on class function calls. Right now, I'll leave it alone because of our "broken" type system.
+        .associations = assocs.items, // NOTE: this will change when class constraints are allowed on functions. EDIT: Or not??? We have no constraints to specify, because these constraints are not based on class function calls. Right now, I'll leave it alone because of our "broken" type system.
     };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
@@ -1231,7 +1255,7 @@ fn constraints(self: *Self) !Constraints {
 
                         try e.value_ptr.append(class);
                     },
-                    .Data => unreachable,
+                    .Data => unreachable, // TODO: error.
                 }
             } else {
                 try self.reportError(.{ .UndefinedClass = .{
@@ -1244,6 +1268,21 @@ fn constraints(self: *Self) !Constraints {
     }
 
     return constraints_;
+}
+
+fn addConstraintsToAssocs(self: *Self, assocs: *std.ArrayList(AST.Association), constrs: *const Constraints) !void {
+    // also add defined constraints! (but it's all bad thoooo)
+    var constrIt = constrs.iterator();
+    while (constrIt.next()) |kv| {
+        for (kv.value_ptr.items) |class| {
+            try assocs.append(.{
+                .depends = kv.key_ptr.*,
+                .uid = self.gen.assocs.newUnique(),
+                .class = class,
+                .concrete = null,
+            });
+        }
+    }
 }
 
 fn deconstruction(self: *Self) !*AST.Decon {
@@ -2206,7 +2245,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
             .Data => |data| {
                 switch (data.stuff) {
                     .recs => |dataFields| {
-                        const dataInst = try self.instantiateData(data);
+                        const dataInst = try self.instantiateData(data, self.loc(name));
                         const match = dataInst.match;
 
                         // check if all fields were defined
@@ -2718,11 +2757,28 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 }
 
 const Type = struct {
-    binding: ?AST.Binding,
+    const Constrain = union(enum) {
+        Data: WithAssocs,
+        ClassFunction: WithAssocs,
+        Function: struct { uid: Unique },
+        ExternalFunction: struct { uid: Unique },
+
+        const WithAssocs = struct { uid: Unique, assocs: *std.ArrayList(AST.Association) };
+    };
+    constrain: ?Constrain,
     parser: *Self,
 
-    fn init(self: *Self, binding: ?AST.Binding) @This() {
-        return .{ .binding = binding, .parser = self };
+    fn init(self: *Self, constrain: ?Constrain) @This() {
+        return .{ .constrain = constrain, .parser = self };
+    }
+
+    fn binding(this: *const @This()) ?AST.Binding {
+        return if (this.constrain) |c| switch (c) {
+            .Data => |e| .{ .Data = e.uid },
+            .ClassFunction => |e| .{ .ClassFunction = e.uid },
+            .Function => |e| .{ .Function = e.uid },
+            .ExternalFunction => |e| .{ .Function = e.uid },
+        } else null;
     }
 
     // type-o
@@ -2730,15 +2786,15 @@ const Type = struct {
         const self = this.parser;
         // temp
         if (self.consume(.TYPE)) |ty| {
-            const ity = try self.qualifiedType(ty);
+            const ity = try this.qualifiedType(ty);
             if (ity.tyArgs.len != 0) {
-                try self.reportError(.{ .MismatchingKind = .{ .data = ity.data, .expect = ity.tyArgs.len, .actual = 0 } });
+                try self.reportError(.{ .MismatchingKind = .{ .data = ity.dataExclusiveShit.?.data, .expect = ity.tyArgs.len, .actual = 0 } });
             }
             return .{ .e = ity.t, .l = self.loc(ty) };
         } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
             return .{
                 .e = try self.typeContext.newType(.{
-                    .TVar = try self.lookupTVar(tv, this.binding),
+                    .TVar = try self.lookupTVar(tv, this.binding()),
                 }),
                 .l = self.loc(tv),
             };
@@ -2782,7 +2838,7 @@ const Type = struct {
     fn sepTyo(this: *const @This()) !LocdIn(AST.Type) {
         const self = this.parser;
         if (self.consume(.TYPE)) |tyName| {
-            const ty = try self.qualifiedType(tyName);
+            const ty = try this.qualifiedType(tyName);
 
             var tyArgs = std.ArrayList(AST.TypeOrNum).init(self.arena);
             var l = self.loc(tyName);
@@ -2797,10 +2853,10 @@ const Type = struct {
                 if (i < ty.tyArgs.len and ty.tyArgs[i].isNum()) { // BRUHHHH
                     const numTy: AST.TypeOrNum = b: {
                         if (self.consume(.NUMTYNAME)) |numtyTok| { // we also accept carets to make sure we are using a number type.
-                            const tnum = try self.lookupTNum(numtyTok, this.binding);
+                            const tnum = try self.lookupTNum(numtyTok, this.binding());
                             break :b .{ .Num = try self.typeContext.newNum(.{ .TNum = tnum }) };
                         } else if (self.consume(.IDENTIFIER)) |numtyTok| {
-                            const tnum = try self.lookupTNum(numtyTok, this.binding);
+                            const tnum = try self.lookupTNum(numtyTok, this.binding());
                             break :b .{ .Num = try self.typeContext.newNum(.{ .TNum = tnum }) };
                         } else if (self.consume(.INTEGER)) |intTok| {
                             const num = self.parseInt(intTok);
@@ -2821,10 +2877,14 @@ const Type = struct {
             }
 
             // simply check arity.
-            try self.typeContext.unifyParamsWithTNums(ty.tyArgs, tyArgs.items, &.{ .l = l }, &.{
-                .lfull = ty.t,
-                .rfull = null,
-            });
+            if (ty.dataExclusiveShit != null) {
+                try self.typeContext.unifyParamsWithTNums(ty.tyArgs, tyArgs.items, &.{ .l = l }, &.{
+                    .lfull = ty.t,
+                    .rfull = null,
+                });
+            } else if (tyArgs.items.len > 0) {
+                unreachable; // TODO: error that says you cannot apply parameters to class.
+            }
 
             // there's a possibility it's a function!
             if (self.check(.RIGHT_ARROW)) {
@@ -2836,7 +2896,7 @@ const Type = struct {
                         .Fun = .{
                             .args = args,
                             .ret = ret.e,
-                            .env = if (this.binding != null)
+                            .env = if (this.binding() != null)
                                 // in general case
                                 try self.typeContext.newEnv(null)
                             else
@@ -2890,7 +2950,7 @@ const Type = struct {
             }
         } else if (self.consume(.IDENTIFIER)) |tv| {
             const tvt = try self.typeContext.newType(.{
-                .TVar = try self.lookupTVar(tv, this.binding),
+                .TVar = try self.lookupTVar(tv, this.binding()),
             });
             if (self.consume(.RIGHT_ARROW)) |rtok| {
                 const args = try self.arena.alloc(AST.Type, 1);
@@ -2911,6 +2971,101 @@ const Type = struct {
             return try this.typ();
         }
         unreachable;
+    }
+
+    fn qualifiedType(this: *const @This(), first: Token) !DataOrClassShit {
+        const self = this.parser;
+        const stuff = try self.parseQualifiedType(first);
+        const modpath = stuff.modpath;
+        const tyname = stuff.name;
+        const qloc = stuff.loc;
+
+        if (try self.findQualifiedDataOrClass(modpath, tyname, qloc)) |dataOrClass| {
+            switch (dataOrClass) {
+                .Data => |data| {
+                    const dt = try self.instantiateData(data, qloc);
+                    return .{
+                        .t = dt.t,
+                        .tyArgs = dt.tyArgs,
+                        .dataExclusiveShit = .{
+                            .data = data,
+                            .match = dt.match,
+                        },
+                    };
+                },
+
+                .Class => |class| {
+                    if (this.constrain) |constr| {
+                        switch (constr) {
+                            .Data, .ClassFunction => |data| {
+                                const tv: AST.TVar = .{
+                                    .uid = self.gen.tvars.newUnique(),
+                                    .name = "miau:3",
+                                    .binding = this.binding(),
+                                    .inferred = false,
+                                    .fields = &.{},
+                                };
+                                try data.assocs.append(.{
+                                    .depends = tv,
+                                    .uid = self.gen.assocs.newUnique(),
+                                    .class = class,
+                                    .concrete = null,
+                                });
+
+                                return .{
+                                    .t = try self.typeContext.newType(.{ .TVar = tv }),
+                                    .tyArgs = &.{},
+                                    .dataExclusiveShit = null,
+                                };
+                            },
+                            .Function => {
+                                const t = try self.typeContext.fresh();
+                                try self.addAssociation(.{
+                                    .from = t,
+                                    .loc = qloc, // TODO!
+                                    .class = class,
+                                    .instances = try self.getInstancesForClass(class),
+                                    .default = class.default,
+                                    .concrete = null,
+                                });
+
+                                return .{
+                                    .t = t,
+                                    .tyArgs = &.{},
+                                    .dataExclusiveShit = null,
+                                };
+                            },
+                            .ExternalFunction => unreachable, // TODO: error
+                        }
+
+                        unreachable;
+                    } else {
+                        const t = try self.typeContext.fresh();
+                        try self.addAssociation(.{
+                            .from = t,
+                            .loc = qloc, // TODO!
+                            .class = class,
+                            .instances = try self.getInstancesForClass(class),
+                            .default = class.default,
+                            .concrete = null,
+                        });
+
+                        return .{
+                            .t = t,
+                            .tyArgs = &.{},
+                            .dataExclusiveShit = null,
+                        };
+                    }
+
+                    unreachable;
+                },
+            }
+        } else {
+            return try self.newPlaceholderType(
+                tyname,
+                self.loc(first),
+            );
+        }
     }
 };
 
@@ -3153,12 +3308,16 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
 
     try self.addAssociation(.{
         .from = classSelf,
-        .to = funTy,
-        .classFun = cfun,
+        .class = cfun.class,
         .instances = instances,
-        .ref = ref,
         .loc = l,
         .default = cfun.class.default,
+
+        .concrete = .{
+            .classFun = cfun,
+            .ref = ref,
+            .to = funTy,
+        },
     });
 
     return .{
@@ -3231,7 +3390,7 @@ fn solveAvailableConstraintsAndApplyDefaultsIfPossible(self: *Self) !void {
 // TODO: this should not really be a function thooo
 fn maybeApplyDefault(self: *Self, assoc: *const Association) !bool {
     if (assoc.default) |def| {
-        const data = try self.instantiateData(def);
+        const data = try self.instantiateData(def, assoc.loc);
         try self.typeContext.unify(assoc.from, data.t, &.{ .l = assoc.loc.? });
         return true;
     }
@@ -3255,37 +3414,44 @@ fn solveAvailableConstraints(self: *Self) !void {
             switch (self.typeContext.getType(assoc.from)) {
                 .Con => |con| {
                     if (assoc.instances.get(con.type)) |inst| {
-                        // NOTE: modifying self.associations while iterating assocs.
-                        const fun: *AST.Function = b: {
-                            for (inst.instFuns) |instFun| {
-                                if (instFun.classFunId == assoc.classFun.uid) {
-                                    const fun = instFun.fun;
-                                    break :b fun;
+                        if (assoc.concrete) |conc| {
+                            // NOTE: modifying self.associations while iterating assocs.
+                            const fun: *AST.Function = b: {
+                                for (inst.instFuns) |instFun| {
+                                    if (instFun.classFunId == conc.classFun.uid) {
+                                        const fun = instFun.fun;
+                                        break :b fun;
+                                    }
                                 }
-                            }
 
-                            // TODO: compiler error: could not find instance function.
-                            //  This case should be checked when parsing the selected instance.
-                            //  Then here, we would return some placeholder (or the placeholder will be provided then)
-                            unreachable;
-                        };
-                        const funTyAndMatch = try self.instantiateFunction(fun, assoc.loc);
-                        const funTy = funTyAndMatch.t;
+                                // TODO: compiler error: could not find instance function.
+                                //  This case should be checked when parsing the selected instance.
+                                //  Then here, we would return some placeholder (or the placeholder will be provided then)
+                                unreachable;
+                            };
+                            const funTyAndMatch = try self.instantiateFunction(fun, assoc.loc);
+                            const funTy = funTyAndMatch.t;
 
-                        try self.typeContext.unify(assoc.to, funTy, if (assoc.loc) |l| &.{ .l = l } else null);
+                            try self.typeContext.unify(conc.to, funTy, if (assoc.loc) |l| &.{ .l = l } else null);
 
-                        assoc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
+                            conc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
+                        } else {
+                            // nothing. it's good.
+                        }
                     } else {
                         // error
                         try self.reportError(.{
                             .CouldNotFindInstanceForType = .{
                                 .data = con.type,
-                                .class = assoc.classFun.class,
+                                .class = assoc.class,
                                 .possibilities = assoc.instances,
                                 .loc = assoc.loc.?, // TODO: is this safe?
                             },
                         });
-                        assoc.ref.* = null;
+
+                        if (assoc.concrete) |*conc| {
+                            conc.ref.* = null;
+                        }
                     }
 
                     _ = self.associations.orderedRemove(i); // TODO: not very efficient with normal ArrayList.
@@ -3359,8 +3525,8 @@ const DataInst = struct {
     tyArgs: []AST.TypeOrNum,
     match: *AST.Match,
 };
-fn instantiateData(self: *Self, data: *AST.Data) !DataInst {
-    const match = try self.instantiateScheme(data.scheme, null);
+fn instantiateData(self: *Self, data: *AST.Data, l: ?Loc) !DataInst {
+    const match = try self.instantiateScheme(data.scheme, l);
 
     return .{
         .t = try self.typeContext.newType(.{ .Con = .{
@@ -3372,44 +3538,17 @@ fn instantiateData(self: *Self, data: *AST.Data) !DataInst {
     };
 }
 
-fn qualifiedType(self: *Self, first: Token) !DataShit {
-    const stuff = try self.parseQualifiedType(first);
-    const modpath = stuff.modpath;
-    const tyname = stuff.name;
-    const qloc = stuff.loc;
-
-    if (try self.findQualifiedDataOrClass(modpath, tyname, qloc)) |dataOrClass| {
-        switch (dataOrClass) {
-            .Data => |data| {
-                const dt = try self.instantiateData(data);
-                return .{
-                    .data = data,
-                    .t = dt.t,
-                    .tyArgs = dt.tyArgs,
-                    .match = dt.match,
-                };
-            },
-
-            .Class => |class| {
-                _ = class; // TODO: treat it as fresh tvar constrained. At the end, make sure it did not become a real type (must be finished as a tvar!)
-                unreachable;
-            },
-        }
-    } else {
-        return try self.newPlaceholderType(
-            tyname,
-            self.loc(first),
-        );
-    }
-}
-
-const DataShit = struct {
-    data: *AST.Data,
+const DataOrClassShit = struct {
     t: AST.Type,
     tyArgs: []AST.TypeOrNum,
-    match: *AST.Match,
+
+    // it's a class here bruv:
+    dataExclusiveShit: ?struct {
+        data: *AST.Data,
+        match: *AST.Match,
+    },
 };
-fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !DataShit {
+fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !DataOrClassShit {
     const placeholderType = try Common.allocOne(self.arena, AST.Data{
         .name = typename,
         .uid = self.gen.vars.newUnique(),
@@ -3423,13 +3562,16 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
 
     const match = try Common.allocOne(self.arena, AST.Match.empty(placeholderType.scheme));
     return .{
-        .data = placeholderType,
         .t = try self.typeContext.newType(.{ .Con = .{
             .type = placeholderType,
             .application = match,
         } }),
         .tyArgs = &.{},
-        .match = match,
+
+        .dataExclusiveShit = .{
+            .data = placeholderType,
+            .match = match,
+        },
     };
 }
 
@@ -3575,7 +3717,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
         }
     };
 
-    const dt = try self.instantiateData(con.data);
+    const dt = try self.instantiateData(con.data, self.loc(conTok));
 
     // found con. now we instantiate it.
     if (con.tys.len == 0) {
@@ -3624,15 +3766,19 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
     // should prolly add assocs to "Match", but we don't need em yet.
     for (scheme.associations, assocs) |assoc, *ref| {
         try self.addAssociation(.{
-            .classFun = assoc.classFun,
             .from = try self.typeContext.mapType(&tvarMatch, try self.typeContext.newType(
                 .{ .TVar = assoc.depends },
             )),
-            .to = try self.typeContext.mapType(&tvarMatch, assoc.to),
+            .instances = try self.getInstancesForClass(assoc.class),
             .loc = l,
+            .class = assoc.class,
 
-            .instances = try self.getInstancesForClass(assoc.classFun.class),
-            .ref = ref,
+            .concrete = if (assoc.concrete) |conc| .{
+                .to = try self.typeContext.mapType(&tvarMatch, conc.to),
+
+                .classFun = conc.classFun,
+                .ref = ref,
+            } else null,
         });
     }
 
@@ -3776,7 +3922,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                     if (!std.meta.eql(assocTV.binding, expectedBinding)) unreachable; // Since we added errors for TVars (in constraint solving), this should be unreachable.
 
                     if (!assocTV.inferred) b: {
-                        const assocClass = assoc.classFun.class;
+                        const assocClass = assoc.class;
                         if (constraints_.get(assocTV)) |constrs| {
                             for (constrs.items) |class| {
                                 if (class.uid == assocClass.uid) {
@@ -3790,41 +3936,55 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         try self.reportError(.{ .TVarDoesNotImplementClass = .{ .class = assocClass, .tv = assocTV } });
                     }
 
-                    // mkae sure to check it's actually bound to a function.
-                    var assocFTVs = TypeContext.FTVs.init(self.arena); // TODO: this is kinda fugly. I should reuse the general ftvs.
-                    defer assocFTVs.deinit();
-                    try self.typeContext.ftvs(&assocFTVs, assoc.to);
-
-                    var assocFTVIt = assocFTVs.tyvars.iterator();
-                    while (assocFTVIt.next()) |tyv| {
-                        const name = try std.fmt.allocPrint(self.arena, "'{}", .{tyv.tyv.uid});
-                        const tv = AST.TVar{
-                            .name = name,
-                            .uid = self.gen.tvars.newUnique(),
-                            .binding = .{ .Function = functionId },
-                            .inferred = true,
-                            .fields = self.typeContext.getFieldsForTVar(tyv.tyv) orelse &.{},
-                        };
-                        try tvars.append(.{ .TVar = tv });
-                        const tvt = try self.typeContext.newType(.{ .TVar = tv });
-                        try self.typeContext.unify(tyv.t, tvt, null);
-                    }
-
-                    var assocEnvIt = assocFTVs.envs.iterator();
-                    while (assocEnvIt.next()) |e| {
-                        try envs.append(e.*);
-                    }
-
-                    // here we are adding an existing association to a scheme.
-                    // remember to create a uid and pointer-write it to the previous match's association.
                     const assocID = self.gen.assocs.newUnique();
-                    assoc.ref.* = .{ .Id = assocID };
-                    try assocs.append(.{
-                        .depends = assocTV,
-                        .to = assoc.to,
-                        .classFun = assoc.classFun,
-                        .uid = assocID,
-                    });
+                    if (assoc.concrete) |conc| {
+
+                        // make sure to check it's actually bound to a function.
+                        var assocFTVs = TypeContext.FTVs.init(self.arena); // TODO: this is kinda fugly. I should reuse the general ftvs.
+                        defer assocFTVs.deinit();
+                        try self.typeContext.ftvs(&assocFTVs, conc.to);
+
+                        var assocFTVIt = assocFTVs.tyvars.iterator();
+                        while (assocFTVIt.next()) |tyv| {
+                            const name = try std.fmt.allocPrint(self.arena, "'{}", .{tyv.tyv.uid});
+                            const tv = AST.TVar{
+                                .name = name,
+                                .uid = self.gen.tvars.newUnique(),
+                                .binding = .{ .Function = functionId },
+                                .inferred = true,
+                                .fields = self.typeContext.getFieldsForTVar(tyv.tyv) orelse &.{},
+                            };
+                            try tvars.append(.{ .TVar = tv });
+                            const tvt = try self.typeContext.newType(.{ .TVar = tv });
+                            try self.typeContext.unify(tyv.t, tvt, null);
+                        }
+
+                        var assocEnvIt = assocFTVs.envs.iterator();
+                        while (assocEnvIt.next()) |e| {
+                            try envs.append(e.*);
+                        }
+
+                        // here we are adding an existing association to a scheme.
+                        // remember to create a uid and pointer-write it to the previous match's association.
+                        conc.ref.* = .{ .Id = assocID };
+                        try assocs.append(.{
+                            .depends = assocTV,
+                            .class = assoc.class,
+                            .uid = assocID,
+
+                            .concrete = .{
+                                .classFun = conc.classFun,
+                                .to = conc.to,
+                            },
+                        });
+                    } else {
+                        try assocs.append(.{
+                            .depends = assocTV,
+                            .class = assoc.class,
+                            .uid = assocID,
+                            .concrete = null,
+                        });
+                    }
 
                     // also, make sure to later add tvars to them
                     _ = self.associations.orderedRemove(i);
@@ -3839,6 +3999,9 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         }
     }
 
+    // also add defined constraints! (but it's all bad thoooo)
+    try self.addConstraintsToAssocs(&assocs, constraints_);
+
     return .{
         .tvars = tvars.items,
         .envVars = envs.items,
@@ -3847,16 +4010,22 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 }
 
 // ASSOCIATION
+// NOTE: kind of crappy constraint thing. It should work tho?
 pub const Association = struct {
     from: AST.Type,
-    to: AST.Type,
     loc: ?Loc,
-
-    classFun: *AST.ClassFun,
-    ref: *?AST.Match.AssocRef,
-
+    class: *AST.Class,
     instances: Module.DataInstance,
     default: ?*AST.Data = null, // for now, when generalizing, we DON'T keep defaults. I'm thinking of applying defaults before generalizing, so that returning strings works correctly. Or make a different default type: `late` and `eager`
+
+    // when it's null, it's just a `constraint` and not based on a class function call.
+    // when it's a value, it's an actual association with an associated function call.
+    concrete: ?struct {
+        classFun: *AST.ClassFun,
+        ref: *?AST.Match.AssocRef,
+
+        to: AST.Type,
+    },
 };
 
 fn addAssociation(self: *Self, assoc: Association) !void {
@@ -3990,7 +4159,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
     return if (self.prelude) |prelude| {
         const data = prelude.defined(predefinedType);
         return .{
-            .dataInst = try self.instantiateData(data), // no location, because it should not happen?
+            .dataInst = try self.instantiateData(data, null), // no location, because it should not happen?
             .data = data,
         };
     } else b: {
@@ -4000,7 +4169,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
         };
 
         return .{
-            .dataInst = try self.instantiateData(data), // -||-
+            .dataInst = try self.instantiateData(data, null), // -||-
             .data = data,
         };
     };

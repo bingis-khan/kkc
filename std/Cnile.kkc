@@ -29,7 +29,7 @@ Timespec
 	tv-nsec I64
 
 inst Ord Timespec
-	compare (l, r)
+	cmp (l, r)
 		ls = l.tv-sec i64-int()
 		rs = r.tv-sec i64-int()
 

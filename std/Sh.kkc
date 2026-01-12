@@ -33,7 +33,7 @@ fn older-than (l, r)
 	Cnile.stat(r, &stat)
 	rmtim = stat.mtim
 
-	return lmtim compare (rmtim) == LT
+	return lmtim cmp (rmtim) == LT
 
 # depends-on (short name for faster typing)
 fn deps (d, it): it
