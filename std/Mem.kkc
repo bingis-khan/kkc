@@ -55,3 +55,11 @@ fn from-nullable-c-str (s ConstStr)
 		return Just(s)
 
 
+use Cnile
+	I32
+	U64
+	I64
+fn u64-int (x U64) -> Int: @cast(x)
+fn i64-int (x I64) -> Int: @cast(x)
+fn i32-int (x I32) -> Int: cast-on-zeroed(x)
+

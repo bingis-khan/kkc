@@ -21,7 +21,7 @@
 	- crappy code - separate tvars into tvars and tnums
 	- [V] parse ^identifier together: `^  identifier` would become invalid.
 - [ ] review the architecture of the type checker. (connected with "numers in type parameters")
-	- rething "slop" constraints?
+	- rethink "slop" constraints? We can split them into actionable and non-actionable constraints. One other non-actionable constraint is checking if integer fits in the inferred range! (this constraint must also be propagated further.)
 	- Maybe it would be better if constraints were associated with tyvars (like fields)?
 	- + constraints are automatically applied on demand.
 	- + gathering constraints in generalization is easy: just do it while FTV-ing.

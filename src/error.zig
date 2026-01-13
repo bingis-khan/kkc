@@ -151,6 +151,7 @@ pub const Error = union(enum) {
     TypeIsNotARecord: struct {
         t: ast.Type,
         field: Str,
+        loc: Loc,
     },
 
     DataIsNotARecord: struct {
@@ -204,7 +205,9 @@ pub const Error = union(enum) {
                 // p("undefined variable {s}{} at ({}, {})", .{ uv.varname.name, uv.varname.uid, uv.loc.from, uv.loc.to });
             },
             .UndefinedCon => |e| p("undefined con {s} at ({}, {})", .{ e.conname, e.loc.from, e.loc.to }),
-            .UndefinedType => |e| p("undefined type {s} at ({}, {})", .{ e.typename, e.loc.from, e.loc.to }),
+            .UndefinedType => |e| {
+                err.atLocation(e.loc, .{ .label = .{ "undefined type ", e.typename } });
+            },
             .UndefinedTVar => |e| p("undefined tvar {s} at ({}, {})", .{ e.tvname, e.loc.from, e.loc.to }),
             .UndefinedTNum => |e| {
                 err.atLocation(e.loc, .{ .label = .{ "undefined tnum '", e.tvname, "'" } });
@@ -297,7 +300,7 @@ pub const Error = union(enum) {
                 err.atLocation(e.loc, .{ .label = .{ "type ", e.t, " does not have field '", e.field, "'" } });
             },
             .TypeIsNotARecord => |e| {
-                c.print(.{ "type ", e.t, " is not a record, so it cannot have a field ", e.field, "\n" });
+                err.atLocation(e.loc, .{ .label = .{ "type ", e.t, " is not a record, so it cannot have a field ", e.field } });
             },
             .DataIsNotARecord => |e| c.print(.{ "data ", e.data, " is not a record\n" }),
             .DidNotDefineField => |e| {

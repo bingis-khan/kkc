@@ -50,6 +50,7 @@ pub const TokenType = enum {
     NUMTYNAME,
 
     INTEGER,
+    FRACTIONAL,
     STRING,
     PASS,
 

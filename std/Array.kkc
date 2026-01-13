@@ -21,6 +21,7 @@ fn set (arr Ptr (Array count a), i Int, e a)
 	p <&= e
 
 
+# i think it should be in Slice and called `from-array`?
 fn as-slice (arr Ptr (Array count a)) -> Slice a:
 	Slice { ptr: Mem.cast(arr), count }
 

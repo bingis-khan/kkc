@@ -1,0 +1,26 @@
+use Cnile
+	Timespec
+use Mem
+	i64-int
+	u64-int
+
+inst Ord Timespec
+	cmp (l, r)
+		ls = l.tv-sec i64-int()
+		rs = r.tv-sec i64-int()
+
+		if ls > rs
+			return GT
+		elif ls < rs
+			return LT
+		else
+			ln = l.tv-nsec i64-int()
+			rn = r.tv-nsec i64-int()
+
+			if ln > rn
+				return GT
+			elif ln < rn
+				return LT
+			else
+				return EQ
+

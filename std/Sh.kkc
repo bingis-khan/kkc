@@ -1,14 +1,14 @@
 #!/bin/env kkc
 # A "shell" module. I want to test how an interface for such a module would look like.
 
-use Cnile
-	u64-int
-	i64-int
-	i32-int
+use CnileInst
 use Slice
 	Slice
 use Mem
 	undefined
+	i32-int
+	i64-int
+	u64-int
 use Error
 	panic
 use Iter

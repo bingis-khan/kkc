@@ -135,7 +135,14 @@ pub const Lexer = struct {
                 break :b .GT;
             },
             ',' => .COMMA,
-            '.' => .DOT,
+            '.' => b: {
+                if (std.ascii.isDigit(self.curChar())) {
+                    self.integer();
+                    break :b .FRACTIONAL;
+                } else {
+                    break :b .DOT;
+                }
+            },
             '=' => b: {
                 if (self.check('=')) {
                     break :b .EQEQ;
@@ -221,8 +228,11 @@ pub const Lexer = struct {
             },
 
             '0'...'9' => b: {
-                self.integer();
-                break :b .INTEGER;
+                const numtype = self.number();
+                break :b switch (numtype) {
+                    .Integral => .INTEGER,
+                    .Fractional => .FRACTIONAL,
+                };
             },
 
             '_' => .UNDERSCORE,
@@ -294,6 +304,14 @@ pub const Lexer = struct {
             '-' => std.ascii.isAlphanumeric(self.peekChar()), // a-b ok, a- b minus, etc.
             else => false,
         }) : (self.currentIndex += 1) {}
+    }
+
+    fn number(self: *Self) enum { Integral, Fractional } {
+        self.integer();
+        if (self.curChar() != '.') return .Integral;
+        _ = self.nextChar();
+        self.integer();
+        return .Fractional;
     }
 
     fn integer(self: *Self) void {

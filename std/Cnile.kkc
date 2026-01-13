@@ -18,35 +18,11 @@ I32
 #[bytes '8']
 I64
 
-fn u64-int (x U64) -> Int: @cast(x)
-fn i64-int (x I64) -> Int: @cast(x)
-fn i32-int (x I32) -> Int: @cast(x)
-
 
 #[ctype 'struct timespec']
 Timespec
 	tv-sec I64
 	tv-nsec I64
-
-inst Ord Timespec
-	cmp (l, r)
-		ls = l.tv-sec i64-int()
-		rs = r.tv-sec i64-int()
-
-		if ls > rs
-			return GT
-		elif ls < rs
-			return LT
-		else
-			ln = l.tv-nsec i64-int()
-			rn = r.tv-nsec i64-int()
-
-			if ln > rn
-				return GT
-			elif ln < rn
-				return LT
-			else
-				return EQ
 
 
 # Stat for x86_64 linux :)
@@ -90,6 +66,9 @@ external
 
 	#[cfunname 'fprintf']
 	fprintf1 (file Ptr FILE, format ConstStr, x a) -> Int
+
+	#[cfunname 'snprintf']
+	snprintf1 (p Ptr Char, n Int, format ConstStr, x a) -> Int
 
 
 	rand () -> Int

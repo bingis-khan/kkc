@@ -79,3 +79,5 @@ use Term
 # probably not fit for default exports, just let the user do `use Sh *`
 use Sh
 	deps
+
+use CnileInst

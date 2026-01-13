@@ -1710,15 +1710,26 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .Minus,
             .Times,
             .Divide,
-            => b: {
-                const intTy = try self.definedType(.Int);
-                try self.typeContext.unify(left.t, intTy, &.{
-                    .l = left.l,
-                });
-                try self.typeContext.unify(right.t, intTy, &.{
-                    .l = right.l,
-                });
-                break :b intTy;
+            => |*ref| b: {
+                const class: *AST.Class = try switch (binop) {
+                    .Plus => self.definedClass(.Addition),
+                    .Minus => self.definedClass(.Subtraction),
+                    .Times => self.definedClass(.Multiplication),
+                    .Divide => self.definedClass(.Division),
+                    else => unreachable,
+                };
+
+                const cfun = class.classFuns[0];
+                const l = left.l.between(right.l);
+                const ifn = try self.instantiateClassFunction(cfun, l);
+                const retTy = try self.typeContext.fresh();
+                const funTy = try self.makeType(.{ .Fun = .{
+                    .args = [_]AST.Type{ left.t, right.t },
+                    .ret = retTy,
+                } });
+                try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
+                ref.* = ifn.ref;
+                break :b retTy;
             },
 
             .GreaterThan,
@@ -1750,7 +1761,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 break :b boolTy;
             },
 
-            .Equals, .NotEquals => b: {
+            .Equals, .NotEquals => |*ref| b: {
                 const eqClass = try self.definedClass(.Eq);
                 const eqFun = eqClass.classFuns[0];
                 const l = left.l.between(right.l);
@@ -1769,9 +1780,7 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
 
                 try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
 
-                // TODO: FUNNY!
-                if (binop == .Equals) binop = .{ .Equals = ifn.ref };
-                if (binop == .NotEquals) binop = .{ .NotEquals = ifn.ref };
+                ref.* = ifn.ref;
 
                 break :b boolTy;
             },
@@ -1817,8 +1826,9 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     };
 
     // negation (-)
-    if (minPrec <= comptime binOpPrecedence(.Divide)) if (self.consume(.MINUS)) |mintok| {
-        const n = try self.precedenceExpression(binOpPrecedence(.Divide) + 1); // higher than and
+    const beforeNegPrec = comptime binOpPrecedence(.{ .Divide = undefined });
+    if (minPrec <= beforeNegPrec) if (self.consume(.MINUS)) |mintok| { // undefined here, because we just want to check binop precedence. note, that we still want to rewrite it, because we confuse both.
+        const n = try self.precedenceExpression(beforeNegPrec + 1); // higher than and
         const intTy = try self.definedType(.Int);
         try self.typeContext.unify(n.t, intTy, &.{ .l = n.l });
         return self.allocExpr(.{
@@ -2003,6 +2013,20 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 },
 
                 .errno => try self.definedType(.Int),
+                .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => b: {
+                    const intTy = try self.definedType(.Int);
+                    try self.typeContext.unify(args.items[0].t, intTy, &.{ .l = args.items[0].l });
+                    try self.typeContext.unify(args.items[1].t, intTy, &.{ .l = args.items[1].l });
+
+                    break :b intTy;
+                },
+                .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => b: {
+                    const floatTy = try self.definedType(.Float);
+                    try self.typeContext.unify(args.items[0].t, floatTy, &.{ .l = args.items[0].l });
+                    try self.typeContext.unify(args.items[1].t, floatTy, &.{ .l = args.items[1].l });
+
+                    break :b floatTy;
+                },
             };
 
             return self.allocExpr(.{
@@ -2048,7 +2072,14 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             .e = .{ .Int = self.parseInt(i) },
             .l = self.loc(i),
         });
-    } // var
+    } // integer
+    else if (self.consume(.FRACTIONAL)) |f| {
+        return self.allocExpr(.{
+            .t = try self.definedType(.Float),
+            .e = .{ .Float = self.parseFloat(f) },
+            .l = self.loc(f),
+        });
+    } // fractional
     else if (self.consume(.STRING)) |s| {
         return try self.stringLiteral(s);
     } // string
@@ -2699,14 +2730,15 @@ fn allocExpr(self: *const Self, ev: AST.Expr) error{OutOfMemory}!*AST.Expr {
 
 fn getBinOp(tok: Token) ?AST.BinOp {
     return switch (tok.type) {
-        .PLUS => .Plus,
-        .MINUS => .Minus,
-        .TIMES => .Times,
-        .SLASH => .Divide,
-
         // TODO: I think in the future, match on TokenTypes and only after map them. This is very iffy bruh.
+        .PLUS => .{ .Plus = undefined },
+        .MINUS => .{ .Minus = undefined },
+        .TIMES => .{ .Times = undefined },
+        .SLASH => .{ .Divide = undefined },
+
         .EQEQ => .{ .Equals = undefined },
         .NOTEQ => .{ .NotEquals = undefined },
+
         .LT => .LessThan,
         .LTEQ => .LessEqualThan,
         .GT => .GreaterThan,
@@ -4351,6 +4383,11 @@ const Fold = *u32;
 fn parseInt(self: *const Self, tok: Token) i64 {
     std.debug.assert(tok.type == .INTEGER);
     return std.fmt.parseInt(i64, tok.literal(self.lexer.source), 10) catch unreachable;
+}
+
+fn parseFloat(self: *const Self, tok: Token) f64 {
+    std.debug.assert(tok.type == .FRACTIONAL);
+    return std.fmt.parseFloat(f64, tok.literal(self.lexer.source)) catch unreachable;
 }
 
 fn reportError(self: *const Self, ierr: Error) !void {

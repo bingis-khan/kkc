@@ -305,7 +305,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
             const data = con.type;
             switch (data.stuff) {
                 .cons => {
-                    try self.reportError(locs, .{ .TypeIsNotARecord = .{ .t = t, .field = mem } });
+                    try self.reportError(locs, .{ .TypeIsNotARecord = .{ .t = t, .field = mem, .loc = locs.?.l } });
                     return try self.fresh();
                 },
                 .recs => |recs| {

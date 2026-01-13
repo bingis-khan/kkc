@@ -1,37 +1,4 @@
 #!./zig-out/bin/kkc
 
-# # case 1: here, it can be simply TVar with v
-# TestThing
-# 	str Str
-
-# x = TestThing { str: s }  # add constraint here.
-
-# # case 2: here, it must be fresh and then later possibly generalized.
-# fn print (s Str)
-# 	pass
-
-# x = print(s)  # add constraint here
-
-# # case 3: `as` <class>
-# x = 'whatever' as Str  # add constraint at `as` (which means here)
-
-# this is the hardest. the problem is that *WHERE* should the instance be "checked" from?
-# clearly at variable instantiation. but, how would we know it much later when we `as` it?
-# OR MAYBE NOT!
-# constraints get added whenever a function is used.
-# whenever we exit a scope, we might have less instances.
-# but we should not care. We only care about the `as` place.
-# same with TestThing.
-
-
-# How are they distinct?
-#  classFun, to
-# How are they the same
-# from, default(!), instances
-# honestly, we might also store constraints in tvars and tyvars?
-
-fn print-two (s Str, s' Str)
-	s println()
-	s' println()
-
-print-two(420, '123123asd')
+x = 1. + 2.5
+x println()

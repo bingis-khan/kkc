@@ -14,6 +14,7 @@ pub const PremadeType = enum {
     Unit,
     Bool,
     Int,
+    Float,
     ConstStr,
     Char,
     Ptr,
@@ -34,6 +35,12 @@ pub const PremadeTypeName = TypeNameArray(PremadeType);
 
 pub const PremadeClass = enum {
     Eq,
+    // Ord,
+
+    Addition,
+    Subtraction,
+    Multiplication,
+    Division,
 
     FromChar,
     ListDecon,

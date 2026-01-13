@@ -25,6 +25,38 @@ use DynStr
 	substr
 
 
+##### F64 crap yooo
+
+F64StrIter
+	buf Array 32 Char  # seems to be max possible?
+	i Int
+
+inst IntoIter Float
+	into-iter (f)
+		buf =& @undefined as Array 32 Char
+		p = Mem.cast(buf) as Ptr Char
+		Cnile.snprintf1(p, 32, '%g', f)
+		return F64StrIter { buf: buf&, i: 0 }
+
+inst IntoIter F64StrIter
+	into-iter (self): self
+
+inst Iter F64StrIter
+	next (self) -> Maybe Char
+		buf = &self&.buf
+		c = buf Array.get(self&.i)
+		if c == '\0'
+			return None
+		self <&.i= self&.i + 1
+		return c Just()
+
+inst Str Float
+	print-str (self)
+		Cnile.printf1('%g', self)
+
+	chars (self): self into-iter()
+
+
 ##### Functions
 # BUG: does not work for nullchars (due to our string representation still lacking length)
 fn allocate-str (s, al) -> ConstStr

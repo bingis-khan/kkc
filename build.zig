@@ -22,6 +22,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const libffi = b.dependency("libffi", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addImport("ffi", libffi.module("ffi"));
+
+    if (b.systemIntegrationOption("ffi", .{})) {
+        exe.root_module.linkSystemLibrary("ffi", .{});
+    } else {
+        exe.root_module.linkLibrary(libffi.artifact("ffi"));
+    }
+
     // needed if I want libc shit to work.
     // If the library is not initialized, external libc functions wont work.
     // I need to find a better way - I want static executables.

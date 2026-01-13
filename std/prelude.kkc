@@ -16,6 +16,9 @@ Bool
 #[ctype 'int']
 Int
 
+# Is this too much voodoo? I'm basically only using it for Ints
+# class Int <= Eq, Ord, Addition, Subtraction, Multiplication, Division
+
 #[ctype 'float']
 Float
 
@@ -70,6 +73,21 @@ Ordering
 
 class Ord
 	cmp (_, _) -> Ordering
+
+
+# numeric ops yooo
+class Addition
+	op-add (_, _) -> _
+
+class Subtraction
+	op-sub (_, _) -> _
+
+class Multiplication
+	op-mul (_, _) -> _
+
+class Division
+	op-div (_, _) -> _
+
 
 # Index
 class Gettable
@@ -171,6 +189,36 @@ inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r
 
 
+# ops
+
+## Int
+
+inst Addition Int
+	op-add (l, r): @i64-add(l, r)
+
+inst Subtraction Int
+	op-sub (l, r): @i64-sub(l, r)
+
+inst Multiplication Int
+	op-mul (l, r): @i64-mul(l, r)
+
+inst Division Int
+	op-div (l, r): @i64-div(l, r)
+
+
+## Float
+
+inst Addition Float
+	op-add (l, r): @f64-add(l, r)
+
+inst Subtraction Float
+	op-sub (l, r): @f64-sub(l, r)
+
+inst Multiplication Float
+	op-mul (l, r): @f64-mul(l, r)
+
+inst Division Float
+	op-div (l, r): @f64-div(l, r)
 
 
 inst ListLike Array

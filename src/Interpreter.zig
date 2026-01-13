@@ -1,12 +1,15 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const ffi = @import("ffi");
 const ast = @import("ast.zig");
 const Prelude = @import("Prelude.zig");
 const common = @import("common.zig");
 const Str = common.Str;
-const endianness = @import("builtin").target.cpu.arch.endian();
+const endianness = builtin.target.cpu.arch.endian();
 const TypeContext = @import("TypeContext.zig");
 const Args = @import("Args.zig");
 const errr = @import("error.zig");
+const stdlib = @cImport(@cInclude("stdlib.h"));
 
 const Self = @This();
 
@@ -494,6 +497,30 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .errno => {
                     return self.intValue(std.c._errno().*);
                 },
+                .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => {
+                    const l = (try self.expr(intr.args[0])).ref.int;
+                    const r = (try self.expr(intr.args[1])).ref.int;
+
+                    return try self.intValue(switch (intr.intr.ty) {
+                        .@"i64-add" => l + r,
+                        .@"i64-sub" => l - r,
+                        .@"i64-mul" => l * r,
+                        .@"i64-div" => @divTrunc(l, r),
+                        else => unreachable,
+                    });
+                },
+                .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => {
+                    const l = (try self.expr(intr.args[0])).ref.float;
+                    const r = (try self.expr(intr.args[1])).ref.float;
+
+                    return try self.floatValue(switch (intr.intr.ty) {
+                        .@"f64-add" => l + r,
+                        .@"f64-sub" => l - r,
+                        .@"f64-mul" => l * r,
+                        .@"f64-div" => l / r,
+                        else => unreachable,
+                    });
+                },
             }
         },
         .Char => |c| {
@@ -501,6 +528,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         },
         .Int => |x| {
             return self.intValue(x);
+        },
+        .Float => |x| {
+            return self.floatValue(x);
         },
         .BinOp => |op| {
             // first, short circuiting ops.
@@ -548,10 +578,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     return switch (op.op) {
                         // .Equals => try self.boolValue(l.ref.int == r.ref.int), // TEMP!!!
 
-                        .Plus => try self.intValue(l.ref.int + r.ref.int),
-                        .Minus => try self.intValue(l.ref.int - r.ref.int),
-                        .Times => try self.intValue(l.ref.int * r.ref.int),
-                        .Divide => try self.intValue(@divTrunc(l.ref.int, r.ref.int)),
+                        .Plus, .Minus, .Times, .Divide => |ref| {
+                            const instFun = try self.getAndUnboxInstFunRef(ref);
+
+                            var args = [_]ValueMeta{ l, r };
+                            return try self.function(instFun.fun, &args);
+                        },
 
                         .LessThan => try self.boolValue(l.ref.int < r.ref.int),
                         .LessEqualThan => try self.boolValue(l.ref.int <= r.ref.int),
@@ -625,22 +657,45 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     //   We can have a function type for each case, then beat it for it to make sense for our types.
                     //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
                     //   Nah, I should just use inline assembly in this case.
+                    // EDIT: OR LIBFFI.
                     const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(funPtr.extptr);
 
-                    const MaxExtArgs = 8;
-                    if (c.args.len > MaxExtArgs) unreachable;
+                    // const MaxExtArgs = 8;
+                    // if (c.args.len > MaxExtArgs) unreachable;
 
-                    var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
-                    inline for (0..MaxExtArgs) |i| {
-                        if (i < c.args.len) {
-                            const av = try self.expr(c.args[i]);
-                            interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(av.ref)))).*;
-                        }
+                    // var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
+                    // inline for (0..MaxExtArgs) |i| {
+                    //     if (i < c.args.len) {
+                    //         const av = try self.expr(c.args[i]);
+                    //         interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(av.ref)))).*;
+                    //     }
+                    // }
+
+                    // const ret = @call(.auto, castFun, interopArgs);
+
+                    // return try self.intValue(ret);
+                    const funTys = self.typeContext.getType(c.callee.t).Fun;
+
+                    var func: ffi.Function = undefined;
+                    const paramFFITypes = try self.arena.alloc(*ffi.Type, funTys.args.len);
+                    // defer self.arena.free(paramFFITypes); // lifetime signature
+
+                    const args = try self.arena.alloc(*anyopaque, funTys.args.len);
+                    // defer self.arena.free(args); // lifetime signature
+
+                    for (args, paramFFITypes, c.args) |*arg, *param, exp| {
+                        const v = try self.expr(exp);
+                        arg.* = @ptrCast(v.ref);
+                        param.* = self.sizeOfFFI(exp.t);
                     }
 
-                    const ret = @call(.auto, castFun, interopArgs);
+                    try func.prepare(ffi.Abi.default, @intCast(args.len), paramFFITypes.ptr, self.sizeOfFFI(funTys.ret));
 
-                    return try self.intValue(ret);
+                    const result = try self.allocSpaceForVariable(self.sizeOf(funTys.ret).size);
+
+                    func.call(castFun, args.ptr, result.ref);
+
+                    return result;
                 },
 
                 .LocalFunction => {
@@ -1014,6 +1069,7 @@ fn copyValueMeta(self: *Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
 // note about alignments: in C structs the alignments are variable (because we might represent different structs), so everything must be align(1)
 const RawValue = extern union {
     int: i64,
+    float: f64,
     char: u8,
     extptr: *anyopaque,
     ptr: *align(1) RawValue,
@@ -1109,8 +1165,18 @@ fn copyValue(self: *Self, vt: RawValueRef, t: ast.Type) !RawValueRef {
     return vptr;
 }
 
+fn allocSpaceForVariable(self: *Self, size: usize) !ValueMeta {
+    const memptr: []u8 = try self.arena.alloc(u8, size);
+    const vptr: RawValueRef = @alignCast(@ptrCast(memptr.ptr));
+    return valFromRef(vptr);
+}
+
 fn intValue(self: *const Self, i: i64) !ValueMeta {
     return self.val(.{ .int = i }, @sizeOf(@TypeOf(i)));
+}
+
+fn floatValue(self: *const Self, f: f64) !ValueMeta {
+    return self.val(.{ .float = f }, @sizeOf(@TypeOf(f)));
 }
 
 fn boolValue(self: *const Self, b: bool) !ValueMeta {
@@ -1196,6 +1262,61 @@ fn calculatePadding(cur: usize, alignment: usize) usize {
     const padding = alignment - (cur % alignment);
     if (padding == alignment) return 0;
     return padding;
+}
+
+fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
+    switch (self.getType(t)) {
+        .Con => |c| {
+            if (c.type.eq(self.prelude.defined(.Ptr))) {
+                return ffi.types.pointer;
+            }
+
+            if (c.type.eq(self.prelude.defined(.Int))) {
+                return ffi.types.sint64;
+            }
+
+            if (c.type.eq(self.prelude.defined(.Float))) {
+                return ffi.types.double;
+            }
+
+            if (c.type.eq(self.prelude.defined(.ConstStr))) {
+                return ffi.types.pointer;
+            }
+
+            if (c.type.eq(self.prelude.defined(.Char))) {
+                return ffi.types.pointer;
+            }
+
+            if (ast.Annotation.find(c.type.annotations, "ctype")) |ann| {
+                // bruh. maybe I should just put void in prelude?
+                if (common.streq(ann.params[0], "void")) {
+                    return ffi.types.void;
+                }
+            }
+
+            // TEMP TEMP TEMP
+            {
+                if (common.streq(c.type.name, "I32")) {
+                    return ffi.types.sint32;
+                }
+
+                if (common.streq(c.type.name, "I64")) {
+                    return ffi.types.sint64;
+                }
+
+                if (common.streq(c.type.name, "U32")) {
+                    return ffi.types.uint32;
+                }
+
+                if (common.streq(c.type.name, "U64")) {
+                    return ffi.types.uint64;
+                }
+            }
+
+            @panic(c.type.name);
+        },
+        else => unreachable,
+    }
 }
 
 // calculates total size of the record (including tag)
@@ -1535,7 +1656,7 @@ const RealErr = error{
     OutOfMemory,
 
     Bruh,
-} || std.DynLib.Error;
+} || std.DynLib.Error || ffi.Error;
 const Runtime = error{
     Return,
     Break, // unused right now, just here to show ya.

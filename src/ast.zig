@@ -503,6 +503,7 @@ pub const Expr = struct {
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: i64, // obv temporary.
+        Float: f64,
         Str: Str,
         Char: u8, // later RUNE!
         NamedRecord: struct {
@@ -606,6 +607,7 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i}),
+            .Float => |f| c.sp("{}", .{f}),
             .Char => |ch| c.sp("c'{}'", .{ch}),
             .Str => |s| {
                 std.debug.lockStdErr();
@@ -691,10 +693,10 @@ pub const UnOp = union(enum) {
 };
 
 pub const BinOp = union(enum) {
-    Plus,
-    Minus,
-    Times,
-    Divide,
+    Plus: InstFunInst,
+    Minus: InstFunInst,
+    Times: InstFunInst,
+    Divide: InstFunInst,
 
     Equals: InstFunInst,
     NotEquals: InstFunInst,
