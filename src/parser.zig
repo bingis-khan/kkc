@@ -1548,8 +1548,15 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
     var optok = self.peek();
 
     // FUNNY! Handle multiline lambdas.
-    if (optok.type == .INDENT and self.mode == .MultilineLambda) {
-        try self.multilineLambda(self.loc(optok));
+    if (optok.type == .INDENT and self.mode == .Multiline) {
+        switch (self.mode.Multiline.this) {
+            .Lambda => {
+                try self.multilineLambda(self.loc(optok));
+            },
+            .Case => |case| {
+                try self.caseExpr(self.mode.Multiline.prev, case.caseExpr, self.loc(optok));
+            },
+        }
         optok = self.peek();
     }
 
@@ -1911,19 +1918,21 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
             const oldMode = switch (self.mode) {
                 .Simple => |simp| simp,
-                .MultilineLambda => |ml| b: {
+                .Multiline => |ml| b: {
                     // This means we are trying to define two multiline lambdas on the same line. This is BRUH!
                     try self.reportError(.{
-                        .TriedDefiningSecondMultilineLambdaOnSameLine = .{ .loc = l },
+                        .TriedDefiningSecondMultilineOnSameLine = .{ .loc = l },
                     });
 
                     break :b ml.prev;
                 },
             };
-            self.mode = .{ .MultilineLambda = .{
+            self.mode = .{ .Multiline = .{
                 .prev = oldMode,
-                .lamExpr = lamExpr,
-                .scope = lamscopeSave,
+                .this = .{ .Lambda = .{
+                    .lamExpr = lamExpr,
+                    .scope = lamscopeSave,
+                } },
             } };
 
             return lamExpr;
@@ -1986,6 +1995,36 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             },
         });
     } // if expr
+    else if (self.consume(.CASE)) |casetok| {
+        const switchOn = try self.expression();
+        const l = self.loc(casetok).between(switchOn.l);
+        const caseexpr = try self.allocExpr(.{
+            .t = try self.typeContext.fresh(),
+            .e = .{ .CaseExpr = .{
+                .switchOn = switchOn,
+                .cases = &.{},
+            } },
+            .l = l,
+        });
+
+        const oldMode = switch (self.mode) {
+            .Simple => |simp| simp,
+            .Multiline => |ml| b: {
+                // This means we are trying to define two multiline lambdas on the same line. This is BRUH!
+                try self.reportError(.{
+                    .TriedDefiningSecondMultilineOnSameLine = .{ .loc = l },
+                });
+
+                break :b ml.prev;
+            },
+        };
+        self.mode = .{ .Multiline = .{
+            .prev = oldMode,
+            .this = .{ .Case = .{ .caseExpr = caseexpr } },
+        } };
+
+        return caseexpr;
+    } // case expr
     else if (self.consume(.IDENTIFIER)) |v| {
         const dv = try self.instantiateVar(&.{}, v);
         return self.allocExpr(.{
@@ -2226,12 +2265,12 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
 // isolate this in a function, because its long AND it shares stuff with the normal function()
 fn multilineLambda(self: *Self, tempLoc: Loc) !void {
-    const lamMode = self.mode.MultilineLambda;
-    self.scope.restoreScope(lamMode.scope);
+    const lamMode = self.mode.Multiline;
+    self.scope.restoreScope(lamMode.this.Lambda.scope);
 
     // CRAP CODE!!!
     const ret = try self.typeContext.fresh();
-    try self.typeContext.unify(self.typeContext.getType(lamMode.lamExpr.t).Fun.ret, ret, null);
+    try self.typeContext.unify(self.typeContext.getType(lamMode.this.Lambda.lamExpr.t).Fun.ret, ret, null);
     const oldReturnType = self.returnType;
     defer self.returnType = oldReturnType;
     self.returnType = ret;
@@ -2252,10 +2291,46 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
 
     try self.finishBodyAndInferReturnType(&stmts, bod.returnStatus, tempLoc); // TEMP. I should return the location of the last statement (but I don''t have locations in statements yet.')
 
-    lamMode.lamExpr.e.Lam.body.Body = stmts.items;
-    lamMode.lamExpr.e.Lam.env = lamMode.scope.env.?.items;
+    lamMode.this.Lambda.lamExpr.e.Lam.body.Body = stmts.items;
+    lamMode.this.Lambda.lamExpr.e.Lam.env = lamMode.this.Lambda.scope.env.?.items;
 
     self.mode = .{ .Simple = lamMode.prev };
+}
+
+// NOTE: this is seriously unfinished!
+fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc: Loc) !void {
+    _ = tempLoc;
+    // COPYPASTA
+    self.mode = .{ .Simple = .Normal };
+    const switchOn = caseexpr.e.CaseExpr.switchOn;
+    const exprRetTy = caseexpr.t;
+    // var returnStatus = ReturnStatus.Returned; // mempty-like
+    var cases = std.ArrayList(AST.Expr.ExprCase).init(self.arena);
+    try self.devour(.INDENT);
+    self.scope.beginScope(null);
+    while (!self.check(.DEDENT)) {
+        const decon = try self.deconstruction();
+        try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
+
+        if (self.check(.COLON)) {
+            const exp = try self.expression();
+            try self.typeContext.unify(exprRetTy, exp.t, &.{ .l = exp.l });
+            try cases.append(.{ .Expr = .{ .decon = decon, .expr = exp } });
+        } else {
+            const bod = try self.body();
+            try cases.append(.{ .Case = .{ .decon = decon, .body = bod.stmts.items } });
+            // returnStatus = returnStatus.alternative(bod.returnStatus);
+        }
+    }
+    self.scope.endScope();
+
+    // self.returned = returnStatus;
+
+    // check here for exhaustiveness. If not exhaustive, add .Nah OR I disallow non-exhaustive cases.
+
+    caseexpr.e.CaseExpr.cases = cases.items;
+
+    self.mode = .{ .Simple = prev };
 }
 
 fn qualified(self: *Self, first: Token) !*AST.Expr {
@@ -4315,7 +4390,7 @@ fn peek(self: *Self) Token {
                 self.skip();
             },
         },
-        .MultilineLambda => {},
+        .Multiline => {},
     }
     return self.currentToken;
 }
@@ -4338,7 +4413,7 @@ fn consume(self: *Self, tt: TokenType) ?Token {
             },
         },
 
-        .MultilineLambda => {},
+        .Multiline => {},
     }
 
     if (tok.type == tt) {
@@ -4361,10 +4436,18 @@ const ParsingMode = union(enum) {
         CountIndent: u32,
     };
     Simple: Simple,
-    MultilineLambda: struct {
+    Multiline: struct {
         prev: Simple,
-        lamExpr: *AST.Expr,
-        scope: CurrentScope,
+        this: union(enum) {
+            Lambda: struct {
+                lamExpr: *AST.Expr, // TODO: fix iffy typing.
+                scope: CurrentScope,
+            },
+
+            Case: struct {
+                caseExpr: *AST.Expr, // TODO: fix iffy typing.
+            },
+        },
     }, // <- old parsing mode. we can't have two multi line lambdas on the same line.
 };
 

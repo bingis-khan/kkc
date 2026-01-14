@@ -917,6 +917,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 return try self.expr(ifelse.ifFalse);
             }
         },
+
+        .CaseExpr => unreachable,
     }
 
     unreachable;

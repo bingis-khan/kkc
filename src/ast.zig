@@ -510,6 +510,10 @@ pub const Expr = struct {
             ifOthers: []Elif,
             ifFalse: Rec,
         },
+        CaseExpr: struct {
+            switchOn: Rec,
+            cases: []ExprCase,
+        },
         Str: Str,
         Char: u8, // later RUNE!
         NamedRecord: struct {
@@ -526,6 +530,26 @@ pub const Expr = struct {
         Lam: Lam,
         StaticArray: []Rec,
     },
+
+    pub const ExprCase = union(enum) {
+        Case: Case,
+        Expr: struct { decon: *Decon, expr: Rec },
+
+        pub fn print(self: @This(), c: Ctx) void {
+            switch (self) {
+                .Case => |case| {
+                    case.decon.print(c);
+                    c.s("{\n");
+                    printBody(case.body, c);
+                    c.s("}\n");
+                },
+
+                .Expr => |exp| {
+                    c.print(.{ exp.decon, ": ", exp.expr, "\n" });
+                },
+            }
+        }
+    };
 
     pub const Elif = struct {
         cond: Rec,
@@ -693,6 +717,18 @@ pub const Expr = struct {
                     c.print(.{ " elif ", elif.cond, ": ", elif.then });
                 }
                 c.print(.{ " else: ", ifelse.ifFalse });
+            },
+            .CaseExpr => |caseexpr| {
+                c.print(.{ "case ", caseexpr.switchOn, "{\n" });
+
+                var ic = c;
+                ic.indent +%= 1;
+
+                for (caseexpr.cases) |case| {
+                    case.print(ic);
+                }
+
+                c.print("}");
             },
         }
         c.s(" :: ");

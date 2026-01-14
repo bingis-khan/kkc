@@ -3,7 +3,7 @@
 - I/UXX integers + appropriate typeclasses
 - type synonyms (paramterized type synonyms!)
 - [V] expression if
-- expression case
+- [.] expression case
 	- in case of case, it doesn't have to fit into every expression, just after assignment or mutation, but not in `if` statement for example
 - recursive datatypes + checking with the help of Ptr.
 - (fast!) occurs check

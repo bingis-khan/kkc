@@ -176,7 +176,7 @@ pub const Error = union(enum) {
         field: Str,
     },
 
-    TriedDefiningSecondMultilineLambdaOnSameLine: struct {
+    TriedDefiningSecondMultilineOnSameLine: struct {
         // previous: Loc,
         loc: Loc,
     },
@@ -335,8 +335,8 @@ pub const Error = union(enum) {
             .DuplicateField => |e| c.print(.{ "duplicate field '", e.field, "'\n" }),
             .UndefinedClass => |e| c.print(.{ "undefined class ", e.className, "\n" }),
 
-            .TriedDefiningSecondMultilineLambdaOnSameLine => |e| {
-                err.atLocation(e.loc, .{ .label = .{"bruh, you defined a second multiline lambda here"} });
+            .TriedDefiningSecondMultilineOnSameLine => |e| {
+                err.atLocation(e.loc, .{ .label = .{"bruh, you defined a second multiline thing here"} });
             },
         }
     }
