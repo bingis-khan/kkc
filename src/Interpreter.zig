@@ -497,6 +497,17 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .errno => {
                     return self.intValue(std.c._errno().*);
                 },
+
+                .@"i64-f64" => {
+                    const i = (try self.expr(intr.args[0])).ref.int;
+                    return try self.floatValue(@floatFromInt(i));
+                },
+
+                .@"f64-i64-floor" => {
+                    const i = (try self.expr(intr.args[0])).ref.float;
+                    return try self.intValue(@intFromFloat(i));
+                },
+
                 .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => {
                     const l = (try self.expr(intr.args[0])).ref.int;
                     const r = (try self.expr(intr.args[1])).ref.int;
@@ -891,6 +902,20 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
 
             const vptr: RawValueRef = @alignCast(@ptrCast(array.ptr));
             return valFromRef(vptr);
+        },
+
+        .IfElse => |ifelse| {
+            const cond = try self.expr(ifelse.cond);
+            if (isTrue(cond)) {
+                return try self.expr(ifelse.ifTrue);
+            } else {
+                for (ifelse.ifOthers) |elif| {
+                    if (isTrue(try self.expr(elif.cond))) {
+                        return try self.expr(elif.then);
+                    }
+                }
+                return try self.expr(ifelse.ifFalse);
+            }
         },
     }
 

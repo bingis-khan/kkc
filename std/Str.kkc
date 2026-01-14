@@ -11,6 +11,7 @@ use Iter
 	Drop
 	Take
 	TakeWhile
+	drop
 use Mem
 use Math
 
@@ -282,6 +283,17 @@ fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this i
 fn streq(l, r): eq(l, r)
 fn char-int(c Char) -> Int:
 	Mem.cast-on-zeroed(c)
+fn print-as-list(it)
+	print-str('[')
+	case it head()
+		None
+			pass
+		Just(x)
+			print-str(x)
+
+	for x in it drop(1)
+		', \(x)' print-str()
+	print-str(']')
 
 ###### Other Instances #####
 

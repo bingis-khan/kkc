@@ -188,6 +188,14 @@ inst Eq Maybe
 inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r
 
+inst Ord Int
+	cmp (l, r)
+		if l < r
+			return LT
+		elif l > r
+			return GT
+		else
+			return EQ
 
 # ops
 

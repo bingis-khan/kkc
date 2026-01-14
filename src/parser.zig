@@ -1828,7 +1828,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     // negation (-)
     const beforeNegPrec = comptime binOpPrecedence(.{ .Divide = undefined });
     if (minPrec <= beforeNegPrec) if (self.consume(.MINUS)) |mintok| { // undefined here, because we just want to check binop precedence. note, that we still want to rewrite it, because we confuse both.
-        const n = try self.precedenceExpression(beforeNegPrec + 1); // higher than and
+        const n = try self.precedenceExpression(beforeNegPrec + 1); // higher than div
         const intTy = try self.definedType(.Int);
         try self.typeContext.unify(n.t, intTy, &.{ .l = n.l });
         return self.allocExpr(.{
@@ -1953,6 +1953,39 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             });
         }
     } // lambda
+    else if (self.consume(.IF)) |iftok| {
+        const condition = try self.expression();
+        try self.typeContext.unify(condition.t, try self.definedType(.Bool), &.{ .l = condition.l });
+        try self.devour(.COLON);
+        const ifTrue = try self.expression();
+
+        var elifs = std.ArrayList(AST.Expr.Elif).init(self.arena);
+        while (self.check(.ELIF)) {
+            const elifCond = try self.expression();
+            try self.typeContext.unify(elifCond.t, try self.definedType(.Bool), &.{ .l = elifCond.l });
+            try self.devour(.COLON);
+            const elifThen = try self.expression();
+            try self.typeContext.unify(elifThen.t, ifTrue.t, &.{ .l = elifThen.l, .r = ifTrue.l });
+
+            try elifs.append(.{ .cond = elifCond, .then = elifThen });
+        }
+        try self.devour(.ELSE);
+        // try self.devour(.COLON);  // DESIGN: should this be here???
+        const ifFalse = try self.expression();
+        try self.typeContext.unify(ifTrue.t, ifFalse.t, &.{ .l = ifTrue.l, .r = ifFalse.l });
+        return self.allocExpr(.{
+            .t = ifTrue.t,
+            .l = self.loc(iftok).between(ifFalse.l),
+            .e = .{
+                .IfElse = .{
+                    .cond = condition,
+                    .ifTrue = ifTrue,
+                    .ifOthers = elifs.items,
+                    .ifFalse = ifFalse,
+                },
+            },
+        });
+    } // if expr
     else if (self.consume(.IDENTIFIER)) |v| {
         const dv = try self.instantiateVar(&.{}, v);
         return self.allocExpr(.{
@@ -2013,6 +2046,15 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 },
 
                 .errno => try self.definedType(.Int),
+                .@"i64-f64" => b: {
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.Int), &.{ .l = l });
+                    break :b try self.definedType(.Float);
+                },
+                .@"f64-i64-floor" => b: {
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.Float), &.{ .l = l });
+                    break :b try self.definedType(.Int);
+                },
+
                 .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => b: {
                     const intTy = try self.definedType(.Int);
                     try self.typeContext.unify(args.items[0].t, intTy, &.{ .l = args.items[0].l });

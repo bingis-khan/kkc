@@ -33,8 +33,10 @@ use Iter
 	head
 	null
 	sum
+	product
 	flatten
 	cartesian
+	unordered-pairs
 
 	drop'
 	drop-while'

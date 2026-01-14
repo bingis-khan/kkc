@@ -14,11 +14,8 @@ pub const Type: type = addNumericEnums(enum {
     memeq,
     errno,
 
-    // later generate them at compile time automatically! (for more types)
-    // @"i64-add",
-    // @"i64-sub",
-    // @"i64-mul",
-    // @"i64-div",
+    @"i64-f64",
+    @"f64-i64-floor",
 });
 
 const List = [_]Self{
@@ -30,12 +27,8 @@ const List = [_]Self{
     .{ .ty = .argc, .args = 0 },
     .{ .ty = .memeq, .args = 2 },
     .{ .ty = .errno, .args = 0 },
-
-    // .{ .ty = .@"i64-add", .args = 2 },
-    // .{ .ty = .@"i64-sub", .args = 2 },
-    // .{ .ty = .@"i64-mul", .args = 2 },
-    // .{ .ty = .@"i64-div", .args = 2 },
-    // // .{ .ty = .inteq, .args = 2 },
+    .{ .ty = .@"i64-f64", .args = 1 },
+    .{ .ty = .@"f64-i64-floor", .args = 1 },
 } ++ addNumericDecls();
 
 const Self = @This();

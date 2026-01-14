@@ -41,6 +41,33 @@ fn map (iterable, fun)
 	return Map(it, fun)
 
 
+# MAPPPP
+MapMaybe it from to
+	MapMaybe it (from -> Maybe to)
+
+inst IntoIter MapMaybe
+	into-iter (self MapMaybe it from to) -> MapMaybe it from to
+		return self
+
+inst Iter MapMaybe
+	next (Ptr(MapMaybe(it, fun)))
+		while True
+			case next(&it)
+				None
+					return None
+				Just(x)
+					case fun(x)
+						None
+							pass
+						Just(xx)
+							return Just(xx)
+
+
+fn map-maybe (iterable, fun)
+	it = into-iter(iterable)
+	return MapMaybe(it, fun)
+
+
 ##### FILTERRRRRR
 Filter it item
 	og it
@@ -280,6 +307,10 @@ fn drop-while (it, pred):
 fn break' (it, pred):
 	Tuple2(it take-while(pred), it drop-while(pred))
 
+fn unordered-pairs(it): it
+	zip(from(1))
+	map(fn Tuple2(e, d): it drop(d) map(fn e': Tuple2(e, e')))
+	flatten()
 
 ### append
 
@@ -342,6 +373,9 @@ fn count(it it) -> Int <= IntoIter it:
 
 fn sum(it):
 	it reduce(0, fn (v, s): v + s)
+
+fn product(it):
+	it reduce(1, fn (v, s): v * s)
 
 # design: maybe make them argument-less and just map() before using.
 # todo: eager exit
@@ -449,3 +483,7 @@ fn take-while'(it iter, pred) <= Iter iter, IntoIter iter
 # 	tit = (&clone-it) take-while(pred)
 # 	drop-num = tit count()
 # 	dit = it drop'()
+
+
+#######
+

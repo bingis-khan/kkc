@@ -5,26 +5,37 @@ use Iter
 	into-iter
 	Iter
 	next
+	head
+	drop
+	map
+	reduce
+	zip
+use Str
+	Str
+	print-str
+	chars
+use Error
+	or-fail
 
 # COLUMN MAJOR
-# later specify type? like: `Matrix ^col ^row a`.
 
-Vector ^e
-	backing Array e Int
+Vector ^e a
+	backing Array e a
 
 inst ListLike Vector
 	from-listlike (arr):
 		Vector { backing: arr }
 
 
-Matrix ^col ^row
-	backing Array col (Array row Int)
+Matrix ^col ^row a
+	backing Array col (SmolArray row a)
 
-fn transpose (m Matrix c r) -> Matrix r c
+fn transpose (m Matrix c r a) -> Matrix r c a
 	return Error.todo()
 
-fn mult (m Matrix n o, m' Matrix o p) -> Matrix n p
+fn mult (m Matrix n o a, m' Matrix o p a) -> Matrix n p a
 	return Error.todo()
+
 
 inst ListLike Matrix
 	from-listlike (arr):
@@ -34,8 +45,8 @@ inst ListLike Matrix
 # Why have an Iter instance for Vector, but not for Array?
 # Intent. Most vectors will probably have a size of 3, which is small enough to be passed by value, while Arrays are more used as buffers and can be big (IntoIter takes full values bruv).
 # Unless we change into-iter to take in pointers, we have to do it like this bruv.
-VectorIter ^count
-	backin' Vector count
+VectorIter ^count a
+	backin' Vector count a
 	cur Int
 
 inst IntoIter Vector
@@ -47,11 +58,27 @@ inst IntoIter VectorIter
 
 
 inst Iter VectorIter
-	next (self Ptr (VectorIter count))
+	next (self Ptr (VectorIter count a))
 		if self&.cur >= count
 			return None
 
 		e = (&self&.backin'.backing) Array.get(self&.cur)
 		self <&.cur= self&.cur + 1
 		return Just(e)
+
+
+inst Str Vector
+	print-str (self): self
+		Str.print-as-list()
+
+	chars (self): Error.todo()
+
+
+
+fn distance-to (v Vector a Float, v' Vector a Float):
+	v zip (v')
+		map(fn Tuple2(l, r): l - r)
+		map(fn x: x * x)
+		reduce(0., fn (v, s): v + s)
+		Math.sqrt()
 

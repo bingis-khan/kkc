@@ -2,24 +2,25 @@
 
 - I/UXX integers + appropriate typeclasses
 - type synonyms (paramterized type synonyms!)
-- [V] array literals
-	- [V] FromList typeclass.
-	- add nice errors (currently unreachable + "TODO: errors")
-	- smol cleanup (decide if I want to factor out the array allocation / sizing code)
-- expression if and expression case
+- [V] expression if
+- expression case
 	- in case of case, it doesn't have to fit into every expression, just after assignment or mutation, but not in `if` statement for example
-- [V] put typeclasses in place of types and it just works
-	- but we generate a lot of slop constraints then. I think we shouldn't do that + it unnecessarily slows down the compiler when the user defines types for a function.
-	- maybe make a special place for them? (see typechecker architecture review)
 - recursive datatypes + checking with the help of Ptr.
 - (fast!) occurs check
 - [?] recursive functions!!!
 	- [ ] basics work, but there are more complicated versions.
 - [?] chars
 	- not fully - type defaulting is kinda spaghetti (but behavior seems to be correct).
+- [V] array literals
+	- [V] FromList typeclass.
+	- add nice errors (currently unreachable + "TODO: errors")
+	- smol cleanup (decide if I want to factor out the array allocation / sizing code)
 - [.] numbers in type parameters
 	- crappy code - separate tvars into tvars and tnums
 	- [V] parse ^identifier together: `^  identifier` would become invalid.
+- [V] put typeclasses in place of types and it just works
+	- but we generate a lot of slop constraints then. I think we shouldn't do that + it unnecessarily slows down the compiler when the user defines types for a function.
+	- maybe make a special place for them? (see typechecker architecture review)
 - [ ] review the architecture of the type checker. (connected with "numers in type parameters")
 	- rethink "slop" constraints? We can split them into actionable and non-actionable constraints. One other non-actionable constraint is checking if integer fits in the inferred range! (this constraint must also be propagated further.)
 	- Maybe it would be better if constraints were associated with tyvars (like fields)?

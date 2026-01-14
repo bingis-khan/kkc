@@ -66,6 +66,15 @@ pub const Error = union(enum) {
         rpos: ?Loc,
     },
 
+    MismatchingNumTypes: struct {
+        l: ast.TypeOrNum.TyNum,
+        lfull: ast.Type,
+        lpos: Loc,
+        r: ast.TypeOrNum.TyNum,
+        rfull: ?ast.Type,
+        rpos: ?Loc,
+    },
+
     MismatchingEnv: struct {
         le: ast.Env,
         lpos: Loc,
@@ -230,6 +239,23 @@ pub const Error = union(enum) {
                         ", but got ",
                         e.rt,
                         ast.Ctx.onlyIf(e.rfull != null and !e.rt.eq(e.rfull.?), .{ " (", e.rfull.?, ")" }),
+                    } });
+                }
+            },
+            .MismatchingNumTypes => |e| {
+                if (e.rpos) |rpos| {
+                    err.atLocation(e.lpos, .{ .label = .{ "expected num type ", e.l, " (", e.lfull, ")" } });
+                    err.atLocation(rpos, .{ .label = .{ "but got ", e.r, " (", e.rfull.?, ")" } });
+                } else {
+                    err.atLocation(e.lpos, .{ .label = .{
+                        "expected num type ",
+                        e.l,
+                        " (",
+                        e.lfull,
+                        ")",
+                        ", but got ",
+                        e.r,
+                        ast.Ctx.onlyIf(e.rfull != null, .{ " (", e.rfull.?, ")" }),
                     } });
                 }
             },

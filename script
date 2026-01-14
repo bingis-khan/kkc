@@ -1,4 +1,5 @@
 #!./zig-out/bin/kkc
 
-x = 1. + 2.5
+x = if False: 1 elif False: 2 else 3
+
 x println()

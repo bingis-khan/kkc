@@ -407,8 +407,6 @@ pub fn unifyParamsWithTNums(self: *Self, lps: []ast.TypeOrNum, rps: []ast.TypeOr
 }
 
 pub fn unifyNum(self: *Self, l: NumRef, r: NumRef, locs: Locs, full: Full) !void {
-    _ = locs;
-    _ = full;
     if (l.id == r.id) return;
 
     const ln = self.getNum(l);
@@ -429,7 +427,14 @@ pub fn unifyNum(self: *Self, l: NumRef, r: NumRef, locs: Locs, full: Full) !void
                 }
             },
             .TNum => {
-                unreachable; // TODO: error
+                try self.reportError(locs, .{ .MismatchingNumTypes = .{
+                    .l = ln,
+                    .lfull = full.lfull,
+                    .lpos = locs.?.l,
+                    .r = rn,
+                    .rfull = full.rfull,
+                    .rpos = locs.?.r,
+                } });
             },
         },
         .TNum => |lt| {

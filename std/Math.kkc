@@ -26,6 +26,10 @@ fn max(l, r)
 	else
 		return r
 
+fn sqrt(f Float):
+	Cnile.sqrt(f)  # geeeeeeg
+
+fn floor(f Float): @f64-i64-floor(f)
 
 # TODO: check actual digit sizes.
 fn from-octal(arr): arr

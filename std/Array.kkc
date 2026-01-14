@@ -5,6 +5,9 @@ use Iter
 	next
 use Slice
 	Slice
+use Str
+	print-str
+	chars
 
 fn get-ptr (arr Ptr (Array count a), i Int) -> Ptr a
 	if i < 0 or i >= count
@@ -48,3 +51,4 @@ inst Iter SmolArrayIter
 		e = (&self&.backing.arr) get(self&.cur)
 		self <&.cur= self&.cur + 1
 		return Just(e)
+

@@ -504,6 +504,12 @@ pub const Expr = struct {
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: i64, // obv temporary.
         Float: f64,
+        IfElse: struct {
+            cond: Rec,
+            ifTrue: Rec,
+            ifOthers: []Elif,
+            ifFalse: Rec,
+        },
         Str: Str,
         Char: u8, // later RUNE!
         NamedRecord: struct {
@@ -520,6 +526,11 @@ pub const Expr = struct {
         Lam: Lam,
         StaticArray: []Rec,
     },
+
+    pub const Elif = struct {
+        cond: Rec,
+        then: Rec,
+    };
 
     pub const Lam = struct {
         params: []*Decon,
@@ -675,6 +686,13 @@ pub const Expr = struct {
             },
             .StaticArray => |arr| {
                 c.encloseSepBy(arr, ", ", "[", "]");
+            },
+            .IfElse => |ifelse| {
+                c.print(.{ "if ", ifelse.cond, ": ", ifelse.ifTrue });
+                for (ifelse.ifOthers) |elif| {
+                    c.print(.{ " elif ", elif.cond, ": ", elif.then });
+                }
+                c.print(.{ " else: ", ifelse.ifFalse });
             },
         }
         c.s(" :: ");
@@ -1014,7 +1032,7 @@ pub const TNum = struct {
     name: Str,
     binding: ?Binding,
 
-    fn print(self: @This(), c: Ctx) void {
+    pub fn print(self: @This(), c: Ctx) void {
         c.print(.{ "^", self.name, "#", self.uid });
     }
 
@@ -1115,6 +1133,14 @@ pub const TypeOrNum = union(enum) {
         TNum: TNum,
         Literal: i64,
         Unknown,
+
+        pub fn print(self: @This(), c: Ctx) void {
+            switch (self) {
+                .TNum => |tnum| tnum.print(c),
+                .Literal => |lit| c.print(lit),
+                .Unknown => c.print("#?"),
+            }
+        }
     };
 
     pub fn print(self: @This(), c: Ctx) void {

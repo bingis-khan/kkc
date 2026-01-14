@@ -125,20 +125,10 @@ fn copy-to (src Slice a, dest Slice a) -> Unit
 
 
 inst Str Slice
-	print-str (self)
-		if self.count == 0
-			print-str('[]')
-		elif self.count == 1
-			one-elem = get(self, 0)
-			print-str('[\(one-elem)]')
-		else
-			print-str('[')
-			print-str(get(self, 0))
-			self
-				subslice(1, self.count)
-				for-each(fn elem: print-str(', \(elem)'))
+	print-str (self): self
+		Str.print-as-list()
 
-			print-str(']')
+	chars (self): Error.todo()
 
 
 inst ListDecon Slice

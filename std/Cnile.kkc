@@ -84,6 +84,7 @@ external
 
 	time (p Ptr Void) -> Int
 
+
 	#### string.h #####
 	strlen (s ConstStr) -> Int
 	strcmp (l ConstStr, r ConstStr) -> Int
@@ -115,6 +116,12 @@ external
 	execvp (name ConstStr, args Ptr ConstStr) -> Void
 	waitpid (pid I32, status Ptr Int, options Int) -> I32
 	
+
+#[dylib 'libm.so.6']
+external
+	sqrt (f Float) -> Float
+
+
 
 
 fn seek-set(): 0
