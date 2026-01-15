@@ -20,7 +20,8 @@ pub const Error = union(enum) {
 
     UnexpectedThing: struct {
         expected: Str,
-        at: Token,
+        got: TokenType,
+        at: Loc,
     },
 
     UndefinedVariable: struct {
@@ -206,7 +207,9 @@ pub const Error = union(enum) {
                 });
                 // p("expected {}, but got {}", .{ e.expected, e.got });
             },
-            .UnexpectedThing => |e| p("expect {s} at {}", .{ e.expected, e.at }),
+            .UnexpectedThing => |e| {
+                err.atLocation(e.at, .{ .label = .{ "expect ", e.expected, ", but got ", e.got } });
+            },
             .UndefinedVariable => |uv| {
                 err.atLocation(uv.loc, .{
                     .label = .{ "undefined variable ", uv.varname.name },

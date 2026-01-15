@@ -1,7 +1,12 @@
 #!./zig-out/bin/kkc
 
+m = Just(420) as Maybe Int
 x =
-	(case 1)
-		_: 1
+	(case m)
+		Just(x): x
+		None: 1
 		
 x println()
+
+
+# xxx = [{ dupsko: [{ cock: 420}, { cock: 1}, { cock: 123 }] }]

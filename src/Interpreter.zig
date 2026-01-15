@@ -918,7 +918,28 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
             }
         },
 
-        .CaseExpr => unreachable,
+        .CaseExpr => |sw| {
+            const switchOn = try self.expr(sw.switchOn);
+            for (sw.cases) |case| {
+                switch (case) {
+                    .Expr => |cexpr| {
+                        if (try self.tryDeconstruct(cexpr.decon, switchOn.ref)) {
+                            return try self.expr(cexpr.expr);
+                        }
+                    },
+                    .Case => unreachable, // TODO!
+                }
+            } else {
+                const l = sw.switchOn.l;
+                var hadNewline = false;
+                const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                (errr.Error.ErrCtx{
+                    .module = l.module,
+                    .c = ctx,
+                }).atLocation(l, .{ .label = .{"miau"} });
+                return error.CaseNotMatched;
+            }
+        },
     }
 
     unreachable;

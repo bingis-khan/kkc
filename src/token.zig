@@ -105,4 +105,8 @@ pub const TokenType = enum {
 
     ERROR,
     INCORRECT_INDENT, // should not cause parsing to fail! just report.
+
+    pub fn print(self: @This(), c: anytype) void {
+        c.sp("{}", .{self});
+    }
 };

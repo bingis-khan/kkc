@@ -144,7 +144,7 @@ fn addToHash(dest: anytype, src: anytype) !void {
 
 // NOTE: assumes Module.Exports now owns the thing.
 fn scopeToExports(self: *Self) Module.Exports {
-    std.debug.assert(self.scope.scopes.current == 1);
+    std.debug.assert(self.errors.items.len > 0 or self.scope.scopes.current == 1);
 
     const scope = self.scope.currentScope();
 
@@ -435,6 +435,7 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
 fn statement(self: *Self) ParserError!?*AST.Stmt {
     return self.statement_() catch |e| switch (e) {
         error.ParseError => {
+            self.skip();
             // maybe extract it to a new function.
             // sync to end of line (naive n simple)
             while (!self.isEndStmt() and self.peek().type != .INDENT) {
@@ -2313,12 +2314,16 @@ fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc:
         try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
 
         if (self.check(.COLON)) {
+            const oldMode = self.foldFromHere();
             const exp = try self.expression();
             try self.typeContext.unify(exprRetTy, exp.t, &.{ .l = exp.l });
             try cases.append(.{ .Expr = .{ .decon = decon, .expr = exp } });
+            try self.finishFold(oldMode);
         } else {
-            const bod = try self.body();
-            try cases.append(.{ .Case = .{ .decon = decon, .body = bod.stmts.items } });
+            unreachable;
+            // TODO
+            // const bod = try self.body();
+            // try cases.append(.{ .Case = .{ .decon = decon, .body = bod.stmts.items } });
             // returnStatus = returnStatus.alternative(bod.returnStatus);
         }
     }
@@ -4475,7 +4480,8 @@ fn loadLexingState(self: *Self, state: LexingState) void {
 // NOTE: later, we don't have to specify a return value. Just always follow it with "return unreachable".
 fn errorExpect(self: *Self, exp: Str) !noreturn {
     try self.parseError(.{ .UnexpectedThing = .{
-        .at = self.currentToken,
+        .at = self.loc(self.currentToken),
+        .got = self.currentToken.type,
         .expected = exp,
     } });
 }
