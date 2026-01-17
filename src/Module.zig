@@ -18,6 +18,7 @@ pub const VarOrFun = union(enum) { // the name gegegggg
 pub const DataOrClass = union(enum) {
     Data: *ast.Data,
     Class: *ast.Class,
+    Synonym: *ast.TypeSynonym,
 };
 pub const DataInstance = std.AutoArrayHashMap(*ast.Data, *ast.Instance);
 
@@ -117,6 +118,7 @@ pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
             switch (dc) {
                 .Data => |d| enums[@intCast(@intFromEnum(kv.key))] = d,
                 .Class => return error.PreludeError,
+                .Synonym => return error.PreludeError, // this is so low level, I don't want to handle synonyms.
             }
         } else {
             return error.PreludeError;
@@ -132,6 +134,7 @@ pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
             switch (dc) {
                 .Class => |c| classEnums[@intCast(@intFromEnum(kv.key))] = c,
                 .Data => return error.PreludeError,
+                .Synonym => return error.PreludeError,
             }
         } else {
             return error.PreludeError;

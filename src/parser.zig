@@ -156,58 +156,47 @@ fn scopeToExports(self: *Self) Module.Exports {
     };
 }
 
-fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.Annotation) !void {
-    const uid = self.gen.types.newUnique();
-    self.scope.beginScope(null);
-    const data = b: {
+fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.Annotation) !void {
+    const data = try Common.allocOne(self.arena, AST.Data{
+        .uid = self.gen.vars.newUnique(),
+        .name = typename.literal(self.lexer.source),
+        .scheme = undefined,
+        .stuff = undefined,
+        .annotations = annotations,
+    });
+    b: {
+        self.scope.beginScope(null);
         defer self.scope.endScope();
 
         // tvars
-        var tvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
-        if (extraTVar) |tvname| {
-            const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
-            try tvars.append(.{ .TVar = tv });
-        }
-
-        while (true) {
-            if (self.consume(.NUMTYNAME)) |numtyTok| {
-                const numtv = try self.newTNum(numtyTok.literal(self.lexer.source)[1..], .{ .Data = uid });
+        var tvars = try std.ArrayList(AST.TVarOrNum).initCapacity(self.arena, tvarToks.len);
+        for (tvarToks) |t| {
+            if (t.type == .NUMTYNAME) {
+                const numtv = try self.newTNum(t.literal(self.lexer.source)[1..], .{ .Data = data.uid });
                 try tvars.append(.{ .TNum = numtv });
-            } else if (self.consume(.IDENTIFIER)) |tvname| {
-                const tv = try self.newTVar(tvname.literal(self.lexer.source), .{ .Data = uid });
+            } else if (t.type == .IDENTIFIER) {
+                const tv = try self.newTVar(t.literal(self.lexer.source), .{ .Data = data.uid });
                 try tvars.append(.{ .TVar = tv });
             } else {
-                break;
+                unreachable;
             }
         }
 
         if (!self.check(.INDENT)) {
             // Add type without any constructors
-            break :b try Common.allocOne(self.arena, AST.Data{
-                .uid = uid,
-                .name = typename.literal(self.lexer.source),
+            data.* = AST.Data{
+                .uid = data.uid,
+                .name = data.name,
                 .stuff = .{ .cons = &.{} },
                 .scheme = .{
                     .tvars = tvars.items,
                     .envVars = &.{},
-                    .associations = &.{}, // TODO: when I add fake class names as types, this will  be non-empty.
+                    .associations = &.{},
                 },
-                .annotations = annotations,
-            });
+                .annotations = data.annotations,
+            };
+            break :b;
         }
-
-        const data = try Common.allocOne(self.arena, AST.Data{
-            .uid = self.gen.types.newUnique(),
-            .name = typename.literal(self.lexer.source),
-            .scheme = undefined, // NOTE: currently leave it undefined, but recursive structures might have a problem.
-            // .scheme = AST.Scheme{
-            //     .tvars = tvars.items,
-            //     .envVars = &.{}, // TEMP
-            //     .associations = &.{},
-            // }, // TODO: check for repeating tvars and such.
-            .annotations = annotations,
-            .stuff = undefined,
-        });
 
         var cons = std.ArrayList(AST.Con).init(self.arena);
         var recs = std.ArrayList(AST.Record).init(self.arena);
@@ -266,10 +255,55 @@ fn dataDef(self: *Self, typename: Token, extraTVar: ?Token, annotations: []AST.A
         } else {
             data.stuff = .{ .recs = recs.items };
         }
+    }
 
-        break :b data;
-    };
     try self.newData(data);
+}
+
+fn typeSynonym(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.Annotation) !void {
+    _ = annotations;
+
+    const uid = self.gen.types.newUnique();
+    const name = typename.literal(self.lexer.source);
+    var tvars = try std.ArrayList(AST.TVarOrNum).initCapacity(self.arena, tvarToks.len);
+
+    const synonym = try b: {
+        self.scope.beginScope(null);
+        defer self.scope.endScope();
+
+        for (tvarToks) |t| {
+            if (t.type == .NUMTYNAME) {
+                const numtv = try self.newTNum(t.literal(self.lexer.source)[1..], .{ .Data = uid });
+                try tvars.append(.{ .TNum = numtv });
+            } else if (t.type == .IDENTIFIER) {
+                const tv = try self.newTVar(t.literal(self.lexer.source), .{ .Data = uid });
+                try tvars.append(.{ .TVar = tv });
+            } else {
+                unreachable;
+            }
+        }
+
+        var assocs = std.ArrayList(AST.Association).init(self.arena);
+        const tyconstr = Type.Constrain{ .Data = .{ .uid = uid, .assocs = &assocs } };
+        const t = try Type.init(self, tyconstr).sepTyo();
+
+        // COPYPASTA: don't forget to add associations at the end!!!!
+        for (assocs.items) |assoc| {
+            try tvars.append(.{ .TVar = assoc.depends });
+        }
+
+        break :b Common.allocOne(self.arena, AST.TypeSynonym{
+            .uid = uid,
+            .scheme = .{
+                .tvars = tvars.items,
+                .envVars = &.{},
+                .associations = assocs.items,
+            },
+            .t = t.e,
+        });
+    };
+
+    try self.newTypeSynonym(name, synonym);
 }
 
 fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
@@ -575,6 +609,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                                                 .thing = vname,
                                                 .l = self.loc(vt),
                                             } }),
+                                            .Synonym => unreachable, // TODO
                                         }
                                     }
                                 } else if (self.consume(.TYPE)) |ct| {
@@ -596,6 +631,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                                                 .thing = cname,
                                                 .l = self.loc(ct),
                                             } }),
+                                            .Synonym => unreachable, // TODO
                                         }
                                     }
                                 } else {
@@ -744,7 +780,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 break :b .{ .Expr = e };
             }
 
+            // start counting tvars.
+            var tvars = std.ArrayList(Token).init(self.arena);
+
             // can be a tvar or a postfix call.
+            // TODO BUG: seems like it's currently broken?
             const lexState = self.saveLexingState();
             if (self.consume(.IDENTIFIER)) |mtv| {
                 if (self.peek().type == .LEFT_PAREN) {
@@ -756,21 +796,31 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     const ce = try self.constructorExpression(&.{}, typename);
                     try self.finishFold(pm);
                     break :b .{ .Expr = try self.finishExpression(ce) };
+                } else {
+                    try tvars.append(mtv);
                 }
+            }
 
-                try self.dataDef(typename, mtv, annotations);
+            // consume tvars yo!
+            while (true) {
+                if (self.consume(.NUMTYNAME)) |numtyTok| {
+                    try tvars.append(numtyTok);
+                } else if (self.consume(.IDENTIFIER)) |tvname| {
+                    try tvars.append(tvname);
+                } else {
+                    break;
+                }
+            }
+
+            if (self.check(.EQUALS)) {
+                try self.typeSynonym(typename, tvars.items, annotations);
+                break :b null;
+            } else if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP or tvars.items.len > 0) { // basically in these conditions, we can be sure that we're trying to parse a datatype.
+                try self.dataDef(typename, tvars.items, annotations);
                 break :b null;
             }
 
-            // BRITTLE AS HELL.
-            if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP or self.peek().type == .NUMTYNAME) {
-                // TODO: parse non-qualified postfix expression alls.
-                try self.dataDef(typename, null, annotations);
-                break :b null;
-            }
-
-            // actually, this is probably an expression, so parse it as one.
-
+            // In this case, it's probably something like (`None Just()` or `None(420)`) this is probably an expression, so parse it as one.
             const pm = self.foldFromHere();
             const ce = try self.constructorExpression(&.{}, typename);
             const e = try self.finishExpression(ce);
@@ -1257,6 +1307,7 @@ fn constraints(self: *Self) !Constraints {
                         try e.value_ptr.append(class);
                     },
                     .Data => unreachable, // TODO: error.
+                    .Synonym => unreachable, // TODO: error
                 }
             } else {
                 try self.reportError(.{ .UndefinedClass = .{
@@ -2434,6 +2485,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
                     },
                 }
             },
+            .Synonym => unreachable, // TODO (I allow it, but todo implement)
             .Class => {
                 // ~fallthrough and return placeholder.~
                 // I THOUGHT THIS WOULD BE AN ERROR.
@@ -2942,7 +2994,7 @@ const Type = struct {
         if (self.consume(.TYPE)) |ty| {
             const ity = try this.qualifiedType(ty);
             if (ity.tyArgs.len != 0) {
-                try self.reportError(.{ .MismatchingKind = .{ .data = ity.dataExclusiveShit.?.data, .expect = ity.tyArgs.len, .actual = 0 } });
+                try self.reportError(.{ .MismatchingKind = .{ .data = ity.type.Data.data, .expect = ity.tyArgs.len, .actual = 0 } }); // TODO: this crashes when we use a type synonym.
             }
             return .{ .e = ity.t, .l = self.loc(ty) };
         } else if (self.consume(.IDENTIFIER)) |tv| { // TVAR
@@ -3031,7 +3083,7 @@ const Type = struct {
             }
 
             // simply check arity.
-            if (ty.dataExclusiveShit != null) {
+            if (ty.type != .Class) {
                 try self.typeContext.unifyParamsWithTNums(ty.tyArgs, tyArgs.items, &.{ .l = l }, &.{
                     .lfull = ty.t,
                     .rfull = null,
@@ -3141,10 +3193,20 @@ const Type = struct {
                     return .{
                         .t = dt.t,
                         .tyArgs = dt.tyArgs,
-                        .dataExclusiveShit = .{
+                        .type = .{ .Data = .{
                             .data = data,
                             .match = dt.match,
-                        },
+                        } },
+                    };
+                },
+
+                .Synonym => |syn| {
+                    const match = try self.instantiateScheme(syn.scheme, qloc);
+                    const t = try self.typeContext.mapType(match, syn.t);
+                    return .{
+                        .t = t,
+                        .tyArgs = match.tvars,
+                        .type = .Synonym,
                     };
                 },
 
@@ -3169,7 +3231,7 @@ const Type = struct {
                                 return .{
                                     .t = try self.typeContext.newType(.{ .TVar = tv }),
                                     .tyArgs = &.{},
-                                    .dataExclusiveShit = null,
+                                    .type = .Class,
                                 };
                             },
                             .Function => {
@@ -3186,7 +3248,7 @@ const Type = struct {
                                 return .{
                                     .t = t,
                                     .tyArgs = &.{},
-                                    .dataExclusiveShit = null,
+                                    .type = .Class,
                                 };
                             },
                             .ExternalFunction => unreachable, // TODO: error
@@ -3207,7 +3269,7 @@ const Type = struct {
                         return .{
                             .t = t,
                             .tyArgs = &.{},
-                            .dataExclusiveShit = null,
+                            .type = .Class,
                         };
                     }
 
@@ -3674,6 +3736,10 @@ fn newClass(self: *Self, class: *AST.Class) !void {
     }
 }
 
+fn newTypeSynonym(self: *Self, name: Str, synonym: *AST.TypeSynonym) !void {
+    try self.scope.currentScope().types.put(name, .{ .Synonym = synonym });
+}
+
 const DataInst = struct {
     t: AST.Type,
     tyArgs: []AST.TypeOrNum,
@@ -3697,9 +3763,13 @@ const DataOrClassShit = struct {
     tyArgs: []AST.TypeOrNum,
 
     // it's a class here bruv:
-    dataExclusiveShit: ?struct {
-        data: *AST.Data,
-        match: *AST.Match,
+    type: union(enum) {
+        Data: struct {
+            data: *AST.Data,
+            match: *AST.Match,
+        },
+        Class,
+        Synonym,
     },
 };
 fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !DataOrClassShit {
@@ -3722,10 +3792,10 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         } }),
         .tyArgs = &.{},
 
-        .dataExclusiveShit = .{
+        .type = .{ .Data = .{
             .data = placeholderType,
             .match = match,
-        },
+        } },
     };
 }
 
@@ -4320,6 +4390,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
         const data = switch (self.maybeLookupType(Prelude.PremadeTypeName.get(predefinedType)) orelse break :b error.PreludeError) {
             .Data => |data| data,
             .Class => |_| break :b error.PreludeError,
+            .Synonym => break :b error.PreludeError,
         };
 
         return .{
@@ -4336,6 +4407,7 @@ fn definedClass(self: *Self, predefinedType: Prelude.PremadeClass) !*AST.Class {
         return switch (self.maybeLookupType(Prelude.PremadeClassName.get(predefinedType)) orelse break :b error.PreludeError) {
             .Data => |_| error.PreludeError,
             .Class => |c| c,
+            .Synonym => error.PreludeError,
         };
     };
 }

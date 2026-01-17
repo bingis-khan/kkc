@@ -966,6 +966,13 @@ pub const Var = struct {
     }
 };
 
+pub const TypeSynonym = struct {
+    // we don't even need a name bruv ㅠㅠㅠ
+    uid: Unique, // for tvar bindings.
+    scheme: Scheme,
+    t: Type,
+};
+
 pub const Data = struct {
     uid: Unique,
     name: Str,

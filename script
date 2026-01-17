@@ -1,12 +1,11 @@
 #!./zig-out/bin/kkc
 
-m = Just(420) as Maybe Int
-x =
-	(case m)
-		Just(x): x
-		None: 1
-		
-x println()
+use Synonyms
+	Miau
 
+fn xxx (x a) -> Miau a
+	return Just(x)
 
-# xxx = [{ dupsko: [{ cock: 420}, { cock: 1}, { cock: 123 }] }]
+# fn f (x Asd): x + 1
+
+xxx(123) println()

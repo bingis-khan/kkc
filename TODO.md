@@ -1,10 +1,11 @@
 # Features
 
 - I/UXX integers + appropriate typeclasses
-- type synonyms (paramterized type synonyms!)
+- [V] type synonyms (paramterized type synonyms!)
 - [V] expression if
 - [.] expression case
 	- in case of case, it doesn't have to fit into every expression, just after assignment or mutation, but not in `if` statement for example
+	- nah, ive made it fit everywhere, just like lambda! which means it's kinda bugged right now, but it's noted and the implementation is there.
 - recursive datatypes + checking with the help of Ptr.
 - (fast!) occurs check
 - [?] recursive functions!!!
