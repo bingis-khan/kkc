@@ -25,6 +25,38 @@ pub fn main() !void {
     defer arena.deinit();
     const aa = arena.allocator();
 
+    // PARSE ARGS
+    const opts = try Args.parse(std.process.args(), aa);
+
+    const s = try compileFile(opts, aa);
+
+    var fakeNewline: bool = undefined;
+    const fakeHackCtx = ast.Ctx.init(&fakeNewline, &s.typeContext);
+    fakeNewline = false; // SIKE (but obv. temporary)
+    for (s.errors.items) |err| {
+        err.err.print(fakeHackCtx, err.module);
+    }
+
+    // go and interpret
+    if (s.errors.items.len == 0 and !opts.dontRun) {
+        const interpretStartTime = try std.time.Instant.now();
+        const ret = try Interpreter.run(s.ast, s.prelude, &s.typeContext, opts.programArgs, aa);
+        const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
+
+        std.debug.print("=== return value: {} ===\n", .{ret});
+        std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
+    }
+}
+
+pub const CompilationStuff = struct {
+    prelude: Prelude,
+    ast: []ast,
+    errors: Errors,
+    typeContext: TypeContext,
+    modules: Modules,
+    compilationTimeMS: u64,
+};
+pub fn compileFile(opts: Args, aa: std.mem.Allocator) !CompilationStuff {
     const stdRoot = std.process.getEnvVarOwned(aa, "KKC_STD") catch |e| switch (e) {
         error.EnvironmentVariableNotFound => b: {
             std.debug.print("KKC_STD env var not set. Defaulting to 'std/'.\n", .{});
@@ -32,9 +64,6 @@ pub fn main() !void {
         },
         else => return e,
     };
-
-    // PARSE ARGS
-    const opts = try Args.parse(std.process.args(), aa);
 
     // -|| MODULES ||-
     const compilationStartTime = try std.time.Instant.now();
@@ -48,24 +77,16 @@ pub fn main() !void {
 
     _ = try modules.initialModule(&opts.filename);
     const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
-    std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
+    // std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
 
     const fullAST = modules.getAST();
 
-    var fakeNewline: bool = undefined;
-    const fakeHackCtx = ast.Ctx.init(&fakeNewline, &typeContext);
-    fakeNewline = false; // SIKE (but obv. temporary)
-    for (errors.items) |err| {
-        err.err.print(fakeHackCtx, err.module);
-    }
-
-    // go and interpret
-    if (errors.items.len == 0 and !opts.dontRun) {
-        const interpretStartTime = try std.time.Instant.now();
-        const ret = try Interpreter.run(fullAST, prelude, &typeContext, opts.programArgs, aa);
-        const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
-
-        std.debug.print("=== return value: {} ===\n", .{ret});
-        std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
-    }
+    return .{
+        .prelude = prelude,
+        .ast = fullAST,
+        .errors = errors,
+        .typeContext = typeContext,
+        .modules = modules,
+        .compilationTimeMS = compilationTime,
+    };
 }

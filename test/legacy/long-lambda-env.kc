@@ -1,0 +1,6 @@
+#$ Long lambda with environment.
+# () -> () -> () -> () -> () -> () -> () -> () -> () -> () -> Int at \*
+
+n = 123
+lam = ::::::::::n
+print lam

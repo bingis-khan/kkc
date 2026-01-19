@@ -1,0 +1,20 @@
+#$ Inner function not generalizing over TVar that is its return value.
+# 69
+# 69
+# 420
+# ()
+
+outer (n)
+	inner ()
+			return n
+
+	return inner
+
+f = outer(69)
+g = outer(420)
+h = outer(Unit)
+
+print f()
+print f()
+print g()
+print h()

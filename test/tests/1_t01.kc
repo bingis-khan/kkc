@@ -1,0 +1,15 @@
+# True
+# 72
+# ()
+# 423
+
+
+x = 1
+y = 2
+
+fn f (z, n)
+	println(n)
+	return x + y + z
+
+println(f(69, True))
+println(f(420, Unit))

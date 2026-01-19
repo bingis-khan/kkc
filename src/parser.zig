@@ -4572,7 +4572,7 @@ fn parseError(self: *Self, err: Error) !noreturn {
 fn sync_to_next_toplevel() void {}
 
 const ParseError = error{ParseError};
-const ParserError = error{
+pub const ParserError = error{
     ParseError,
     PreludeError,
     OutOfMemory,

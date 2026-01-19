@@ -1,0 +1,38 @@
+#$ Recursive class calls.
+# 80085
+# 80085
+# 1
+
+
+class MyStr
+	print-str (self _) -> Unit
+
+inst MyStr Int
+	print-str (self Int) -> Unit
+		print self
+
+inst MyStr Bool
+	print-str (self Bool) -> Unit
+		print self
+
+inst MyStr Unit
+	print-str (u Unit) -> Unit
+		print Unit
+MyStrPtr a
+	MyStrPtr a
+
+inst MyStr MyStrPtr a
+	print-str (MyStrPtr(x)) -> Unit
+		print 80085
+		print-str(x)
+
+MyStrConcat l r
+	MyStrConcat l r
+
+inst MyStr MyStrConcat l r
+	print-str (MyStrConcat(l, r)) -> Unit
+		print-str(l)
+		print-str(r)
+
+
+print-str(MyStrPtr(MyStrPtr(1)))
