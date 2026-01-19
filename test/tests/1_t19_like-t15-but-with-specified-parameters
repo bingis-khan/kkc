@@ -2,8 +2,8 @@
 # 69
 # ()
 
-outer (n a) -> () -> a
-	inner () -> a
+fn outer (n a) -> () -> a
+	fn inner () -> a
 			return n
 
 	return inner
@@ -11,5 +11,5 @@ outer (n a) -> () -> a
 g = outer(69)
 h = outer(Unit)
 
-print g()
-print h()
+println(g())
+println(h())

@@ -1,0 +1,25 @@
+#$ Basic TVar binding and reoccuring names. (kkc: added Str typeclass constraint)
+# 123
+# 123
+# ()
+# ()
+# True
+# ()
+# True
+# 69
+# 69
+# 69
+
+fn something (x a) -> a <= Str a
+	println(x)
+	return x
+
+fn elsthing (n a, m b) -> a <= Str a, Str b
+	println(n)
+	println(m)
+	return n
+
+println(something(123))
+println(something(Unit))
+println(elsthing(True, Unit))
+println(elsthing(69 ,69))

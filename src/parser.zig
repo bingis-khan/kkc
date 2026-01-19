@@ -4143,7 +4143,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             defer i +%= 1;
             switch (self.typeContext.getType(assoc.from)) {
                 .TVar => |assocTV| { // TODO: associate tvars with places they are declared. this can be a tvar of an outside function.
-                    if (!std.meta.eql(assocTV.binding, expectedBinding)) unreachable; // Since we added errors for TVars (in constraint solving), this should be unreachable.
+                    if (!std.meta.eql(assocTV.binding, expectedBinding)) continue;
 
                     if (!assocTV.inferred) b: {
                         const assocClass = assoc.class;

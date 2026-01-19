@@ -3,17 +3,17 @@
 # 69
 
 n = 69
-printn ()
-	print n
+fn printn ()
+	println(n)
 	return
 
-printn2 ()
-	print 2
+fn printn2 ()
+	println(2)
 	printn()
 	return
 
-printn3 ()
-	print 3
+fn printn3 ()
+	println(3)
 	printn2()
 	return
 

@@ -161,6 +161,9 @@ inst FromChar Char
 
 # Eq
 
+inst Eq Unit
+	eq (l, r): True
+
 inst Eq Int
 	eq (l, r): @memeq(l, r)
 

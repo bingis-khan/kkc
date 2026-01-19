@@ -731,6 +731,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     const env = lamAndEnv.env;
 
                     // this is also copypasta :)
+                    std.debug.assert(env.lastPtr.* == null); // lambda CANNOT recurse like a function, so lastPtr should always be null.
                     const oldTyMap = self.tymap;
                     env.lastPtr.* = self.tymap;
                     self.tymap = env.tymaps;
@@ -1026,11 +1027,13 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
     defer self.tymap = oldTyMap;
 
     // in recursive functions, we might apply the same copy twice. In this case, we don't want to apply it again, because this will produce an infinite loop AND it's already accessible, so we should not re-add it.
-    const alreadyApplied = env.lastPtr.* == null;
+    const alreadyApplied = env.lastPtr.* != null;
     if (!alreadyApplied) {
+        self.tymap = env.tymaps;
         env.lastPtr.* = oldTyMap;
     }
     defer if (!alreadyApplied) {
+        // previous defer takes care of it.
         env.lastPtr.* = null;
     };
 

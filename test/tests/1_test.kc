@@ -1,16 +1,13 @@
-# () -> Unit at \*
-# Used Int
 #? 69
 
-id (x)
+fn id (x)
 	return x
 
-g ()
-	print id(True)
-	print id(1)
+fn g ()
+	println(id(True))
+	println(id(1))
 	return Unit
 
-print g
 
 
 Unused
@@ -24,6 +21,6 @@ Used a
 
 
 hey = IUseThis(123, True)
-print hey
+# print hey
 
 return 69

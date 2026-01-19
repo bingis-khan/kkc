@@ -2,16 +2,16 @@
 # 71
 # 422
 
-add1 (x Int) -> Int
+fn add1 (x Int) -> Int
 	return x + 1
 
-add2 (x Int) -> Int
+fn add2 (x Int) -> Int
 	x' = add1(x)
 	x'' = add1(x')
 	return x''
 
 x = add2(69)
-print x
+println(x)
 
 y = add2(420)
-print y
+println(y)

@@ -1,0 +1,28 @@
+# 123
+# 69
+# 6
+# 123
+# 69
+# 6
+# 123
+
+
+fn id (n)
+	return n
+
+
+f = id
+println(f(123))
+println(f(69))
+println(f(f(f(f(f(1 + 2 + 3))))))
+
+
+fn id2 (n)
+	return n
+
+println(id2(123))
+println(id2(69))
+println(id2(id2(id2(id2(id2(1 + 2 + 3))))))
+
+
+println(id(id2)(123))

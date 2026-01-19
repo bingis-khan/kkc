@@ -1,0 +1,19 @@
+#$ Local datatypes with local tvars escaping. (kkc: added memeq)
+# True
+# False
+
+fn f (x a)
+	Data b
+		Miau b a
+
+	return Miau(Unit, x)
+
+x = f(123)
+
+y = f(True)
+
+z = f(123)
+println(@memeq(x, z))
+
+z' = f(420)
+println(@memeq(x, z'))

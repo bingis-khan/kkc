@@ -1,0 +1,9 @@
+#$ cascading union instantiation dependencies (most importantly, it should just compile)
+
+fn uncurry (fun (a, b) -> c) -> (Tuple2 a b) -> c
+	fn unc (Tuple2(l, r)): fun(l, r)
+	return unc
+
+t = Tuple2(1, 1)
+uncurry(fn (xxx, r): Unit)(t)
+

@@ -1,10 +1,10 @@
 # 1
 
-id (x)
+fn id (x)
 	return x
 
-f (x)
+fn f (x)
 	id(x)
 	return 1
 
-print f (1)
+println(f (1))

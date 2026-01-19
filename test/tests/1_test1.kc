@@ -5,12 +5,12 @@
 # True
 # ()
 
-uni (x, y)
-	print x == y
+fn uni (x, y)
+	println(x == y)
 	return
 
 n = uni (1, 4)
 m = uni (True, False)
-print n
-print m
-print uni(True, True)
+println(n)
+println(m)
+println(uni(True, True))

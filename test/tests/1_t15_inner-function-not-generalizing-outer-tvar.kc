@@ -4,9 +4,9 @@
 # 420
 # ()
 
-outer (n)
-	inner ()
-			return n
+fn outer (n)
+	fn inner ()
+		return n
 
 	return inner
 
@@ -14,7 +14,7 @@ f = outer(69)
 g = outer(420)
 h = outer(Unit)
 
-print f()
-print f()
-print g()
-print h()
+println(f())
+println(f())
+println(g())
+println(h())

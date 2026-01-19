@@ -1,7 +1,0 @@
-# Int -> Int at \*
-
-id (x)
-	return x
-
-
-print id as Int -> Int

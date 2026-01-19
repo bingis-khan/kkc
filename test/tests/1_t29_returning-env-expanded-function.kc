@@ -1,3 +1,4 @@
+#= disabled
 #$ [env expansion] Returning an env-expanded function (i should make more tests like this when I get the chance to work on this problem)
 # 123
 

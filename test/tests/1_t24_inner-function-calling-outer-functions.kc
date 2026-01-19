@@ -1,3 +1,4 @@
+#= disabled
 #$ Inner functions calling outer functions.
 # 420
 # 88
@@ -32,17 +33,17 @@ Cxs
 #fid (abc)
 #	return abc
 
-f (x a, y b)
+fn f (x a, y b)
 	print x
 	print y
 	return
 
 fff = :Unit
-g ()
+fn g ()
 	const = 88
-	h (nn n)
+	fn h (nn n)
 		onst = 420
-		hh (mm m)
+		fn hh (mm m)
 			print onst
 			print const
 			f(nn, mm)
@@ -56,7 +57,7 @@ g ()
 	h(True)
 	return
 
-nnnnn()
+fn nnnnn()
 	g()
 	return
 

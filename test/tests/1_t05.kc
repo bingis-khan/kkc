@@ -1,0 +1,20 @@
+# 420
+# 1234
+
+pass
+
+fn bool (cond, ifTrue, ifFalse)
+	if cond
+		ifTrue()
+	else
+		ifFalse()
+
+	return
+
+
+fn printx (x)
+	println(x)
+	return
+
+bool (1 == 2, fn:printx(69), fn:printx(420))
+bool (Unit == Unit, fn:printx(1234), fn:printx(Unit))

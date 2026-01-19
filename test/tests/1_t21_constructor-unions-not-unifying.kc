@@ -1,0 +1,25 @@
+#= disabled
+#$ [env expansion] I don't remember what this was for, but its name (error name) was "constructor unions not unifying". (kkc: added constraints)
+
+fn id (x)
+	return x
+
+fn uni (l asd, r asd)
+	return
+
+Callback
+	Callback (Int -> Int)
+
+ff = Callback(id)
+
+fn f (x aaa) <= Str aaa
+	fn printn (n bbb) -> bbb <= Str bbb
+		println(n)
+		println(x)
+		return n
+
+	uni(Callback(printn), ff)
+	return
+
+f(1)
+f(True)

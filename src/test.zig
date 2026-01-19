@@ -12,35 +12,67 @@ const TypeContext = @import("TypeContext.zig");
 const BaseDir = "test/tests/";
 
 pub fn main() !void {
+    // SETUP
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit(); // this prints all the leaks
+        if (deinit_status == .leak) {
+            // result.status = .HadLeaks;
+            // bruh
+            @panic("bruh, leaks");
+        }
+    }
+    const al = gpa.allocator();
+
+    var tests = std.ArrayList(Str).init(al);
+    defer {
+        for (tests.items) |t| {
+            al.free(t);
+        }
+        tests.deinit();
+    }
+
     var dir = try std.fs.cwd().openDir(BaseDir, .{ .iterate = true });
     defer dir.close();
     var dirIterator = dir.iterate();
     while (try dirIterator.next()) |dirContent| {
-        // SETUP
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        defer {
-            const deinit_status = gpa.deinit(); // this prints all the leaks
-            if (deinit_status == .leak) {
-                // result.status = .HadLeaks;
-                // bruh
-                @panic("bruh, leaks");
-            }
-        }
-        const al = gpa.allocator();
+        try tests.append(try al.dupe(u8, dirContent.name));
+    }
 
+    std.mem.sort(Str, tests.items, @as(void, undefined), (struct {
+        fn order(ctx: void, lhs: Str, rhs: Str) bool {
+            _ = ctx;
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    }).order);
+
+    const total = tests.items.len;
+    var passed: u32 = 0;
+    var skipped: u32 = 0;
+    for (tests.items) |filename| {
         // global allocator for STUFF
         var arena = std.heap.ArenaAllocator.init(al);
         defer arena.deinit();
 
         const aa = arena.allocator();
 
-        const result = runTest(dirContent.name, aa);
-        std.debug.print("[{s}] ({s}) {s}\n", .{ if (result.status == .Passed) "V" else "X", result.filename, result.testname });
+        const result = runTest(filename, aa);
+        std.debug.print("[{s}] ({s}) {s}\n", .{ switch (result.status) {
+            .Passed => "V",
+            .Disabled => ".",
+            else => "X",
+        }, result.filename, result.testname });
 
-        var fakeNewline: bool = undefined;
-        const fakeHackCtx = AST.Ctx.init(&fakeNewline, &result.typeContext.?);
-        fakeNewline = false; // SIKE (but obv. temporary)
+        if (result.status == .Passed) {
+            passed += 1;
+        } else if (result.status == .Disabled) {
+            skipped += 1;
+        }
+
         if (result.errors) |errors| {
+            var fakeNewline: bool = undefined;
+            const fakeHackCtx = AST.Ctx.init(&fakeNewline, &result.typeContext.?);
+            fakeNewline = false; // SIKE (but obv. temporary)
             for (errors.items) |err| {
                 err.err.print(fakeHackCtx, err.module);
             }
@@ -48,7 +80,7 @@ pub fn main() !void {
 
         // print errors.
         switch (result.status) {
-            .CompilerError => |cerr| std.debug.print("{}\n", .{cerr}),
+            .CompilerError => |cerr| std.debug.print("{?}\n", .{cerr}),
             else => {},
         }
 
@@ -59,6 +91,8 @@ pub fn main() !void {
             std.debug.print("Return value not matched.\nExpected: {}\nGot: {}\n", .{ returnValue.expected, returnValue.got });
         }
     }
+
+    std.debug.print("Passed {}/{} (skipped {})\n", .{ passed, total - skipped, skipped });
 }
 
 const TestResult = struct {
@@ -70,6 +104,7 @@ const TestResult = struct {
         OutputNotMatched,
         // ASTNotMatched,
         // HadLeaks,  // TODO: not yet checked, because I use arena all the time
+        Disabled,
         Passed,
     },
 
@@ -101,18 +136,31 @@ fn runTest(filename: Str, aa: std.mem.Allocator) TestResult {
     };
 }
 
-const CompilerError = ErrSet(kkc_main.compileFile) || ErrSet(runAndReadStdout) || ErrSet(readHeader);
+const CompilerError = error{InterpreterPanic} || ErrSet(kkc_main.compileFile) || ErrSet(runAndReadStdout) || ErrSet(readHeader);
 
 fn runTest_(filename: Str, aa: std.mem.Allocator) !TestResult {
 
     // stuff
     const relFilename = try std.mem.concat(aa, u8, &.{ BaseDir, filename });
+    const header = try readHeader(relFilename, aa);
+    if (header.disabled) {
+        return TestResult{
+            .filename = filename,
+            .testname = header.testTitle,
+            .status = .Disabled,
+            .errors = null,
+            .typeContext = null,
+            .compileMS = null,
+            .runMS = null,
+        };
+    }
+
     const opts = Args{ .filename = relFilename };
     const s = try kkc_main.compileFile(opts, aa);
 
     var result = TestResult{
         .filename = filename,
-        .testname = "<noname>",
+        .testname = header.testTitle,
         .status = .Passed,
         .errors = s.errors,
         .typeContext = s.typeContext,
@@ -122,10 +170,14 @@ fn runTest_(filename: Str, aa: std.mem.Allocator) !TestResult {
 
     if (s.errors.items.len == 0) {
         const run = try runAndReadStdout(aa, &s);
-        const header = try readHeader(relFilename, aa);
+
+        if (run.failed) {
+            result.status = .{ .CompilerError = error.InterpreterPanic };
+        }
 
         if (!common.streq(run.stdout, header.expectedOutput)) {
-            result.status = .OutputNotMatched;
+            if (result.status == .Passed)
+                result.status = .OutputNotMatched;
             result.output = .{
                 .expected = header.expectedOutput,
                 .got = run.stdout,
@@ -133,7 +185,8 @@ fn runTest_(filename: Str, aa: std.mem.Allocator) !TestResult {
         }
 
         if (run.returnValue != header.expectedReturnCode) {
-            result.status = .OutputNotMatched;
+            if (result.status == .Passed)
+                result.status = .OutputNotMatched;
             result.returnValue = .{
                 .expected = header.expectedReturnCode,
                 .got = run.returnValue,
@@ -150,6 +203,7 @@ fn runTest_(filename: Str, aa: std.mem.Allocator) !TestResult {
 }
 
 const Run = struct {
+    failed: bool,
     stdout: Str,
     returnValue: u8,
     interpretTimeMS: u64,
@@ -159,7 +213,6 @@ fn runAndReadStdout(aa: std.mem.Allocator, s: *const kkc_main.CompilationStuff) 
     const fd = try std.posix.pipe(); // .{ read, write }
     const pid = try std.posix.fork();
     if (pid == 0) { // child process.
-        defer std.process.exit(0); // exit no matter what! (TODO: handle interpret errors!)
         std.posix.close(fd[0]); // close read - we are only writing
 
         try std.posix.dup2(fd[1], std.io.getStdOut().handle);
@@ -181,13 +234,16 @@ fn runAndReadStdout(aa: std.mem.Allocator, s: *const kkc_main.CompilationStuff) 
     try pumper.pump(reader, progOut.writer());
 
     // parent - wait and read stdout?
+    var failed = false;
     if (std.posix.waitpid(pid, 0).status != 0) {
         std.debug.print("waitpid() failed\n", .{});
+        failed = true;
     }
     const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
     // std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
 
     return .{
+        .failed = failed,
         .stdout = progOut.items,
         .returnValue = 0, // TODO
         .interpretTimeMS = interpretTime,
@@ -198,6 +254,7 @@ const Header = struct {
     expectedOutput: Str = "",
     expectedReturnCode: u8 = 0,
     testTitle: Str = "<title not provided>",
+    disabled: bool = false,
 };
 fn readHeader(filepath: Str, aa: std.mem.Allocator) !Header {
     var header = Header{};
@@ -219,6 +276,13 @@ fn readHeader(filepath: Str, aa: std.mem.Allocator) !Header {
             header.testTitle = try aa.dupeZ(u8, trim(line[2..]));
         } else if (startsWith(line, "#?")) {
             header.expectedReturnCode = std.fmt.parseInt(u8, trim(line[2..]), 10) catch unreachable;
+        } else if (startsWith(line, "#=")) {
+            const val = trim(line[2..]);
+            if (common.streq(val, "disabled")) {
+                header.disabled = true;
+            } else {
+                std.debug.print("unknown option '{s}'\n", .{val});
+            }
         } else if (startsWith(line, "#")) {
             try expectedOutput.appendSlice(trim(line[1..]));
             try expectedOutput.append('\n');

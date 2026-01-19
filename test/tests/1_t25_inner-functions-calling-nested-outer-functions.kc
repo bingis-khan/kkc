@@ -2,21 +2,21 @@
 # True
 # 420
 
-id (x)
+fn id (x)
 	return x
 
-a ()
-	aaa (x)
-		print x
+fn a ()
+	fn aaa (x)
+		println(x)
 		return x
 
-	g ()
-		f ()
-			print id(True)
+	fn g ()
+		fn f ()
+			println(id(True))
 			aaa(420)
 			return
 
-		f2 ()
+		fn f2 ()
 			f()
 			return
 
