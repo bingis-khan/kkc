@@ -1,12 +1,10 @@
 #$ A constructor with functions and other stuff
-# Fun
 
 Fun
 	Fun (Int -> Int) Int (() -> Unit) Bool Unit
 
-print1 ()
-	print 1
+fn print1 ()
+	println(1)
 	return
 
-x = Fun(x: x + 1, 420, print1, True, Unit)
-print x
+x = Fun(fn x: x + 1, 420, print1, True, Unit)

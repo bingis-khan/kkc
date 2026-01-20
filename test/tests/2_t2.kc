@@ -1,0 +1,15 @@
+#$ Compare a datatype a single constructor which takes in one function. (kkc: @memeq)
+# False
+
+Fun
+	Fun (Int -> Int)
+
+fn id (x)
+	return x
+
+fn add1 (x)
+	return x + 1
+
+x = Fun(id)
+y = Fun(add1)
+println(@memeq(x, y))

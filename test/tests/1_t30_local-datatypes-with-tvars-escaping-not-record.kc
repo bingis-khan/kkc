@@ -1,3 +1,4 @@
+#= todo
 #$ Local datatypes with local tvars escaping. (kkc: added memeq)
 # True
 # False
@@ -6,7 +7,7 @@ fn f (x a)
 	Data b
 		Miau b a
 
-	return Miau(Unit, x)
+	return Miau(Unit, x)  # the problem is that we somehow also need to store typemaps for types - since I want to rewrite type sizing (to not make it dogshit slow), I'm todoing it.
 
 x = f(123)
 

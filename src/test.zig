@@ -60,6 +60,7 @@ pub fn main() !void {
         std.debug.print("[{s}] ({s}) {s}\n", .{ switch (result.status) {
             .Passed => "V",
             .Disabled => ".",
+            .Todo => "todo",
             else => "X",
         }, result.filename, result.testname });
 
@@ -105,6 +106,7 @@ const TestResult = struct {
         // ASTNotMatched,
         // HadLeaks,  // TODO: not yet checked, because I use arena all the time
         Disabled,
+        Todo,
         Passed,
     },
 
@@ -143,11 +145,14 @@ fn runTest_(filename: Str, aa: std.mem.Allocator) !TestResult {
     // stuff
     const relFilename = try std.mem.concat(aa, u8, &.{ BaseDir, filename });
     const header = try readHeader(relFilename, aa);
-    if (header.disabled) {
+    if (header.disabled) |disability| {
         return TestResult{
             .filename = filename,
             .testname = header.testTitle,
-            .status = .Disabled,
+            .status = switch (disability) {
+                .Disabled => .Disabled,
+                .Todo => .Todo,
+            },
             .errors = null,
             .typeContext = null,
             .compileMS = null,
@@ -235,17 +240,19 @@ fn runAndReadStdout(aa: std.mem.Allocator, s: *const kkc_main.CompilationStuff) 
 
     // parent - wait and read stdout?
     var failed = false;
-    if (std.posix.waitpid(pid, 0).status != 0) {
-        std.debug.print("waitpid() failed\n", .{});
+    const waitpidStatus = std.posix.waitpid(pid, 0).status;
+    if ((waitpidStatus & 0x7f) > 0) {
+        std.debug.print("waitpid() failed {}\n", .{waitpidStatus});
         failed = true;
     }
+    const returnValue: u8 = @intCast((waitpidStatus >> 8) & 0xff); // that's how return value seems to be encoded!
     const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
     // std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
 
     return .{
         .failed = failed,
+        .returnValue = returnValue,
         .stdout = progOut.items,
-        .returnValue = 0, // TODO
         .interpretTimeMS = interpretTime,
     };
 }
@@ -254,7 +261,10 @@ const Header = struct {
     expectedOutput: Str = "",
     expectedReturnCode: u8 = 0,
     testTitle: Str = "<title not provided>",
-    disabled: bool = false,
+    disabled: ?enum {
+        Disabled,
+        Todo,
+    } = null,
 };
 fn readHeader(filepath: Str, aa: std.mem.Allocator) !Header {
     var header = Header{};
@@ -279,8 +289,12 @@ fn readHeader(filepath: Str, aa: std.mem.Allocator) !Header {
         } else if (startsWith(line, "#=")) {
             const val = trim(line[2..]);
             if (common.streq(val, "disabled")) {
-                header.disabled = true;
-            } else {
+                header.disabled = .Disabled;
+            } //
+            else if (common.streq(val, "todo")) {
+                header.disabled = .Todo;
+            } //
+            else {
                 std.debug.print("unknown option '{s}'\n", .{val});
             }
         } else if (startsWith(line, "#")) {

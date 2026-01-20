@@ -1,0 +1,28 @@
+#$ A mixed union/normal constructor is used. (kkc: added Str inst)
+# Fun
+# SomethingElse(123, ())
+# AndElse
+
+Fun
+	Fun (Int -> Int)
+	SomethingElse Int Unit
+	AndElse
+
+inst Str.Str Fun
+	print-str (s)
+		case s
+			Fun(_)
+				Str.print-str('Fun')
+			SomethingElse(x, y)
+				Str.print-str('SomethingElse(\(x), \(y))')
+			AndElse
+				Str.print-str('AndElse')
+
+	chars (self): unreachable()
+
+x = Fun(fn x: x + 1)
+println(x)
+y = SomethingElse(123, Unit)
+println(y)
+z = AndElse
+println(z)
