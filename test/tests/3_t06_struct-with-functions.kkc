@@ -1,0 +1,57 @@
+#$ Struct with functions (as type parameters) with environments (one env per union prolly.)
+# 543
+# 8008135
+# 8008135
+# 543
+# False
+# 543
+
+MyTuple a b
+	MyTuple a b
+
+fn call-both (tup)
+	case tup
+		MyTuple(f, f')
+			f()
+			f'()
+
+	return
+
+
+x = 123
+y = 420
+fn sum-env ()
+	sum = x + y
+	println(sum)
+	return sum  # random ass return value (should be okay!)
+
+fn just-print-8008135 ()
+	println(8008135)
+	return
+
+env = True
+fn negate-env ()
+	case env
+		True
+			println(False)
+			return False
+
+		False
+			println(True)
+			return True
+
+
+fn reverse (t)
+	case t
+		MyTuple(a, b)
+			return MyTuple(b, a)
+
+
+t = MyTuple(sum-env, just-print-8008135)
+call-both(t)
+
+t' = reverse(t)
+call-both(t')
+
+t'' = MyTuple(negate-env, sum-env)
+call-both(t'')

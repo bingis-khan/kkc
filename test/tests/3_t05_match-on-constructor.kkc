@@ -1,0 +1,21 @@
+#$ Can match on constructors values.
+# 1
+# 2
+# 0
+
+x = Just(True)
+
+fn match (x)
+	case x
+		Just(False)
+			return 0
+
+		Just(True)
+			return 1
+
+		None
+			return 2
+
+println(match(x))
+println(match(None))
+println(match(Just(False)))

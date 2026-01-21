@@ -1,0 +1,25 @@
+#= disabled
+#$ [env expansion] Env expansion works, but the outer function 'ff' is not called (while inner is, that's the difficulty :3 )
+# 123
+
+fn uni (l a, r a) -> Unit
+	return
+
+f = :123
+
+fn ff (x) -> Unit
+	fn gg (y) -> Unit
+		fn sumtin ()
+			println(x)
+			println(y)
+			return 123
+
+		uni(f, sumtin)
+		return
+
+	gg(True)
+	gg(Unit)
+
+	return
+
+println(f())

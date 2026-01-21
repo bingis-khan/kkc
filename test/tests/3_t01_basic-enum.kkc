@@ -1,0 +1,39 @@
+#$ Basic enum datatype deconstruction.
+# 1
+# 2
+# 505
+# 507
+# 507
+# 507
+
+Fagas
+	One
+	Two
+	Cuck
+	Soy
+
+
+
+fn print-fagas (x Fagas)
+	case x
+		One
+			println(1)
+
+		Two
+			println(2)
+
+		Cuck
+			println(505)
+
+		Soy
+			println(507)
+
+	return
+
+
+print-fagas(One)
+print-fagas(Two)
+print-fagas(Cuck)
+print-fagas(Soy)
+print-fagas(Soy)
+print-fagas(Soy)
