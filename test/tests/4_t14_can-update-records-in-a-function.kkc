@@ -1,0 +1,27 @@
+#= todo
+#$ Can update records in a function.
+# 1
+# 2
+# 3
+# 1
+# 2
+# 0
+
+CoolVec
+	x Int
+	y Int
+	z Int
+
+fn pvec (p CoolVec) -> Unit
+	println(p.x)
+	println(p.y)
+	println(p.z)
+
+
+vec = CoolVec { x: 1, y: 2, z: 3 }
+pvec(vec)
+
+fn zero-z (v) -> CoolVec
+	return v { z: 0 }
+
+pvec(zero-z(vec))

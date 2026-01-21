@@ -1,0 +1,6 @@
+#$ Single record. No "composite" types.
+
+Record
+	first Unit
+	second Int
+	third Bool

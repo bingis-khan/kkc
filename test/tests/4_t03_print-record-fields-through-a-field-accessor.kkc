@@ -1,0 +1,12 @@
+#$ Print record fields (through field accessors.)
+# ()
+# 1234
+
+MyRecord
+	nice Unit
+	other-nice Int
+
+rec = MyRecord { nice: Unit, other-nice: 1234 }
+
+println(rec.nice)
+println(rec.other-nice)

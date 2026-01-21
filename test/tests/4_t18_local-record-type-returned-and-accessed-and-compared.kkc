@@ -1,0 +1,25 @@
+#= todo
+#$ Local datatypes with local tvars escaping.
+# 123
+# ()
+# True
+# ()
+# True
+
+fn f (x a)
+	Data b
+		external a
+		local b
+
+	return Data { fn external: x, fn local: Unit }
+
+x = f(123)
+println(x.external)
+println(x.local)
+
+y = f(True)
+println(y.external)
+println(y.local)
+
+z = f(123)
+println(x == z)

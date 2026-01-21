@@ -218,6 +218,7 @@ fn runAndReadStdout(aa: std.mem.Allocator, s: *const kkc_main.CompilationStuff) 
     const fd = try std.posix.pipe(); // .{ read, write }
     const pid = try std.posix.fork();
     if (pid == 0) { // child process.
+        errdefer std.process.exit(1); // in case of any errors, make sure to EXIT!
         std.posix.close(fd[0]); // close read - we are only writing
 
         try std.posix.dup2(fd[1], std.io.getStdOut().handle);

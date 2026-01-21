@@ -1,0 +1,17 @@
+#$ Record deconstruction with ADTs.
+# 777
+# True
+
+IMightHave
+	an-int Maybe Int
+	a-bool Bool
+
+rec = IMightHave { an-int: Just(777), a-bool: True }
+
+case rec
+	{ an-int: None, a-bool: bol }
+		println(bol)
+
+	{ an-int: Just(x), a-bool: bul }
+		println(x)
+		println(bul)
