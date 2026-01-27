@@ -32,11 +32,17 @@ pub fn main() !void {
         tests.deinit();
     }
 
+    var argIt = std.process.args();
+    _ = argIt.skip();
+    const filter = argIt.next();
+
     var dir = try std.fs.cwd().openDir(BaseDir, .{ .iterate = true });
     defer dir.close();
     var dirIterator = dir.iterate();
     while (try dirIterator.next()) |dirContent| {
-        try tests.append(try al.dupe(u8, dirContent.name));
+        if (filter == null or startsWith(dirContent.name, filter.?)) {
+            try tests.append(try al.dupe(u8, dirContent.name));
+        }
     }
 
     std.mem.sort(Str, tests.items, @as(void, undefined), (struct {

@@ -1,0 +1,38 @@
+#$ Use instance from "inside" with class from "inside".
+# 10
+# 420
+# 69
+# ()
+# 1
+
+
+outer-const = 420
+fn f ()
+	bool-const = 10
+	fn g()
+		h-const = 69
+		fn h()
+			class A
+				do-sth (x _) -> Unit
+
+			boop-const = Unit
+			inst A Bool
+				do-sth (x Bool) -> Unit
+					println(bool-const)
+					println(outer-const)
+					println(h-const)
+					println(boop-const)
+					if x
+						println(1)
+					else
+						println(0)
+					return
+
+			do-sth(True)
+			return
+		h()
+		return
+	g()
+	return
+
+f()

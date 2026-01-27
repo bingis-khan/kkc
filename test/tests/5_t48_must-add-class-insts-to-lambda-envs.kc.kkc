@@ -1,0 +1,23 @@
+#$ Must add class insts to lambda env.
+# 1
+
+class Dupa
+	dupa (x _) -> Int
+
+inst Dupa Int
+	dupa (x) -> Int
+		return x
+
+inst Dupa Bool
+	dupa (x) -> Int
+		if x
+			return 1
+		else
+			return 0
+
+fn f (n)
+	return fn: dupa(n)
+
+ff = f(1)
+# println(ff)
+println(ff())

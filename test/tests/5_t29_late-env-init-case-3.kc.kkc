@@ -1,0 +1,28 @@
+#= todo
+#$ Late env init case 3
+# 8008
+# 69
+# 420
+
+class MyStr
+	print-str (x _) -> Unit
+
+MyStrPtr a
+	MyStrPtr a
+
+msp-const = 8008
+inst MyStr MyStrPtr
+	print-str (MyStrPtr(x)) -> Unit
+		println(msp-const)
+		print-str(x)
+
+fn f () -> Unit
+	int-const = 69
+	inst MyStr Int
+		print-str (x Int) -> Unit
+			println(int-const)
+			println(x)
+
+	print-str(MyStrPtr(420))
+
+f()

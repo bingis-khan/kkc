@@ -1,0 +1,26 @@
+#= todo
+#$ Inner recursive instance and outer non-recursive instance with env.
+# 8008135
+# 8008135
+# 420
+
+class MyStr
+	do-sth (x _) -> Unit
+
+MyStrPtr a
+	MyStrPtr a
+
+inst MyStr Int
+	do-sth (x) -> Unit
+		println(x)
+
+
+fn f () -> Unit
+	mystrptr-const = 8008135
+	inst MyStr MyStrPtr
+		do-sth (MyStrPtr(x)) -> Unit
+			println(mystrptr-const)
+			do-sth(x)
+	do-sth(MyStrPtr(MyStrPtr(420)))
+
+f()

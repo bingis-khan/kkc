@@ -1,0 +1,41 @@
+#= todo
+#$ use nonlocal class and nonlocal instance with nonlocal polymorphic function.
+# 69
+# 420
+# 1337
+# True
+# 1
+
+outer-const = 420
+fn f ()
+	some-env = 1337
+	fn print-id (asd)
+		println(some-env)
+		println(asd)
+		return asd
+
+	class A
+		do-sth (x _) -> Unit
+
+	fn g()
+		h-const = 69
+		inst A Bool
+			do-sth (x Bool) -> Unit
+				println(h-const)
+				println(outer-const)
+				print-id(x)
+				if x
+					println(1)
+				else
+					println(0)
+				return
+
+		fn h()
+			do-sth(True)
+			return
+		h()
+		return
+	g()
+	return
+
+f()

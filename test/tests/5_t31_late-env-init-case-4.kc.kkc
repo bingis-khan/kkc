@@ -1,0 +1,34 @@
+#$ Late env init case 4
+# 8008
+# 8008
+# 420
+# True
+
+class MyStr
+	print-str (x _) -> Unit
+
+MyStrPtr a
+	MyStrPtr a
+
+msp-const = 8008
+inst MyStr MyStrPtr
+	print-str (MyStrPtr(x)) -> Unit
+		println(msp-const)
+		print-str(x)
+
+fn f (x)
+	print-str(MyStrPtr(x))
+	return
+
+fn g (n)
+	f(n)
+	return
+
+bool-const = 420
+inst MyStr Bool
+	print-str (self Bool) -> Unit
+		println(bool-const)
+		println(self)
+		return Unit
+
+g(MyStrPtr(True))

@@ -1,0 +1,59 @@
+#= todo
+#$ Use class from outside, two different instances using an inner polymorphic function.
+# 10
+# 420
+# 69
+# ()
+# 1337
+# True
+# 1
+# 1337
+# 696969
+# 696969
+
+class A
+	do-sth (x _) -> Unit
+
+outer-const = 420
+fn f ()
+	bool-const = 10
+	some-env = 1337
+	fn print-id (asd)
+		println(some-env)
+		println(asd)
+		return asd
+
+	fn g()
+		h-const = 69
+		fn h()
+			boop-const = Unit
+
+			inst A Bool
+				do-sth (x Bool) -> Unit
+					println(bool-const)
+					println(outer-const)
+					println(h-const)
+					println(boop-const)
+					print-id(x)
+					if x
+						println(1)
+					else
+						println(0)
+					return
+
+			inst A Int
+				do-sth (x Int) -> Unit
+					print-id(x)
+					println(x)
+					return
+
+
+			do-sth(True)
+			do-sth(696969)
+			return
+		h()
+		return
+	g()
+	return
+
+f()

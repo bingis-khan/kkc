@@ -29,6 +29,7 @@ pub fn main() !void {
     const opts = try Args.parse(std.process.args(), aa);
 
     const s = try compileFile(opts, aa);
+    std.debug.print("=== compilation time: {}ms ===\n", .{s.compilationTimeMS});
 
     var fakeNewline: bool = undefined;
     const fakeHackCtx = ast.Ctx.init(&fakeNewline, &s.typeContext);
@@ -77,7 +78,6 @@ pub fn compileFile(opts: Args, aa: std.mem.Allocator) !CompilationStuff {
 
     _ = try modules.initialModule(&opts.filename);
     const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
-    // std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
 
     const fullAST = modules.getAST();
 

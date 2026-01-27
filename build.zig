@@ -86,6 +86,10 @@ pub fn build(b: *std.Build) void {
     const run_test = b.addRunArtifact(test_exe);
     run_test.has_side_effects = true;
 
+    if (b.args) |args| {
+        run_test.addArgs(args);
+    }
+
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request
     // running the unit tests.

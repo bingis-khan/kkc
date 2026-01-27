@@ -1,0 +1,41 @@
+#$ Class function recursion of both polymorphic parameters.
+# 88
+# 88
+# 69
+# ()
+# 88
+# True
+# False
+
+class MyStr
+	print-str (self _) -> Unit
+
+inst MyStr Int
+	print-str (self Int) -> Unit
+		println(self)
+
+inst MyStr Bool
+	print-str (self Bool) -> Unit
+		println(self)
+
+inst MyStr Unit
+	print-str (u Unit) -> Unit
+		println(Unit)
+MyStrPtr a
+	MyStrPtr a
+
+inst MyStr MyStrPtr
+	print-str (MyStrPtr(x)) -> Unit
+		println(80085)
+		print-str(x)
+
+MyStrConcat l r
+	MyStrConcat l r
+
+inst MyStr MyStrConcat
+	print-str (MyStrConcat(l, r)) -> Unit
+		println(88)
+		print-str(l)
+		print-str(r)
+
+print-str(MyStrConcat(MyStrConcat(69, Unit), MyStrConcat(True, False)))
