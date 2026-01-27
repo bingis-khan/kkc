@@ -54,6 +54,7 @@ pub fn main() !void {
 
     const total = tests.items.len;
     var passed: u32 = 0;
+    var todo: u32 = 0;
     var skipped: u32 = 0;
     for (tests.items) |filename| {
         // global allocator for STUFF
@@ -74,6 +75,8 @@ pub fn main() !void {
             passed += 1;
         } else if (result.status == .Disabled) {
             skipped += 1;
+        } else if (result.status == .Todo) {
+            todo += 1;
         }
 
         if (result.errors) |errors| {
@@ -99,7 +102,7 @@ pub fn main() !void {
         }
     }
 
-    std.debug.print("Passed {}/{} (skipped {})\n", .{ passed, total - skipped, skipped });
+    std.debug.print("Passed {}/{} (todo {}) (skipped {})\n", .{ passed, total - skipped - todo, todo, skipped });
 }
 
 const TestResult = struct {
