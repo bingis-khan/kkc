@@ -1,11 +1,19 @@
 #!./zig-out/bin/kkc
+use Str
+	print-str
 
-use Synonyms
-	Miau
+A
+	x Int
+	y Int
 
-fn xxx (x a) -> Miau a
-	return Just(x)
+inst Str A
+	print-str (self)
+		print-str('A { x: \(self.x), y: \(self.y) }')
 
-# fn f (x Asd): x + 1
+	chars (self): todo()
 
-xxx(123) println()
+a = A { x: 1, y: 5 }
+b = a { x: 2, y: a.x }
+
+a println()
+b println()

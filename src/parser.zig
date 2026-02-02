@@ -1745,6 +1745,35 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             });
         }
 
+        if (binop == .RecordUpdate) {
+            const record = try self.someRecordDefinition();
+            const l = left.l.between(record.rightLoc);
+            const t = left.t;
+
+            for (record.fields) |field| {
+                const fieldTy = try self.typeContext.field(t, field.field, &.{
+                    .l = left.l,
+                    .r = field.value.l,
+                });
+
+                try self.typeContext.unify(fieldTy, field.value.t, &.{
+                    .l = left.l,
+                    .r = field.value.l,
+                });
+            }
+
+            return try self.allocExpr(.{
+                .t = t,
+                .e = .{ .UnOp = .{
+                    .e = left,
+                    .op = .{
+                        .Update = record.fields,
+                    },
+                } },
+                .l = l,
+            });
+        }
+
         if (binop == .As) {
             const t = try Type.init(self, null).sepTyo();
             try self.typeContext.unify(t.e, left.t, &.{
@@ -2925,6 +2954,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .IDENTIFIER => .PostfixCall,
         .TYPE => .PostfixCall,
         .DOT => .RecordAccess,
+        .LEFT_BRACE => .RecordUpdate,
         .AS => .As,
         else => null,
     };
@@ -2956,6 +2986,7 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
 
         .Call => 18,
         .RecordAccess => 18,
+        .RecordUpdate => 18,
         .Deref => 18,
         .PostfixCall => 18,
         // else => unreachable,

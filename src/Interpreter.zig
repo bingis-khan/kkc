@@ -806,6 +806,17 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     .ptr = v.ref,
                 }, self.sizeOf(e.t).size),
                 .Access => |mem| valFromRef(self.getFieldFromType(v.ref, uop.e.t, mem)),
+                .Update => |upd| b: {
+                    const vv = try self.copyValueMeta(v, uop.e.t);
+                    for (upd) |field| {
+                        const vp = self.getFieldFromType(vv.ref, uop.e.t, field.field);
+                        const fieldval = try self.expr(field.value);
+                        const sz = self.sizeOf(field.value.t);
+                        @memcpy(vp.slice(sz.size), fieldval.ref.slice(sz.size));
+                    }
+
+                    break :b vv;
+                },
                 .As => v,
                 .Not => try self.boolValue(!isTrue(v)),
                 .Negate => try self.intValue(-v.ref.int),

@@ -679,6 +679,10 @@ pub const Expr = struct {
                         uop.e.print(c);
                         c.sp(".{s}", .{acc});
                     },
+                    .Update => |upd| {
+                        uop.e.print(c);
+                        c.encloseSepBy(upd, ",", " { ", " }");
+                    },
                     .As => |t| {
                         c.print(.{ uop.e, " as ", t });
                     },
@@ -741,6 +745,7 @@ pub const UnOp = union(enum) {
     Ref,
     Deref,
     Access: Str,
+    Update: []Expr.Field,
     As: Type,
     Not,
     Negate,
@@ -767,6 +772,7 @@ pub const BinOp = union(enum) {
     Call,
     PostfixCall,
     RecordAccess,
+    RecordUpdate,
     Deref,
     As,
 
