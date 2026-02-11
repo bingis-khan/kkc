@@ -23,7 +23,7 @@ We don't need it for matching strings, because we can just make the compiler use
 Also, we might as well allow string interpolation.
 
 
-# (I) Reference variables in `case` statement
+# Reference variables in `case` statement
 
 eg.
 

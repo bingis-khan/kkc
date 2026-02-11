@@ -34,6 +34,7 @@ mode: ParsingMode, // A bit of a hack. I think we should utilize the zigger's po
 // resolver zone
 gen: *Modules.Gen,
 scope: Scope,
+env: ?*AST.Env,
 base: Module.BasePath,
 
 // type zone
@@ -76,6 +77,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str,
 
         // resolver
         .scope = Scope.init(arena), // TODO: use GPA
+        .env = null,
         .gen = &modules.gen,
         .base = base,
 
@@ -165,8 +167,8 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         .annotations = annotations,
     });
     b: {
-        self.scope.beginScope(null);
-        defer self.scope.endScope();
+        self.beginScope();
+        defer self.endScope();
 
         // tvars
         var tvars = try std.ArrayList(AST.TVarOrNum).initCapacity(self.arena, tvarToks.len);
@@ -268,8 +270,8 @@ fn typeSynonym(self: *Self, typename: Token, tvarToks: []Token, annotations: []A
     var tvars = try std.ArrayList(AST.TVarOrNum).initCapacity(self.arena, tvarToks.len);
 
     const synonym = try b: {
-        self.scope.beginScope(null);
-        defer self.scope.endScope();
+        self.beginScope();
+        defer self.endScope();
 
         for (tvarToks) |t| {
             if (t.type == .NUMTYNAME) {
@@ -317,9 +319,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     self.returned = .Nah;
 
     // already begin env
-    var env = Env.init(self.arena);
-
-    self.scope.beginScope(&env);
+    const env = try self.beginEnv();
 
     var params = std.ArrayList(*AST.Decon).init(self.arena);
     const tyconstr = Type.Constrain{ .Function = .{ .uid = fun.name.uid } };
@@ -364,7 +364,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         .ret = ret,
         .scheme = AST.Scheme.empty(), // in recursive calls, the scheme should be empty
         .temp__isRecursive = true,
-        .env = &.{},
+        .env = env,
         .body = undefined,
     };
 
@@ -401,9 +401,9 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     // after typechecking inside the function, create scheme.
     // TODO: unfinished, we don't care about the environment yet.
     const definedTVars = self.scope.currentScope().tvars;
-    self.scope.endScope(); // finish env.
+    self.endScope(); // finish env.
 
-    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env.items, fun.name.uid, &constraints_);
+    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env, fun.name.uid, &constraints_);
 
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
@@ -412,7 +412,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         .ret = ret,
         .body = fnBody,
         .scheme = scheme,
-        .env = env.items,
+        .env = env,
         .temp__isRecursive = false,
     };
 
@@ -453,7 +453,7 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
 
     try self.devour(.INDENT);
 
-    self.scope.beginScope(null);
+    self.beginScope();
     var stmts = std.ArrayList(*AST.Stmt).init(self.arena);
     while (!self.check(.DEDENT)) {
         const stmt = try self.statement();
@@ -461,7 +461,7 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
             try stmts.append(s);
         }
     }
-    self.scope.endScope();
+    self.endScope();
 
     return .{ .stmts = stmts, .returnStatus = self.returned };
 }
@@ -923,7 +923,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             var returnStatus = ReturnStatus.Returned; // mempty-like
             var cases = std.ArrayList(AST.Case).init(self.arena);
             try self.devour(.INDENT);
-            self.scope.beginScope(null);
+            self.beginScope();
             while (!self.check(.DEDENT)) {
                 const decon = try self.deconstruction();
                 try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
@@ -931,7 +931,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 try cases.append(.{ .decon = decon, .body = bod.stmts.items });
                 returnStatus = returnStatus.alternative(bod.returnStatus);
             }
-            self.scope.endScope();
+            self.endScope();
 
             self.returned = returnStatus;
 
@@ -1094,8 +1094,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
 fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void {
     const uid = self.gen.vars.newUnique();
     const name = nameTok.literal(self.lexer.source);
-    var env = Env.init(self.arena);
-    self.scope.beginScope(&env);
+    self.beginScope();
 
     try self.devour(.LEFT_PAREN);
 
@@ -1125,7 +1124,7 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     while (it.next()) |tvar| {
         try definedTVars.append(tvar.*);
     }
-    self.scope.endScope();
+    self.endScope();
 
     const scheme = AST.Scheme{
         .tvars = definedTVars.items,
@@ -1214,7 +1213,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     const funName = try self.expect(.IDENTIFIER);
     const uid = self.gen.classFuns.newUnique();
 
-    self.scope.beginScope(null); // let's capture all tvars.
+    self.beginScope();
     var params = std.ArrayList(AST.ClassFun.Param).init(self.arena);
     var assocs = std.ArrayList(AST.Association).init(self.arena);
     const tyconstr = Type.Constrain{ .ClassFunction = .{ .uid = uid, .assocs = &assocs } };
@@ -1240,7 +1239,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
 
     try self.endStmt();
     const tvarsMap = self.scope.currentScope().tvars;
-    self.scope.endScope();
+    self.endScope();
 
     // make a scheme from deze vars yo.
     var tvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
@@ -1930,8 +1929,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     if (self.consume(.FN)) |tokfun| { // smol hack to allow quick empty lambdas.
         var params = std.ArrayList(*AST.Decon).init(self.arena);
 
-        const env = try Common.allocOne(self.arena, Env.init(self.arena));
-        self.scope.beginScope(env);
+        const env = try self.beginEnv();
 
         var needsBody = false;
         var l = self.loc(tokfun);
@@ -1976,7 +1974,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
         if (needsBody) {
             const lamscopeSave = self.scope.currentScope().*;
-            self.scope.endScope();
+            self.endScope();
 
             const lamExpr = try self.allocExpr(.{
                 .t = try self.typeContext.newType(.{
@@ -1990,7 +1988,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     .Lam = .{
                         .params = params.items,
                         .body = .{ .Body = &.{} }, // temporary empty list!
-                        .env = &.{},
+                        .env = undefined,
                     },
                 },
 
@@ -2013,13 +2011,14 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .this = .{ .Lambda = .{
                     .lamExpr = lamExpr,
                     .scope = lamscopeSave,
+                    .env = env,
                 } },
             } };
 
             return lamExpr;
         } else {
             const expr = try self.expression();
-            self.scope.endScope();
+            self.endScope();
 
             l = l.between(expr.l);
 
@@ -2027,7 +2026,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .t = try self.typeContext.newType(.{
                     .Fun = .{
                         .args = argTys,
-                        .env = try self.typeContext.newEnv(env.items),
+                        .env = try self.typeContext.newEnv(.{
+                            .env = env,
+                            .match = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
+                        }),
                         .ret = expr.t,
                     },
                 }),
@@ -2035,7 +2037,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     .Lam = .{
                         .params = params.items,
                         .body = .{ .Expr = expr },
-                        .env = env.items,
+                        .env = env,
                     },
                 },
 
@@ -2368,12 +2370,12 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
 
     const bod = try self.body();
     var stmts = bod.stmts;
-    self.scope.endScope();
+    self.endScope();
 
     try self.finishBodyAndInferReturnType(&stmts, bod.returnStatus, tempLoc); // TEMP. I should return the location of the last statement (but I don''t have locations in statements yet.')
 
     lamMode.this.Lambda.lamExpr.e.Lam.body.Body = stmts.items;
-    lamMode.this.Lambda.lamExpr.e.Lam.env = lamMode.this.Lambda.scope.env.?.items;
+    lamMode.this.Lambda.lamExpr.e.Lam.env = lamMode.this.Lambda.env;
 
     self.mode = .{ .Simple = lamMode.prev };
 }
@@ -2388,7 +2390,7 @@ fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc:
     // var returnStatus = ReturnStatus.Returned; // mempty-like
     var cases = std.ArrayList(AST.Expr.ExprCase).init(self.arena);
     try self.devour(.INDENT);
-    self.scope.beginScope(null);
+    self.beginScope();
     while (!self.check(.DEDENT)) {
         const decon = try self.deconstruction();
         try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
@@ -2407,7 +2409,7 @@ fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc:
             // returnStatus = returnStatus.alternative(bod.returnStatus);
         }
     }
-    self.scope.endScope();
+    self.endScope();
 
     // self.returned = returnStatus;
 
@@ -2640,7 +2642,7 @@ fn constructorExpression(self: *Self, modpath: Module.Path, name: Token) !*AST.E
         .Fun = .{
             .args = ct.tys,
             .ret = ct.t,
-            .env = try self.typeContext.newEnv(&.{}), // nocheckin: we have to figure out if the env is the same.
+            .env = try self.typeContext.newEnv(try TypeContext.Env.empty(self.arena)), // nocheckin: we have to figure out if the env is the same.
         },
     });
     return self.allocExpr(.{
@@ -2914,7 +2916,10 @@ fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
                 .t = try self.typeContext.newType(.{ .Fun = .{
                     .ret = sci.t,
                     .args = tyArgs,
-                    .env = try self.typeContext.newEnv(&.{}),
+                    .env = try self.typeContext.newEnv(.{
+                        .env = try Common.allocOne(self.arena, AST.Env.empty()),
+                        .match = sci.match,
+                    }),
                 } }),
                 .e = .{ .Con = &sc.data.stuff.cons[0] },
                 .l = l.l.between(r.l),
@@ -3138,7 +3143,7 @@ const Type = struct {
                                 try self.typeContext.newEnv(null)
                             else
                                 // in external functions, assume no environment.
-                                try self.typeContext.newEnv(&.{}),
+                                try self.typeContext.newEnv(try TypeContext.Env.empty(self.arena)),
                         },
                     }),
                     .l = l.between(ret.l),
@@ -3364,7 +3369,7 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
     funPtr.* = .{ // TODO: is this all really needed? The scheme is assigned empty in the function() anyways. I should inline all this code in the future.
         .name = thisVar,
         .scheme = AST.Scheme.empty(),
-        .env = &.{},
+        .env = undefined,
         .params = undefined,
         .ret = undefined,
         .body = undefined,
@@ -3376,22 +3381,24 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
 
 fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
     vorf: Module.VarOrFun,
-    sc: ?*CurrentScope,
+    level: usize,
 } {
     const varName = varTok.literal(self.lexer.source);
     if (modpath.len == 0) {
         var lastVars = self.scope.scopes.iterateFromTop();
+        var lvl = self.level();
         while (lastVars.nextPtr()) |cursc| {
             if (cursc.vars.get(varName)) |vorf| {
-                return .{ .vorf = vorf, .sc = cursc };
+                return .{ .vorf = vorf, .level = lvl };
             }
+            lvl -= 1;
         }
     } else {
         if (try self.loadModuleFromPath(modpath)) |mod| {
             if (mod.lookupVar(varName)) |vorf| {
                 return .{
                     .vorf = vorf,
-                    .sc = null,
+                    .level = 0,
                 };
             } else {
                 // FALLTHROUGH.
@@ -3417,7 +3424,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
         .vorf = .{
             .Var = .{ .v = placeholderVar, .t = t },
         },
-        .sc = null,
+        .level = 0,
     };
 }
 
@@ -3428,7 +3435,6 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
 } {
     const vorfAndScope = try self.lookupVar(modpath, varTok);
     const vorf = vorfAndScope.vorf;
-    const cursc = vorfAndScope.sc;
     const varInst: AST.VarInst = switch (vorf) {
         .TNum => |tnum| .{
             .v = .{ .TNum = tnum },
@@ -3479,7 +3485,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
                 .Fun = .{
                     .args = params.items,
                     .ret = ret,
-                    .env = try self.typeContext.newEnv(&.{}),
+                    .env = try self.typeContext.newEnv(try TypeContext.Env.empty(self.arena)),
                 },
             });
 
@@ -3500,14 +3506,11 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
     };
 
     if (!isRecursive) {
-        // TODO: I should make a separate function, but I'm still not sure about the interface.
-        var lastScope = self.scope.scopes.iterateFromTop();
-        while (lastScope.nextPtr()) |sc| {
-            if (sc == cursc) break; // we are in the scope the var was defined in, so don't add it to its env.
-
-            if (sc.env) |env| {
-                try env.append(varInst);
-            }
+        var menv: ?*AST.Env = self.env;
+        while (menv) |env| {
+            if (env.level <= vorfAndScope.level) break;
+            try env.insts.append(varInst);
+            menv = env.outer;
         }
     }
     return .{
@@ -3587,7 +3590,10 @@ fn instantiateFunction(self: *Self, fun: *AST.Function, l: ?Loc) !struct { t: AS
         .Fun = .{
             .args = params.items,
             .ret = fun.ret,
-            .env = try self.typeContext.newEnv(fun.env), // this is sussy. maybe we should also keep the "newEnv" still.
+            .env = try self.typeContext.newEnv(.{
+                .env = fun.env,
+                .match = match,
+            }), // this is sussy. maybe we should also keep the "newEnv" still. NOTE(02.10.25): ????
         },
     });
     return .{ .t = try self.typeContext.mapType(match, funTy), .m = match };
@@ -4056,7 +4062,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
     return try Common.allocOne(self.arena, tvarMatch);
 }
 
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVarOrNum), params: []*AST.Decon, ret: AST.Type, env: AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
+fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVarOrNum), params: []*AST.Decon, ret: AST.Type, env: *AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
     const expectedBinding = AST.Binding{
         .Function = functionId,
     };
@@ -4070,7 +4076,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 
     // environment stuff.
     var envftvs = TypeContext.FTVs.init(self.arena);
-    for (env) |inst| {
+    for (env.insts.items) |inst| {
         // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
         switch (inst.v) {
             .TNum => {},
@@ -4297,6 +4303,40 @@ fn addInstance(self: *Self, instance: *AST.Instance) !void {
     try dataInsts.put(instance.data, instance);
 }
 
+fn beginEnv(self: *Self) !*AST.Env {
+    self.beginScope(); // x -> x + 1
+
+    const nuEnv = try Common.allocOne(self.arena, AST.Env{
+        .insts = std.ArrayList(AST.VarInst).init(self.arena),
+        .level = self.level(), // x + 1 ;; number of scopes -> level
+        .outer = self.env,
+    });
+    self.env = nuEnv;
+    return nuEnv;
+}
+
+fn level(self: *const @This()) usize {
+    return self.scope.scopes.current;
+}
+
+fn beginScope(self: *@This()) void {
+    self.scope.scopes.push(CurrentScope.init(self.arena));
+}
+
+fn endScope(self: *Self) void {
+    _ = self.scope.scopes.pop();
+    if (self.env) |env| {
+        if (env.level > self.level()) {
+            self.env = env.outer;
+        }
+
+        // make sure that the next env is AT LEAST on the level of the current scope (otherwise it wouldn't make sense.)
+        if (self.env) |eenv| {
+            std.debug.assert(eenv.level <= self.level());
+        }
+    }
+}
+
 const Scope = struct {
     al: std.mem.Allocator,
     // TODO: instead of this stack, we should just use the program stack!
@@ -4306,7 +4346,7 @@ const Scope = struct {
     pub fn init(al: std.mem.Allocator) @This() {
         const Scopes = stack.Fixed(CurrentScope, Common.MaxIndent);
         var scopes = Scopes.init();
-        const defaultScope = CurrentScope.init(al, null);
+        const defaultScope = CurrentScope.init(al);
         scopes.push(defaultScope);
         return .{
             .al = al,
@@ -4316,14 +4356,6 @@ const Scope = struct {
 
     pub fn currentScope(self: *@This()) *CurrentScope {
         return self.scopes.topp();
-    }
-
-    pub fn beginScope(self: *@This(), env: ?*Env) void {
-        self.scopes.push(CurrentScope.init(self.al, env));
-    }
-
-    pub fn endScope(self: *@This()) void {
-        _ = self.scopes.pop();
     }
 
     fn restoreScope(self: *@This(), scope: CurrentScope) void {
@@ -4354,24 +4386,19 @@ const CurrentScope = struct {
     tvars: std.StringHashMap(AST.TVarOrNum),
     instances: std.AutoHashMap(*AST.Class, Module.DataInstance),
 
-    env: ?*Env,
-
-    fn init(al: std.mem.Allocator, env: ?*Env) @This() {
+    fn init(al: std.mem.Allocator) @This() {
         return .{
             .vars = std.StringHashMap(Module.VarOrFun).init(al),
             .types = std.StringHashMap(Module.DataOrClass).init(al),
             .cons = std.StringHashMap(*AST.Con).init(al),
             .tvars = std.StringHashMap(AST.TVarOrNum).init(al),
             .instances = std.AutoHashMap(*AST.Class, Module.DataInstance).init(al),
-            .env = env,
         };
     }
 
     // in the future - scopes are actually safe to deallocate.
     fn deinit() void {}
 };
-
-const Env = std.ArrayList(AST.VarInst);
 
 // typechecking zone
 
@@ -4550,6 +4577,7 @@ const ParsingMode = union(enum) {
             Lambda: struct {
                 lamExpr: *AST.Expr, // TODO: fix iffy typing.
                 scope: CurrentScope,
+                env: *AST.Env,
             },
 
             Case: struct {

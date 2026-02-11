@@ -8,6 +8,7 @@ const Interpreter = @import("Interpreter.zig");
 const Errors = @import("error.zig").Errors;
 const AST = @import("ast.zig");
 const TypeContext = @import("TypeContext.zig");
+const Modules = @import("Modules.zig");
 
 const BaseDir = "test/tests/";
 
@@ -23,6 +24,17 @@ pub fn main() !void {
         }
     }
     const al = gpa.allocator();
+
+    // TODO: for now allocate everything in arena.
+    // later we should free old stuff.
+    // global allocator for STUFF
+    var arena = std.heap.ArenaAllocator.init(al);
+    defer arena.deinit();
+
+    const aa = arena.allocator();
+
+    const opts = Args{ .filename = "miauuuuuuuuuu" };
+    const ogModules = try kkc_main.preloadModules(&opts, aa);
 
     var tests = std.ArrayList(Str).init(al);
     defer {
@@ -57,13 +69,9 @@ pub fn main() !void {
     var todo: u32 = 0;
     var skipped: u32 = 0;
     for (tests.items) |filename| {
-        // global allocator for STUFF
-        var arena = std.heap.ArenaAllocator.init(al);
-        defer arena.deinit();
+        var modules = try ogModules.cloneWithAllocator(aa);
+        const result = runTest(filename, &modules);
 
-        const aa = arena.allocator();
-
-        const result = runTest(filename, aa);
         std.debug.print("[{s}] ({s}) {s}\n", .{ switch (result.status) {
             .Passed => "V",
             .Disabled => ".",
@@ -135,8 +143,8 @@ const TestResult = struct {
     compileMS: ?u64,
     runMS: ?u64,
 };
-fn runTest(filename: Str, aa: std.mem.Allocator) TestResult {
-    return runTest_(filename, aa) catch |err| .{
+fn runTest(filename: Str, modules: *Modules) TestResult {
+    return runTest_(filename, modules) catch |err| .{
         .filename = filename,
         .testname = "???",
         .status = .{ .CompilerError = err },
@@ -147,11 +155,12 @@ fn runTest(filename: Str, aa: std.mem.Allocator) TestResult {
     };
 }
 
-const CompilerError = error{InterpreterPanic} || ErrSet(kkc_main.compileFile) || ErrSet(runAndReadStdout) || ErrSet(readHeader);
+const CompilerError = error{InterpreterPanic} || ErrSet(kkc_main.preloadModules) || ErrSet(kkc_main.compileFile) || ErrSet(runAndReadStdout) || ErrSet(readHeader);
 
-fn runTest_(filename: Str, aa: std.mem.Allocator) !TestResult {
+fn runTest_(filename: Str, modules: *Modules) !TestResult {
 
     // stuff
+    const aa: std.mem.Allocator = modules.al;
     const relFilename = try std.mem.concat(aa, u8, &.{ BaseDir, filename });
     const header = try readHeader(relFilename, aa);
     if (header.disabled) |disability| {
@@ -169,21 +178,22 @@ fn runTest_(filename: Str, aa: std.mem.Allocator) !TestResult {
         };
     }
 
-    const opts = Args{ .filename = relFilename };
-    const s = try kkc_main.compileFile(opts, aa);
+    const compilationStartTime = try std.time.Instant.now();
+    try kkc_main.compileFile(modules, relFilename);
+    const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
 
     var result = TestResult{
         .filename = filename,
         .testname = header.testTitle,
         .status = .Passed,
-        .errors = s.errors,
-        .typeContext = s.typeContext,
-        .compileMS = s.compilationTimeMS,
+        .errors = modules.errors.*,
+        .typeContext = modules.typeContext.*,
+        .compileMS = compilationTime,
         .runMS = null,
     };
 
-    if (s.errors.items.len == 0) {
-        const run = try runAndReadStdout(aa, &s);
+    if (modules.errors.items.len == 0) {
+        const run = try runAndReadStdout(aa, modules);
 
         if (run.failed) {
             result.status = .{ .CompilerError = error.InterpreterPanic };
@@ -222,7 +232,7 @@ const Run = struct {
     returnValue: u8,
     interpretTimeMS: u64,
 };
-fn runAndReadStdout(aa: std.mem.Allocator, s: *const kkc_main.CompilationStuff) !Run {
+fn runAndReadStdout(aa: std.mem.Allocator, modules: *const Modules) !Run {
     const interpretStartTime = try std.time.Instant.now();
     const fd = try std.posix.pipe(); // .{ read, write }
     const pid = try std.posix.fork();
@@ -233,7 +243,7 @@ fn runAndReadStdout(aa: std.mem.Allocator, s: *const kkc_main.CompilationStuff) 
         try std.posix.dup2(fd[1], std.io.getStdOut().handle);
         std.posix.close(fd[1]);
 
-        const ret = try Interpreter.run(s.ast, s.prelude, &s.typeContext, &.{}, aa);
+        const ret = try Interpreter.run(modules.getAST(), modules.prelude.?, modules.typeContext, &.{}, aa);
         std.process.exit(@intCast(ret));
     }
 

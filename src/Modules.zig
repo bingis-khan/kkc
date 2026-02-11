@@ -28,6 +28,11 @@ pub const Gen = struct {
     fn init() @This() {
         return std.mem.zeroInit(@This(), .{});
     }
+
+    fn clone(self: *const @This()) @This() {
+        // everything is by value, so no need to clone anything.
+        return self.*;
+    }
 };
 
 // NOTE: null means that the Module is still being parsed.
@@ -269,4 +274,22 @@ fn modulePathToFilepath(self: *const Self, base: Module.BasePath) !Str {
     try sb.appendSlice(".kkc");
 
     return sb.items;
+}
+
+pub fn cloneWithAllocator(self: *const Self, al: std.mem.Allocator) !Self {
+    const nuErrors = try common.allocOne(al, try common.cloneArrayListWithAllocator(self.errors.*, al));
+    return .{
+        .modules = try self.modules.cloneWithAllocator(al),
+        .errors = nuErrors,
+        .typeContext = try common.allocOne(al, try self.typeContext.cloneWithAllocator(nuErrors, al)),
+        .al = al,
+        .preludeExports = self.preludeExports.?.clone(), // TODO: instead of re-adding stuff for every module, save the state and COPY.
+        .stdExports = self.stdExports.?.clone(),
+        .prelude = self.prelude,
+        .full = try common.cloneArrayListWithAllocator(self.full, al),
+        .rootPath = self.rootPath,
+        .stdPath = self.stdPath,
+        .gen = self.gen.clone(),
+        .opts = self.opts,
+    };
 }

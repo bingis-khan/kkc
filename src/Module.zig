@@ -47,6 +47,11 @@ pub const Exports = struct {
         }
         cc.s("End Instances\n");
     }
+
+    pub fn clone(self: *const @This()) @This() {
+        // noop, because all this data should be immutable.
+        return self.*;
+    }
 };
 
 pub const Path = []const Str;

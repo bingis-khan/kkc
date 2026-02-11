@@ -20,9 +20,20 @@ const TyStoreElem = union(enum) {
 const TyStore = std.ArrayList(TyStoreElem);
 
 const EnvRef = ast.EnvRef;
+pub const Env = struct {
+    env: *ast.Env,
+    match: *const ast.Match,
+
+    pub fn empty(al: std.mem.Allocator) !@This() {
+        return .{
+            .env = try common.allocOne(al, ast.Env.empty()),
+            .match = try common.allocOne(al, ast.Match.empty(ast.Scheme.empty())),
+        };
+    }
+};
 const EnvStore = std.ArrayList(union(enum) {
     Ref: EnvRef,
-    Env: ?ast.Env,
+    Env: ?Env,
 });
 
 const NumRef = ast.NumRef;
@@ -78,7 +89,7 @@ pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
     return .{ .id = tid };
 }
 
-pub fn newEnv(self: *Self, e: ?ast.Env) !ast.EnvRef {
+pub fn newEnv(self: *Self, e: ?Env) !ast.EnvRef {
     try self.envContext.append(.{ .Env = e });
     const envid = self.envContext.items.len - 1;
     return .{ .id = envid };
@@ -131,7 +142,7 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                     try self.unify_(t2f, f.t, locs, fullTys);
                 }
             }
-            self.setType(t1, t2);
+            try self.setType(t1, t2, locs, false);
             return;
         },
         else => {
@@ -145,7 +156,7 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                             try self.unify_(t1f, f.t, locs, fullTys);
                         }
                     }
-                    self.setType(t2, t1);
+                    try self.setType(t2, t1, locs, true);
                     return;
                 },
                 else => {},
@@ -160,13 +171,13 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
             switch (tt2) {
                 .Anon => |fields2| {
                     try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = fields2 }, locs, fullTys);
-                    self.setType(t1, t2);
+                    try self.setType(t1, t2, locs, false);
                 },
                 .Con => |rcon| {
                     switch (rcon.type.stuff) {
                         .recs => |recs| {
                             try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = recs }, locs, fullTys);
-                            self.setType(t1, t2);
+                            try self.setType(t1, t2, locs, false);
                         },
                         .cons => unreachable, // error! (make it more specialized, explain that this constructor does not have fields)
                     }
@@ -189,7 +200,7 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                     switch (lcon.type.stuff) {
                         .recs => |recs| {
                             try self.matchFields(.{ .t = t1, .fields = recs }, .{ .t = t2, .fields = fields2 }, locs, fullTys);
-                            self.setType(t2, t1);
+                            try self.setType(t2, t1, locs, true);
                         },
                         .cons => unreachable, // explain
                     }
@@ -332,23 +343,25 @@ fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs, full: Ful
     // Later (after we implement classes) we will probably have an id associated with it.
     // Then I can decide if I want structural equality.
     if (lenvref.id == renvref.id) return;
-    const lenv = self.getEnv(lenvref).env orelse {
+    const llenv = self.getEnv(lenvref).env orelse {
         // self.envContext.items[lenvref.id] = self.envContext.items[renvref.id];
         self.setEnvRef(lenvref, renvref);
         return;
     };
-    const renv = self.getEnv(renvref).env orelse {
+    const lenv = llenv.env;
+    const rrenv = self.getEnv(renvref).env orelse {
         // self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
         self.setEnvRef(renvref, lenvref);
         return;
     };
+    const renv = rrenv.env;
 
-    if (lenv.len != renv.len) {
+    if (lenv.insts.items.len != renv.insts.items.len) {
         try self.envMismatch(lenv, renv, locs);
         return;
     }
 
-    for (lenv, renv) |lv, rv| {
+    for (lenv.insts.items, renv.insts.items) |lv, rv| {
         if (!std.meta.eql(lv, rv)) {
             try self.envMismatch(lenv, renv, locs);
             return;
@@ -361,7 +374,7 @@ fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs, full: Ful
 }
 
 pub fn getEnv(self: *const Self, envref: EnvRef) struct {
-    env: ?ast.Env,
+    env: ?Env,
     base: EnvRef,
 } {
     var curref = envref;
@@ -467,6 +480,20 @@ pub fn unifyParams(self: *Self, lps: []TyRef, rps: []TyRef, locs: Locs, full: Fu
     }
 }
 
+fn errOccursCheck(self: *Self, t: TyRef, tyvar: ast.TyVar, tl: ?Loc, tyvarl: ?Loc, moduleInfo: common.ModuleInfo) !void {
+    try self.errors.append(.{
+        .module = moduleInfo,
+        .err = .{
+            .OccursCheck = .{
+                .t = t,
+                .tpos = tl,
+                .tyv = tyvar,
+                .tyvpos = tyvarl,
+            },
+        },
+    });
+}
+
 fn errMismatch(self: *Self, lt: TyRef, rt: TyRef, locs: Locs, full: Full) !void {
     std.debug.assert(locs != null);
     try self.reportError(locs, .{ .MismatchingTypes = .{
@@ -479,8 +506,9 @@ fn errMismatch(self: *Self, lt: TyRef, rt: TyRef, locs: Locs, full: Full) !void 
     } });
 }
 
-fn envMismatch(self: *Self, lenv: ast.Env, renv: ast.Env, locs: Locs) !void {
+fn envMismatch(self: *Self, lenv: *ast.Env, renv: *ast.Env, locs: Locs) !void {
     std.debug.assert(locs != null);
+    // NOTE: sussy, because an env can change later and POSSIBLY match.
     try self.reportError(locs, .{ .MismatchingEnv = .{
         .le = lenv,
         .re = renv,
@@ -509,8 +537,55 @@ fn typeDoesNotHaveField(self: *Self, t: ast.Type, f: Str, locs: Locs, full: ast.
     } });
 }
 
-// TODO: ignoring allocation failures to keep method signature. figure out a way to do a performant occurs check
-fn setType(self: *Self, tref: TyRef, tdest: TyRef) void {
+fn setType(self: *Self, tref: TyRef, tdest: TyRef, locs: Locs, reversed: bool) !void {
+    // TODO: *definitely* look through this and fix this code again because it's weird.
+    //   1. We `getType` again which is following a pointer around.
+    //   2. funny code. figure out when exactly we SHOULDN'T DO an occurs check. (for some reason, the tyvar thing breaks)
+    switch (self.getType(tref)) {
+        .TyVar => |tyvar| {
+            const desttyvar = self.getType(tdest);
+            b: {
+                switch (desttyvar) {
+                    .TyVar => |dtyv| {
+                        if (dtyv.uid == tyvar.uid) {
+                            return;
+                        } else {
+                            break :b;
+                        }
+                    },
+                    else => {},
+                }
+
+                if (self.occursCheck(tyvar, tdest)) {
+                    if (!reversed) {
+                        try self.errOccursCheck(
+                            tdest,
+                            tyvar,
+                            locs.?.l,
+                            locs.?.r,
+                            locs.?.l.module,
+                        );
+                    } else {
+                        try self.errOccursCheck(
+                            tdest,
+                            tyvar,
+                            locs.?.r,
+                            locs.?.l,
+                            locs.?.l.module,
+                        );
+                    }
+                    return;
+                }
+
+                break :b;
+            }
+        },
+
+        // NOTE: we are doing setType with Anons.
+        // Then we don't need an occurs check... probably?????
+        .Anon => {},
+        else => unreachable,
+    }
     // occurs check
     // var ftvAl = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     // defer ftvAl.deinit();
@@ -544,12 +619,64 @@ fn setType(self: *Self, tref: TyRef, tdest: TyRef) void {
     }
 }
 
+fn occursCheck(self: *const Self, tyv: ast.TyVar, ty: TyRef) bool {
+    const t = self.getType(ty);
+    switch (t) {
+        .TyVar => |ttyv| {
+            return tyv.uid == ttyv.uid;
+        },
+        .Con => |con| {
+            return self.occursCheckMatch(tyv, con.application);
+        },
+        .Fun => |fun| {
+            if (self.getEnv(fun.env).env) |env| {
+                if (self.occursCheckMatch(tyv, env.match)) return true;
+            }
+
+            for (fun.args) |aty| {
+                if (self.occursCheck(tyv, aty)) return true;
+            }
+
+            if (self.occursCheck(tyv, fun.ret)) return true;
+            return false;
+        },
+        .TVar => return false,
+        .Anon => |anon| {
+            for (anon) |an| {
+                if (self.occursCheck(tyv, an.t)) return true;
+            }
+            return false;
+        },
+    }
+}
+
+fn occursCheckMatch(self: *const Self, tyv: ast.TyVar, match: *const ast.Match) bool {
+    for (match.tvars) |tynum| {
+        switch (tynum) {
+            .Type => |ty| if (self.occursCheck(tyv, ty)) return true,
+            .Num => continue,
+        }
+    }
+
+    return false;
+}
+
 pub fn getType(self: *const Self, t: TyRef) ast.TypeF(TyRef) {
     var current = t;
     while (true) {
         switch (self.context.items[current.id]) {
             .Ref => |newTy| current = newTy,
             .Type => |actualType| return actualType,
+        }
+    }
+}
+
+fn getTypeAndBase(self: *const Self, t: TyRef) struct { base: ast.Type, t: ast.TypeF(TyRef) } {
+    var current = t;
+    while (true) {
+        switch (self.context.items[current.id]) {
+            .Ref => |newTy| current = newTy,
+            .Type => |actualType| return .{ .base = current, .t = actualType },
         }
     }
 }
@@ -666,7 +793,19 @@ pub const FTVs = struct {
 pub const FTV = struct { tyv: ast.TyVar, t: ast.Type };
 
 pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMemory}!ast.Type {
-    const t = self.getType(ty);
+    const bt = self.getTypeAndBase(ty);
+    const t = bt.t;
+
+    // for (match.tvars) |tyOrNum| {
+    //     switch (tyOrNum) {
+    //         .Type => |mty| {
+    //             const mt = self.getTypeAndBase(mty);
+    //             if (mt.base.eq(bt.base)) return ty;
+    //         },
+    //         else => continue,
+    //     }
+    // }
+
     return switch (t) {
         .Con => |con| b: {
             const conMatch = try self.mapMatch(match, con.application) orelse {
@@ -793,18 +932,18 @@ fn mapNum(self: *Self, match: *const ast.Match, numref: ast.NumRef) ?ast.NumRef 
     return null;
 }
 
-fn mapEnv(self: *Self, match: *const ast.Match, envref: ast.EnvRef) !ast.EnvRef {
+fn mapEnv(self: *Self, match: *const ast.Match, envref: ast.EnvRef) error{OutOfMemory}!ast.EnvRef {
     const envAndBase = self.getEnv(envref);
-    return if (envAndBase.env) |env| bb: {
-        var envChanged = false;
-        var nuenv = std.ArrayList(ast.VarInst).init(self.arena);
-        for (env) |inst| {
-            const newTy = try self.mapType(match, inst.t);
-            envChanged = envChanged or !newTy.eq(inst.t);
-            try nuenv.append(.{ .v = inst.v, .t = newTy, .m = inst.m });
-        }
-
-        break :bb if (envChanged) try self.newEnv(nuenv.items) else envref;
+    return if (envAndBase.env) |*env| bb: {
+        const menvMatch = try self.mapMatch(match, env.match);
+        break :bb if (menvMatch) |envMatch| b: {
+            break :b try self.newEnv(.{
+                .env = env.env,
+                .match = envMatch,
+            });
+        } else b: {
+            break :b envref;
+        };
     } else bb: {
         if (match.mapEnv(envAndBase.base)) |nue| {
             break :bb nue;
@@ -826,4 +965,17 @@ fn err(self: *Self, comptime t: type, comptime fmt: []const u8, args: anytype) !
     std.debug.print(fmt ++ " at {}\n", args ++ .{self.currentToken});
     std.debug.print("{s}\n", .{self.lexer.source[self.currentToken.from -% 5 .. @min(self.lexer.source.len, self.currentToken.to +% 5)]});
     return error.ParseError;
+}
+
+pub fn cloneWithAllocator(self: *const Self, nuerrs: *Errors, al: std.mem.Allocator) !Self {
+    const arrclone = common.cloneArrayListWithAllocator;
+    return .{
+        .context = try arrclone(self.context, al),
+        .envContext = try arrclone(self.envContext, al),
+        .numContext = try arrclone(self.numContext, al),
+        .tyvarFields = try self.tyvarFields.cloneWithAllocator(al),
+        .gen = self.gen,
+        .errors = nuerrs,
+        .arena = self.arena, // for `mapType` functions
+    };
 }

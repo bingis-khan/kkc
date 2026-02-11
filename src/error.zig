@@ -58,6 +58,13 @@ pub const Error = union(enum) {
         loc: Loc,
     },
 
+    OccursCheck: struct {
+        t: ast.Type,
+        tpos: ?Loc,
+        tyv: ast.TyVar,
+        tyvpos: ?Loc,
+    },
+
     MismatchingTypes: struct {
         lfull: ast.Type,
         lt: ast.Type,
@@ -77,9 +84,9 @@ pub const Error = union(enum) {
     },
 
     MismatchingEnv: struct {
-        le: ast.Env,
+        le: *ast.Env,
         lpos: Loc,
-        re: ast.Env,
+        re: *ast.Env,
         rpos: ?Loc,
     },
 
@@ -94,11 +101,6 @@ pub const Error = union(enum) {
         data: *ast.Data,
         expect: usize,
         actual: usize,
-    },
-
-    RecursiveType: struct {
-        tyv: ast.TyVar,
-        in: ast.Type,
     },
 
     TuplesNotYetSupported: struct {},
@@ -227,8 +229,27 @@ pub const Error = union(enum) {
             .UndefinedIntrinsic => |e| {
                 err.atLocation(e.loc, .{ .label = .{"undefined intrinsic"} });
             },
-            .RecursiveType => |e| {
-                c.print(.{ "tried to unify tyvar ", e.tyv, ", which is in type ", e.in, "\n" });
+            .OccursCheck => |oc| {
+                if (oc.tpos == null and oc.tyvpos == null) {
+                    unreachable; // ACTUALLY UNREACHABLE
+                } else if (oc.tpos != null and oc.tyvpos != null) {
+                    err.atLocation(oc.tyvpos.?, .{ .label = .{
+                        "occurs check of ",
+                        oc.tyv,
+                    } });
+                    err.atLocation(oc.tpos.?, .{ .label = .{
+                        " in ",
+                        oc.t,
+                    } });
+                } else {
+                    // either left or right pos
+                    err.atLocation(oc.tpos orelse oc.tyvpos.?, .{ .label = .{
+                        "occurs check of ",
+                        oc.tyv,
+                        " in ",
+                        oc.t,
+                    } });
+                }
             },
             .MismatchingTypes => |e| {
                 if (e.rpos) |rpos| {
@@ -264,9 +285,11 @@ pub const Error = union(enum) {
             },
             .MismatchingEnv => |e| {
                 c.s("Mismatching envs: ");
-                c.encloseSepBy(e.le, ", ", "[", "]"); // UGLY
+                e.le.print(c);
+                // c.encloseSepBy(e.le, ", ", "[", "]"); // UGLY
                 c.s(" =/= ");
-                c.encloseSepBy(e.re, ", ", "[", "]");
+                e.re.print(c);
+                // c.encloseSepBy(e.re, ", ", "[", "]");
                 p("", .{}); // newline
             },
             .MismatchingParamLen => |e| {
@@ -419,7 +442,8 @@ fn errorAtLocation(module: ModuleInfo, c: ast.Ctx, loc: Loc, labels: anytype) vo
         }
         c.print("\n");
     } else {
-        unreachable; // TODO
+        // TODO
+        c.print(.{ loc.line, " | TODO\n" });
     }
 
     if (@hasField(@TypeOf(labels), "footnote")) {

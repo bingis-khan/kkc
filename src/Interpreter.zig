@@ -215,9 +215,9 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     }
 }
 
-fn initEnvSnapshot(self: *Self, env: ast.Env) !EnvSnapshot {
-    const varSnapshot = try self.arena.alloc(EnvSnapshot.VarSnapshot, env.len);
-    for (env, 0..) |ei, i| {
+fn initEnvSnapshot(self: *Self, env: *ast.Env) !EnvSnapshot {
+    const varSnapshot = try self.arena.alloc(EnvSnapshot.VarSnapshot, env.insts.items.len);
+    for (env.insts.items, 0..) |ei, i| {
         varSnapshot[i] = switch (ei.v) {
             .TNum => |tnum| b: {
                 const tnumvar = tnum.asVar();

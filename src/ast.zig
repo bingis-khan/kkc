@@ -204,15 +204,15 @@ pub const Function = struct {
     ret: Type,
     body: []*Stmt,
     scheme: Scheme,
-    env: Env,
+    env: *Env,
     temp__isRecursive: bool, // TODO(true-recursion): very hacky!!
 
     fn print(self: @This(), c: Ctx) void {
         c.print(.{ self.name, " (" });
         c.sepBy(self.params, ", ");
-        c.s(")[");
-        c.sepBy(self.env, ", ");
-        c.s("] -> ");
+        c.s(")");
+        self.env.print(c);
+        c.s(" -> ");
         self.ret.print(c);
         c.s(" ## ");
         self.scheme.print(c);
@@ -222,7 +222,29 @@ pub const Function = struct {
     }
 };
 
-pub const Env = []VarInst;
+pub const Env = struct {
+    insts: std.ArrayList(VarInst),
+    level: usize,
+    outer: ?*Env,
+
+    pub fn print(self: *const @This(), c: Ctx) void {
+        c.encloseSepBy(self.insts.items, ", ", "[", "]");
+    }
+
+    // for special cases where there is no body
+    pub fn empty() Env {
+        return .{
+            .insts = std.ArrayList(VarInst){
+                .allocator = undefined,
+                .capacity = 0,
+                .items = &.{},
+            },
+            .level = 0,
+            .outer = null,
+        };
+    }
+};
+
 pub const VarInst = struct {
     v: union(enum) {
         Fun: *Function,
@@ -558,6 +580,7 @@ pub const Expr = struct {
 
     pub const Lam = struct {
         params: []*Decon,
+        env: *Env,
         body: union(enum) {
             Expr: Rec,
             Body: []*Stmt,
@@ -573,12 +596,11 @@ pub const Expr = struct {
                 }
             }
         },
-        env: Env,
 
         pub fn print(self: *const @This(), c: Ctx) void {
             c.print("fn ");
             c.encloseSepBy(self.params, ", ", "(", ")");
-            c.encloseSepBy(self.env, ", ", "[", "]");
+            self.env.print(c);
             c.print(self.body);
         }
     };
@@ -809,7 +831,7 @@ pub const EnvRef = struct {
 
     pub fn print(eid: @This(), c: Ctx) void {
         if (c.typeContext.getEnv(eid).env) |env| {
-            c.encloseSepBy(env, ", ", "[", "]");
+            env.env.print(c);
         } else {
             c.s("[X]");
         }

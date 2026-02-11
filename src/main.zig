@@ -28,20 +28,26 @@ pub fn main() !void {
     // PARSE ARGS
     const opts = try Args.parse(std.process.args(), aa);
 
-    const s = try compileFile(opts, aa);
-    std.debug.print("=== compilation time: {}ms ===\n", .{s.compilationTimeMS});
+    const compilationStartTime = try std.time.Instant.now();
+    var modules = try preloadModules(&opts, aa);
+    try compileFile(&modules, opts.filename);
+
+    const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
+
+    std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
 
     var fakeNewline: bool = undefined;
-    const fakeHackCtx = ast.Ctx.init(&fakeNewline, &s.typeContext);
+    const fakeHackCtx = ast.Ctx.init(&fakeNewline, modules.typeContext);
     fakeNewline = false; // SIKE (but obv. temporary)
-    for (s.errors.items) |err| {
+    for (modules.errors.items) |err| {
         err.err.print(fakeHackCtx, err.module);
     }
 
     // go and interpret
-    if (s.errors.items.len == 0 and !opts.dontRun) {
+    if (modules.errors.items.len == 0 and !opts.dontRun) {
         const interpretStartTime = try std.time.Instant.now();
-        const ret = try Interpreter.run(s.ast, s.prelude, &s.typeContext, opts.programArgs, aa);
+        const moduleAST = modules.getAST();
+        const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa);
         const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
 
         std.debug.print("=== return value: {} ===\n", .{ret});
@@ -52,12 +58,11 @@ pub fn main() !void {
 pub const CompilationStuff = struct {
     prelude: Prelude,
     ast: []ast,
-    errors: Errors,
-    typeContext: TypeContext,
     modules: Modules,
-    compilationTimeMS: u64,
+    // compilationTimeMS: u64,
 };
-pub fn compileFile(opts: Args, aa: std.mem.Allocator) !CompilationStuff {
+
+pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
     const stdRoot = std.process.getEnvVarOwned(aa, "KKC_STD") catch |e| switch (e) {
         error.EnvironmentVariableNotFound => b: {
             std.debug.print("KKC_STD env var not set. Defaulting to 'std/'.\n", .{});
@@ -67,26 +72,17 @@ pub fn compileFile(opts: Args, aa: std.mem.Allocator) !CompilationStuff {
     };
 
     // -|| MODULES ||-
-    const compilationStartTime = try std.time.Instant.now();
 
-    var errors = Errors.init(aa);
-    var typeContext = try TypeContext.init(aa, &errors);
-    var modules = Modules.init(aa, &errors, &typeContext, "", stdRoot, &opts);
+    const errors = try common.allocOne(aa, Errors.init(aa));
+    const typeContext = try common.allocOne(aa, try TypeContext.init(aa, errors));
+    var modules = Modules.init(aa, errors, typeContext, "", stdRoot, opts);
 
-    const prelude = try modules.loadPrelude();
+    _ = try modules.loadPrelude();
     _ = try modules.loadConverged();
 
-    _ = try modules.initialModule(&opts.filename);
-    const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
+    return modules;
+}
 
-    const fullAST = modules.getAST();
-
-    return .{
-        .prelude = prelude,
-        .ast = fullAST,
-        .errors = errors,
-        .typeContext = typeContext,
-        .modules = modules,
-        .compilationTimeMS = compilationTime,
-    };
+pub fn compileFile(modules: *Modules, filename: Str) !void {
+    _ = try modules.initialModule(&filename);
 }

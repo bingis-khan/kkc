@@ -72,3 +72,10 @@ pub fn bytecopy(dest: *anyopaque, src: *const anyopaque, count: usize) void {
 
     @memcpy(sref, @as([*]const u8, @ptrCast(src)));
 }
+
+pub fn cloneArrayListWithAllocator(arraylist: anytype, al: std.mem.Allocator) !@TypeOf(arraylist) {
+    const ArrayListType = @TypeOf(arraylist);
+    var nuArrayList = try ArrayListType.initCapacity(al, arraylist.capacity);
+    try nuArrayList.appendSlice(arraylist.items);
+    return nuArrayList;
+}
