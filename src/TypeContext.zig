@@ -403,6 +403,11 @@ fn setEnvRef(self: *Self, src: EnvRef, dest: EnvRef) void {
 
 pub fn unifyMatch(self: *Self, lm: *const ast.Match, rm: *const ast.Match, locs: Locs, full: Full) !void {
     try self.unifyParamsWithTNums(lm.tvars, rm.tvars, locs, full);
+
+    // TODO: geg, stuff fails to compile with this.
+    // for (lm.envVars, rm.envVars) |le, re| {
+    //     try self.unifyEnv(le, re, locs, full);
+    // }
 }
 
 pub fn unifyParamsWithTNums(self: *Self, lps: []ast.TypeOrNum, rps: []ast.TypeOrNum, locs: Locs, full: Full) !void {
@@ -872,7 +877,7 @@ pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMe
 }
 
 // null when match did not change (so we can keep the same data structure)
-fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.Match {
+pub fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.Match {
     var changed = false;
 
     var tvars = std.ArrayList(ast.TypeOrNum).init(self.arena);

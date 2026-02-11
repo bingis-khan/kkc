@@ -205,10 +205,13 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         var tag: u32 = 0;
         var assocs = std.ArrayList(AST.Association).init(self.arena);
         const tyconstr = Type.Constrain{ .Data = .{ .uid = data.uid, .assocs = &assocs } };
+        var ftvs = TypeContext.FTVs.init(self.arena); // TODO: this is slow. We should add a pointer to an arraylist to the Type(..) constructor. FTV also does deduplication which is not needed here.
         while (!self.check(.DEDENT)) {
             if (self.consume(.IDENTIFIER)) |recname| {
                 // record
                 const t = try Type.init(self, tyconstr).sepTyo();
+                try self.typeContext.ftvs(&ftvs, t.e);
+
                 try recs.append(.{
                     .field = recname.literal(self.lexer.source),
                     .t = t.e,
@@ -220,6 +223,8 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                 while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                     // TODO: for now, no complicated types!
                     const ty = try Type.init(self, tyconstr).typ();
+                    try self.typeContext.ftvs(&ftvs, ty.e);
+
                     try tys.append(ty.e);
                 }
                 self.consumeSeps();
@@ -242,9 +247,16 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         for (assocs.items) |assoc| {
             try tvars.append(.{ .TVar = assoc.depends });
         }
+
+        var envs = std.ArrayList(AST.EnvRef).init(self.arena);
+        var envIter = ftvs.envs.iterator();
+        while (envIter.next()) |env| {
+            try envs.append(env.*);
+        }
+
         data.scheme = .{
             .tvars = tvars.items,
-            .envVars = &.{},
+            .envVars = envs.items,
             .associations = assocs.items,
         };
 
@@ -963,6 +975,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
 
                 .classFuns = undefined,
                 .default = null,
+                .level = self.level(),
             };
 
             if (self.check(.COLON)) {
@@ -1038,6 +1051,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 .class = class,
                 .data = data,
                 .instFuns = instFuns.items,
+                .level = self.level(),
             });
 
             try self.addInstance(instance);
@@ -3506,11 +3520,11 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
     };
 
     if (!isRecursive) {
-        var menv: ?*AST.Env = self.env;
-        while (menv) |env| {
-            if (env.level <= vorfAndScope.level) break;
-            try env.insts.append(varInst);
-            menv = env.outer;
+        switch (vorf) {
+            .ClassFun => {}, // don't add a class function - it'll be added when solving constraints.
+            // optionally exclude Extern function too!
+            // .Extern => {},
+            else => try addToEnvUpUntilALevel(self.env, varInst, vorfAndScope.level),
         }
     }
     return .{
@@ -3528,6 +3542,15 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
         .t = varInst.t,
         .m = varInst.m,
     };
+}
+
+fn addToEnvUpUntilALevel(firstEnv: ?*AST.Env, inst: AST.VarInst, lvl: usize) !void {
+    var menv: ?*AST.Env = firstEnv;
+    while (menv) |env| {
+        if (env.level <= lvl) break;
+        try env.insts.append(inst);
+        menv = env.outer;
+    }
 }
 
 fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
@@ -3567,6 +3590,8 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
             .classFun = cfun,
             .ref = ref,
             .to = funTy,
+            .env = self.env,
+            .match = match,
         },
     });
 
@@ -3613,7 +3638,9 @@ fn getInstancesForClass(self: *Self, class: *AST.Class) !Module.DataInstance {
         if (sc.instances.getPtr(class)) |insts| {
             var instIt = insts.iterator();
             while (instIt.next()) |inst| {
-                try foundInsts.put(inst.key_ptr.*, inst.value_ptr.*);
+                if (foundInsts.getKey(inst.key_ptr.*) == null) {
+                    try foundInsts.put(inst.key_ptr.*, inst.value_ptr.*);
+                }
             }
         }
     }
@@ -3688,6 +3715,16 @@ fn solveAvailableConstraints(self: *Self) !void {
                             try self.typeContext.unify(conc.to, funTy, if (assoc.loc) |l| &.{ .l = l } else null);
 
                             conc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
+
+                            try addToEnvUpUntilALevel(
+                                conc.env,
+                                .{
+                                    .v = .{ .Fun = fun },
+                                    .t = funTyAndMatch.t,
+                                    .m = funTyAndMatch.m,
+                                },
+                                inst.level,
+                            );
                         } else {
                             // nothing. it's good.
                         }
@@ -4039,6 +4076,8 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
 
                 .classFun = conc.classFun,
                 .ref = ref,
+                .env = self.env,
+                .match = try self.typeContext.mapMatch(&tvarMatch, conc.match) orelse conc.match,
             } else null,
         });
     }
@@ -4236,8 +4275,20 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .concrete = .{
                                 .classFun = conc.classFun,
                                 .to = conc.to,
+                                .match = conc.match,
                             },
                         });
+
+                        try addToEnvUpUntilALevel(conc.env, .{
+                            .v = .{
+                                .ClassFun = .{
+                                    .cfun = conc.classFun,
+                                    .ref = conc.ref,
+                                },
+                            },
+                            .t = conc.to,
+                            .m = conc.match,
+                        }, conc.classFun.class.level);
                     } else {
                         try assocs.append(.{
                             .depends = assocTV,
@@ -4284,8 +4335,13 @@ pub const Association = struct {
     concrete: ?struct {
         classFun: *AST.ClassFun,
         ref: *?AST.Match.AssocRef,
-
         to: AST.Type,
+
+        // NOTE: These two are only used for class functions.
+        // BUT, with the `ref` we technically don't have to add them to the environment, since it's in the SCHEME!
+        env: ?*AST.Env,
+        match: *AST.Match, // this is funny - not sure if it should be here, as it is only used for the class match (because we are adding it later.)
+
     },
 };
 

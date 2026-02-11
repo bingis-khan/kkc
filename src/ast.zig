@@ -1125,6 +1125,9 @@ pub const Association = struct {
     concrete: ?struct {
         to: Type,
         classFun: *ClassFun,
+
+        // NOTE: kinda bad, used only for ClassFunctions
+        match: *Match,
     },
 
     pub const ID = Unique;
@@ -1255,6 +1258,7 @@ pub const Class = struct {
     classFuns: []*ClassFun,
     selfType: TVar,
     default: ?*Data,
+    level: usize,
 
     pub fn print(self: *const @This(), c: Ctx) void {
         c.print(.{ self.name, "@", self.uid });
@@ -1283,6 +1287,7 @@ pub const Instance = struct {
     uid: Unique,
     class: *Class,
     data: *Data,
+    level: usize,
 
     instFuns: []InstFun,
     pub const InstFun = struct {
