@@ -10,6 +10,7 @@ const TypeContext = @import("TypeContext.zig");
 const common = @import("common.zig");
 const Str = common.Str;
 const Args = @import("Args.zig");
+const Module = @import("Module.zig");
 
 pub fn main() !void {
     // SETUP
@@ -30,7 +31,7 @@ pub fn main() !void {
 
     const compilationStartTime = try std.time.Instant.now();
     var modules = try preloadModules(&opts, aa);
-    try compileFile(&modules, opts.filename);
+    _ = try compileFile(&modules, opts.filename);
 
     const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
 
@@ -83,6 +84,6 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
     return modules;
 }
 
-pub fn compileFile(modules: *Modules, filename: Str) !void {
-    _ = try modules.initialModule(&filename);
+pub fn compileFile(modules: *Modules, filename: Str) !Module {
+    return try modules.initialModule(&filename);
 }

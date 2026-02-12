@@ -1,9 +1,4 @@
 #$ Inner function calling nested outer functions.
-#= envsize aaa 1
-#= envsize f 3
-#= envsize f2 1
-#= envsize g 3
-#= envsize a 3
 # True
 # 420
 

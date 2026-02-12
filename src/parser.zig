@@ -4279,16 +4279,17 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             },
                         });
 
-                        try addToEnvUpUntilALevel(conc.env, .{
-                            .v = .{
-                                .ClassFun = .{
-                                    .cfun = conc.classFun,
-                                    .ref = conc.ref,
-                                },
-                            },
-                            .t = conc.to,
-                            .m = conc.match,
-                        }, conc.classFun.class.level);
+                        // NOTE: I think this adds pointless constraints (breaks 1_t25 test)
+                        // try addToEnvUpUntilALevel(conc.env, .{
+                        //     .v = .{
+                        //         .ClassFun = .{
+                        //             .cfun = conc.classFun,
+                        //             .ref = conc.ref,
+                        //         },
+                        //     },
+                        //     .t = conc.to,
+                        //     .m = conc.match,
+                        // }, conc.classFun.class.level);
                     } else {
                         try assocs.append(.{
                             .depends = assocTV,
