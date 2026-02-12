@@ -126,7 +126,8 @@ pub fn main() !void {
         }
 
         for (result.subtestErrors) |subtestErr| {
-            errprint("subtest {} failed with: {s}\n", .{ subtestErr.subtest, subtestErr.err });
+            subtestErr.subtest.printName();
+            errprint(" failed with: {s}\n", .{subtestErr.err});
         }
     }
 
@@ -423,6 +424,14 @@ const errprint = std.debug.print;
 
 const Subtest = union(enum) {
     envsize: struct { kcFunName: Str, envsize: i32 },
+
+    fn printName(self: *const @This()) void {
+        switch (self.*) {
+            .envsize => |envsize| {
+                errprint("envsize {s} {}", .{ envsize.kcFunName, envsize.envsize });
+            },
+        }
+    }
 
     fn verify(self: *const @This(), module: *const Module, al: std.mem.Allocator) !?Str {
         switch (self.*) {
