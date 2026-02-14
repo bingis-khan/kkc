@@ -1,0 +1,9 @@
+
+fn f (x)
+	fn ff (a)
+		Str.print-str(a)
+
+	ff(True)
+	ff(x)
+
+f(123)

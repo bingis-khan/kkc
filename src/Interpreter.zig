@@ -215,10 +215,11 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     }
 }
 
-fn initEnvSnapshot(self: *Self, env: *ast.Env) !EnvSnapshot {
-    const varSnapshot = try self.arena.alloc(EnvSnapshot.VarSnapshot, env.insts.items.len);
-    for (env.insts.items, 0..) |ei, i| {
-        varSnapshot[i] = switch (ei.v) {
+fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapshot {
+    const maxGeneralClassFuns = if (scheme) |sch| sch.associations.len else 0;
+    var varSnapshot = try std.ArrayList(EnvSnapshot.VarSnapshot).initCapacity(self.arena, env.insts.items.len + maxGeneralClassFuns);
+    for (env.insts.items) |ei| {
+        try varSnapshot.append(switch (ei.v) {
             .TNum => |tnum| b: {
                 const tnumvar = tnum.asVar();
                 break :b .{
@@ -236,17 +237,34 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env) !EnvSnapshot {
                 .v = envfun.name,
                 .vv = (try self.initFunction(envfun, ei.m)).ref,
             } },
-            .ClassFun => |cfr| b: {
-                const instfun = switch (cfr.ref.*.?) {
-                    .InstFun => |instfun| instfun,
-                    .Id => |id| self.tymap.tryGetFunctionByID(id) orelse break :b .{ .AssocID = id },
-                };
-                break :b .{ .Snap = .{
-                    .v = instfun.fun.name,
-                    .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
-                } };
-            },
-        };
+            // .ClassFun => |cfr| b: {
+            //     const instfun = switch (cfr.ref.*.?) {
+            //         .InstFun => |instfun| instfun,
+            //         .Id => |id| self.tymap.tryGetFunctionByID(id) orelse break :b .{ .AssocID = id },
+            //     };
+            //     break :b .{ .Snap = .{
+            //         .v = instfun.fun.name,
+            //         .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
+            //     } };
+            // },
+        });
+    }
+
+    if (scheme) |sch| {
+        for (sch.associations) |assoc| {
+            if (assoc.concrete) |conc| {
+                try varSnapshot.append(b: {
+                    const instfun = switch (conc.ref.*.?) {
+                        .InstFun => |instfun| instfun,
+                        .Id => |id| self.tymap.tryGetFunctionByID(id) orelse break :b .{ .AssocID = id },
+                    };
+                    break :b .{ .Snap = .{
+                        .v = instfun.fun.name,
+                        .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
+                    } };
+                });
+            }
+        }
     }
 
     // now, slowly copy the tymaps!
@@ -262,7 +280,7 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env) !EnvSnapshot {
     const lastPointer = &oldTyMap.prev;
 
     const envSnapshot = EnvSnapshot{
-        .vars = varSnapshot,
+        .vars = varSnapshot.items,
         .tymaps = firstTyMap,
         .lastPtr = lastPointer,
     };
@@ -272,7 +290,7 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env) !EnvSnapshot {
 
 fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
     // construct env for this function yo.
-    const envSnapshot = try self.initEnvSnapshot(fun.env);
+    const envSnapshot = try self.initEnvSnapshot(fun.env, &fun.scheme);
     try self.scope.funs.put(fun.name, envSnapshot);
 }
 
@@ -893,7 +911,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         .Lam => |*l| {
             const ptr = nanbox(try common.allocOne(self.arena, RawValue.Lam{
                 .lam = l,
-                .env = try self.initEnvSnapshot(l.env),
+                .env = try self.initEnvSnapshot(l.env, null),
             }), .Lambda);
             return try self.val(.{ .lam = ptr }, @sizeOf(*const RawValue.Lam));
         },

@@ -223,7 +223,7 @@ pub const Function = struct {
 };
 
 pub const Env = struct {
-    insts: std.ArrayList(VarInst),
+    insts: std.ArrayList(EnvVar),
     level: usize,
     outer: ?*Env,
 
@@ -234,7 +234,7 @@ pub const Env = struct {
     // for special cases where there is no body
     pub fn empty() Env {
         return .{
-            .insts = std.ArrayList(VarInst){
+            .insts = std.ArrayList(EnvVar){
                 .allocator = undefined,
                 .capacity = 0,
                 .items = &.{},
@@ -245,10 +245,10 @@ pub const Env = struct {
     }
 };
 
-pub const VarInst = struct {
+pub const EnvVar = struct {
     v: union(enum) {
         Fun: *Function,
-        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst },
+        // ClassFun: struct { cfun: *ClassFun, ref: InstFunInst },
         Var: Var,
         TNum: TNum,
     },
@@ -274,10 +274,10 @@ pub const VarInst = struct {
                 fun.name.print(c);
             },
 
-            .ClassFun => |cfun| {
-                c.s("$");
-                cfun.cfun.name.print(c);
-            },
+            // .ClassFun => |cfun| {
+            //     c.s("$");
+            //     cfun.cfun.name.print(c);
+            // },
 
             .Var => |v| {
                 v.print(c);
@@ -1125,6 +1125,9 @@ pub const Association = struct {
     concrete: ?struct {
         to: Type,
         classFun: *ClassFun,
+        ref: InstFunInst,
+
+        env: ?*Env, // when ~instantiating the scheme~ this is special :3 (fukkk i dont know how to explain it.)
 
         // NOTE: kinda bad, used only for ClassFunctions
         match: *Match,

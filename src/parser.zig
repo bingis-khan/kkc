@@ -3442,14 +3442,15 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
     };
 }
 
-fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
+const VarInst = struct {
     v: AST.Expr.VarType,
     t: AST.Type,
     m: *AST.Match,
-} {
+};
+fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst {
     const vorfAndScope = try self.lookupVar(modpath, varTok);
     const vorf = vorfAndScope.vorf;
-    const varInst: AST.VarInst = switch (vorf) {
+    const varInst: VarInst = switch (vorf) {
         .TNum => |tnum| .{
             .v = .{ .TNum = tnum },
             .t = try self.definedType(.Int),
@@ -3472,7 +3473,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
         .ClassFun => |cfun| b: {
             const ifn = try self.instantiateClassFunction(cfun, self.loc(varTok));
 
-            const varInst = AST.VarInst{
+            const varInst = VarInst{
                 .v = .{
                     .ClassFun = .{
                         .cfun = cfun,
@@ -3519,32 +3520,30 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !struct {
         else => false,
     };
 
-    if (!isRecursive) {
-        switch (vorf) {
-            .ClassFun => {}, // don't add a class function - it'll be added when solving constraints.
-            // optionally exclude Extern function too!
-            // .Extern => {},
-            else => try addToEnvUpUntilALevel(self.env, varInst, vorfAndScope.level),
-        }
-    }
-    return .{
-        .v = switch (varInst.v) {
-            .TNum => |tnum| .{ .TNum = tnum },
-            .Var => |vv| .{ .Var = vv },
-            .Fun => |fun| .{ .Fun = fun },
-            .ClassFun => |cfun| .{
-                .ClassFun = .{
-                    .cfun = cfun.cfun,
-                    .ref = cfun.ref,
+    if (!isRecursive) b: {
+        const envVar: AST.EnvVar = .{
+            .v = switch (varInst.v) {
+                .ClassFun => break :b, // don't add a class function - it'll be added when solving constraints.
+                .ExternalFun => unreachable, // extern functions are not added to the environment.
+                .Fun => |fun| .{
+                    .Fun = fun,
+                },
+                .TNum => |tnum| .{
+                    .TNum = tnum,
+                },
+                .Var => |v| .{
+                    .Var = v,
                 },
             },
-        },
-        .t = varInst.t,
-        .m = varInst.m,
-    };
+            .m = varInst.m,
+            .t = varInst.t,
+        };
+        try addToEnvUpUntilALevel(self.env, envVar, vorfAndScope.level);
+    }
+    return varInst;
 }
 
-fn addToEnvUpUntilALevel(firstEnv: ?*AST.Env, inst: AST.VarInst, lvl: usize) !void {
+fn addToEnvUpUntilALevel(firstEnv: ?*AST.Env, inst: AST.EnvVar, lvl: usize) !void {
     var menv: ?*AST.Env = firstEnv;
     while (menv) |env| {
         if (env.level <= lvl) break;
@@ -3717,7 +3716,7 @@ fn solveAvailableConstraints(self: *Self) !void {
                             conc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
 
                             try addToEnvUpUntilALevel(
-                                conc.env,
+                                self.env,
                                 .{
                                     .v = .{ .Fun = fun },
                                     .t = funTyAndMatch.t,
@@ -4076,7 +4075,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
 
                 .classFun = conc.classFun,
                 .ref = ref,
-                .env = self.env,
+                .env = conc.env,
                 .match = try self.typeContext.mapMatch(&tvarMatch, conc.match) orelse conc.match,
             } else null,
         });
@@ -4128,14 +4127,15 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                 try self.typeContext.ftvs(&envftvs, fun.ret);
             },
 
-            .ClassFun => |vv| {
-                const cfun = vv.cfun;
-                for (cfun.params) |p| {
-                    try self.typeContext.ftvs(&envftvs, p.t);
-                }
+            // NOTE: did I break something by commenting it out?
+            // .ClassFun => |vv| {
+            //     const cfun = vv.cfun;
+            //     for (cfun.params) |p| {
+            //         try self.typeContext.ftvs(&envftvs, p.t);
+            //     }
 
-                try self.typeContext.ftvs(&envftvs, cfun.ret);
-            },
+            //     try self.typeContext.ftvs(&envftvs, cfun.ret);
+            // },
         }
     }
 
@@ -4275,12 +4275,15 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .concrete = .{
                                 .classFun = conc.classFun,
                                 .to = conc.to,
+                                .ref = conc.ref,
+                                .env = conc.env,
                                 .match = conc.match,
                             },
                         });
 
                         // NOTE: I think this adds pointless constraints (breaks 1_t25 test)
-                        // try addToEnvUpUntilALevel(conc.env, .{
+                        // I'm thinking if this is not actually needed, because those things are THE SAME as the match's assocs.
+                        // try conc.env.?.insts.append(.{
                         //     .v = .{
                         //         .ClassFun = .{
                         //             .cfun = conc.classFun,
@@ -4289,7 +4292,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         //     },
                         //     .t = conc.to,
                         //     .m = conc.match,
-                        // }, conc.classFun.class.level);
+                        // });
                     } else {
                         try assocs.append(.{
                             .depends = assocTV,
@@ -4364,7 +4367,7 @@ fn beginEnv(self: *Self) !*AST.Env {
     self.beginScope(); // x -> x + 1
 
     const nuEnv = try Common.allocOne(self.arena, AST.Env{
-        .insts = std.ArrayList(AST.VarInst).init(self.arena),
+        .insts = std.ArrayList(AST.EnvVar).init(self.arena),
         .level = self.level(), // x + 1 ;; number of scopes -> level
         .outer = self.env,
     });

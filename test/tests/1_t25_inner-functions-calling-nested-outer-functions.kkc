@@ -2,7 +2,11 @@
 #= envsize aaa 1
 #= envsize f 3
 #= envsize f2 1
+##
+## id Bool, aaa Int, println Bool
 #= envsize g 3
+##
+## id Bool, println Bool, println Int
 #= envsize a 3
 # True
 # 420

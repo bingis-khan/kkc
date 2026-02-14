@@ -127,7 +127,7 @@ pub fn main() !void {
 
         for (result.subtestErrors) |subtestErr| {
             subtestErr.subtest.printName();
-            errprint(" failed with: {s}\n", .{subtestErr.err});
+            errprint(" : {s}\n", .{subtestErr.err});
         }
     }
 
@@ -390,6 +390,8 @@ fn readHeader(filepath: Str, aa: std.mem.Allocator) !Header {
             } else {
                 std.debug.print("Empty option found.\n", .{});
             }
+        } else if (startsWith(line, "##")) {
+            // ignore! just a comment
         } else if (startsWith(line, "#")) {
             try expectedOutput.appendSlice(trim(line[1..]));
             try expectedOutput.append('\n');
