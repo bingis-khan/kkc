@@ -24,11 +24,11 @@ main = do
 saveTest :: FilePath -> FilePath -> IO ()
 saveTest fileToCopy testName = do
   contents <- readFile fileToCopy
-  writeFile ("test/data/expect/" <> testName) contents
+  writeFile ("test/tests/" <> testName) contents
 
 getNewestTestFromGroup :: Int -> IO Int
 getNewestTestFromGroup ourGroupId = do
-  dir <- listDirectory "test/data/expect"
+  dir <- listDirectory "test/tests/"
   let groupIds = fmap (bimap read read) $ filter (not . null . snd) $ filter (not . null . fst) $ (\name -> (takeWhile isDigit name, takeWhile isDigit $ drop 2 $ dropWhile isDigit name)) <$> dir
   let ourGroup = fmap snd $ filter ((==ourGroupId) . fst) groupIds
   let highestId = take 1 $ reverse $ sort ourGroup

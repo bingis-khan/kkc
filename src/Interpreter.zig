@@ -237,16 +237,16 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapsho
                 .v = envfun.name,
                 .vv = (try self.initFunction(envfun, ei.m)).ref,
             } },
-            // .ClassFun => |cfr| b: {
-            //     const instfun = switch (cfr.ref.*.?) {
-            //         .InstFun => |instfun| instfun,
-            //         .Id => |id| self.tymap.tryGetFunctionByID(id) orelse break :b .{ .AssocID = id },
-            //     };
-            //     break :b .{ .Snap = .{
-            //         .v = instfun.fun.name,
-            //         .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
-            //     } };
-            // },
+            .ClassFun => |cfr| b: {
+                const instfun = switch (cfr.ref.*.?) {
+                    .InstFun => |instfun| instfun,
+                    .Id => |id| self.tymap.tryGetFunctionByID(id) orelse break :b .{ .AssocID = id },
+                };
+                break :b .{ .Snap = .{
+                    .v = instfun.fun.name,
+                    .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
+                } };
+            },
         });
     }
 

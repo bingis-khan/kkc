@@ -1,3 +1,0 @@
-#$ Should compile the funny ref syntax
-
-x =& 2

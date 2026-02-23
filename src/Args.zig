@@ -12,6 +12,7 @@ printRootAST: bool = false,
 printExports: bool = false,
 noImplicitPrelude: bool = false,
 dontRun: bool = false,
+hideErrors: bool = false,
 programArgs: []Arg = &.{},
 
 pub const Arg = [*:0]const u8;
@@ -56,6 +57,7 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
                 .@"!ast" => opts.printRootAST = true,
                 .noimplicit => opts.noImplicitPrelude = true,
                 .dontRun => opts.dontRun = true,
+                .@"hide-errors" => opts.hideErrors = true,
             }
         } else {
             if (filename == null) {
@@ -86,4 +88,5 @@ const ProgramOption = enum {
     @"!ast",
     noimplicit,
     dontRun,
+    @"hide-errors",
 };

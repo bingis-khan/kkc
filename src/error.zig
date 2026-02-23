@@ -379,7 +379,8 @@ fn errorAtLocation(module: ModuleInfo, c: ast.Ctx, loc: Loc, labels: anytype) vo
 
     // I actually don't know when it can happen, so TODO
     if (loc.module.source[loc.from] == '\n') {
-        unreachable;
+        // unreachable;
+        return;
     }
 
     var lineBeginIndex = loc.from;

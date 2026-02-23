@@ -194,6 +194,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                     .tvars = tvars.items,
                     .envVars = &.{},
                     .associations = &.{},
+                    .env = null,
                 },
                 .annotations = data.annotations,
             };
@@ -258,6 +259,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
             .tvars = tvars.items,
             .envVars = envs.items,
             .associations = assocs.items,
+            .env = null, // Datatypes don't need an Env reference.
         };
 
         if (cons.items.len > 0 and recs.items.len > 0) {
@@ -312,6 +314,7 @@ fn typeSynonym(self: *Self, typename: Token, tvarToks: []Token, annotations: []A
                 .tvars = tvars.items,
                 .envVars = &.{},
                 .associations = assocs.items,
+                .env = unreachable,
             },
             .t = t.e,
         });
@@ -415,7 +418,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     const definedTVars = self.scope.currentScope().tvars;
     self.endScope(); // finish env.
 
-    const scheme = try self.mkSchemeforFunction(&definedTVars, params.items, ret, env, fun.name.uid, &constraints_);
+    const scheme = try self.mkSchemeForFunction(&definedTVars, params.items, ret, env, fun.name.uid, &constraints_);
 
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
@@ -1144,6 +1147,7 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
         .tvars = definedTVars.items,
         .associations = &.{},
         .envVars = &.{},
+        .env = null,
     };
 
     const extfun = try Common.allocOne(self.arena, AST.ExternalFunction{
@@ -1275,6 +1279,7 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         .tvars = tvars.items,
         .envVars = &.{}, // TEMP
         .associations = assocs.items, // NOTE: this will change when class constraints are allowed on functions. EDIT: Or not??? We have no constraints to specify, because these constraints are not based on class function calls. Right now, I'll leave it alone because of our "broken" type system.
+        .env = null,
     };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
@@ -3537,8 +3542,10 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
             },
             .m = varInst.m,
             .t = varInst.t,
+            .l = vorfAndScope.level,
         };
-        try addToEnvUpUntilALevel(self.env, envVar, vorfAndScope.level);
+        // try addToEnvUpUntilALevel(self.env, envVar, vorfAndScope.level);
+        try addToEnvIfPossible(self.env, envVar);
     }
     return varInst;
 }
@@ -3549,6 +3556,14 @@ fn addToEnvUpUntilALevel(firstEnv: ?*AST.Env, inst: AST.EnvVar, lvl: usize) !voi
         if (env.level <= lvl) break;
         try env.insts.append(inst);
         menv = env.outer;
+    }
+}
+
+fn addToEnvIfPossible(menv: ?*AST.Env, inst: AST.EnvVar) !void {
+    if (menv) |env| {
+        if (env.level > inst.l) {
+            try env.insts.append(inst);
+        }
     }
 }
 
@@ -3590,6 +3605,7 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
             .ref = ref,
             .to = funTy,
             .env = self.env,
+            .envType = .ClassFunInstantiation,
             .match = match,
         },
     });
@@ -3620,6 +3636,18 @@ fn instantiateFunction(self: *Self, fun: *AST.Function, l: ?Loc) !struct { t: AS
             }), // this is sussy. maybe we should also keep the "newEnv" still. NOTE(02.10.25): ????
         },
     });
+
+    // add stuff to env (note: when generalizing, we can split stuff that needs to be "readded", because it contains tvars.)
+    for (fun.env.insts.items) |unmappedEnvVar| {
+        const envVar: AST.EnvVar = .{
+            .v = unmappedEnvVar.v,
+            .t = try self.typeContext.mapType(match, unmappedEnvVar.t),
+            .m = if (try self.typeContext.mapMatch(match, unmappedEnvVar.m)) |m| m else unmappedEnvVar.m,
+            .l = unmappedEnvVar.l,
+        };
+        try addToEnvIfPossible(fun.env.outer, envVar);
+    }
+
     return .{ .t = try self.typeContext.mapType(match, funTy), .m = match };
 }
 
@@ -3715,15 +3743,15 @@ fn solveAvailableConstraints(self: *Self) !void {
 
                             conc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
 
-                            try addToEnvUpUntilALevel(
-                                self.env,
-                                .{
-                                    .v = .{ .Fun = fun },
-                                    .t = funTyAndMatch.t,
-                                    .m = funTyAndMatch.m,
-                                },
-                                inst.level,
-                            );
+                            // try addToEnvUpUntilALevel(
+                            //     conc.env,
+                            //     .{
+                            //         .v = .{ .Fun = fun },
+                            //         .t = funTyAndMatch.t,
+                            //         .m = funTyAndMatch.m,
+                            //     },
+                            //     inst.level,
+                            // );
                         } else {
                             // nothing. it's good.
                         }
@@ -4076,6 +4104,8 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
                 .classFun = conc.classFun,
                 .ref = ref,
                 .env = conc.env,
+                .envType = .AssociatedInstantiation,
+
                 .match = try self.typeContext.mapMatch(&tvarMatch, conc.match) orelse conc.match,
             } else null,
         });
@@ -4100,7 +4130,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
     return try Common.allocOne(self.arena, tvarMatch);
 }
 
-fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVarOrNum), params: []*AST.Decon, ret: AST.Type, env: *AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
+fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVarOrNum), params: []*AST.Decon, ret: AST.Type, env: *AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
     const expectedBinding = AST.Binding{
         .Function = functionId,
     };
@@ -4127,15 +4157,14 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                 try self.typeContext.ftvs(&envftvs, fun.ret);
             },
 
-            // NOTE: did I break something by commenting it out?
-            // .ClassFun => |vv| {
-            //     const cfun = vv.cfun;
-            //     for (cfun.params) |p| {
-            //         try self.typeContext.ftvs(&envftvs, p.t);
-            //     }
+            .ClassFun => |vv| {
+                const cfun = vv.cfun;
+                for (cfun.params) |p| {
+                    try self.typeContext.ftvs(&envftvs, p.t);
+                }
 
-            //     try self.typeContext.ftvs(&envftvs, cfun.ret);
-            // },
+                try self.typeContext.ftvs(&envftvs, cfun.ret);
+            },
         }
     }
 
@@ -4276,10 +4305,25 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                                 .classFun = conc.classFun,
                                 .to = conc.to,
                                 .ref = conc.ref,
-                                .env = conc.env,
+                                .env = switch (conc.envType) {
+                                    .ClassFunInstantiation => env.outer,
+                                    .AssociatedInstantiation => conc.env, // TODO: which?
+                                },
                                 .match = conc.match,
                             },
                         });
+
+                        try addToEnvUpUntilALevel(conc.env, .{
+                            .v = .{
+                                .ClassFun = .{
+                                    .cfun = conc.classFun,
+                                    .ref = conc.ref,
+                                },
+                            },
+                            .t = conc.to,
+                            .m = conc.match,
+                            .l = env.level,
+                        }, env.level);
 
                         // NOTE: I think this adds pointless constraints (breaks 1_t25 test)
                         // I'm thinking if this is not actually needed, because those things are THE SAME as the match's assocs.
@@ -4322,6 +4366,7 @@ fn mkSchemeforFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         .tvars = tvars.items,
         .envVars = envs.items,
         .associations = assocs.items,
+        .env = env,
     };
 }
 
@@ -4344,6 +4389,14 @@ pub const Association = struct {
         // NOTE: These two are only used for class functions.
         // BUT, with the `ref` we technically don't have to add them to the environment, since it's in the SCHEME!
         env: ?*AST.Env,
+
+        // when a class function instantiation's type is known imm. (never generalized), we want to add the class function to the enclosing environment (like a normal function call)
+        // when it gets generalized, however, we don't want to add it to the environment that got it generalized - only the one "outer" to it.
+        envType: enum {
+            ClassFunInstantiation,
+            AssociatedInstantiation,
+        },
+
         match: *AST.Match, // this is funny - not sure if it should be here, as it is only used for the class match (because we are adding it later.)
 
     },

@@ -1,0 +1,19 @@
+#$ envsize asd 0
+## class fun is part of scheme.
+#$ envsize out 0
+## this one needs both x and dosth generalized over outer's x. makes ya think if we should bring back env class functions.
+#$ envsize inner 2
+
+# todo: turn into test
+class A
+	dosth (x _) -> Unit
+inst A Int
+	dosth (x) -> Unit
+		return
+
+fn asd()
+	fn out(x)
+		fn inner()
+			dosth(x)
+
+	out(4)

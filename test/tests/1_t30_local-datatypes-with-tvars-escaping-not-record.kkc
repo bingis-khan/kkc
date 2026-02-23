@@ -1,4 +1,5 @@
 #= todo
+## Currently broken when interpreting.
 #$ Local datatypes with local tvars escaping. (kkc: added memeq)
 # True
 # False

@@ -245,15 +245,17 @@ pub const Env = struct {
     }
 };
 
+pub const Level = usize;
 pub const EnvVar = struct {
     v: union(enum) {
         Fun: *Function,
-        // ClassFun: struct { cfun: *ClassFun, ref: InstFunInst },
+        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst }, // used when a class function depends on a TVar from outer scope - then we MUST consider it a class function.
         Var: Var,
         TNum: TNum,
     },
     m: *Match,
     t: Type,
+    l: Level,
 
     pub fn getVar(self: @This()) Var {
         return switch (self.v) {
@@ -274,10 +276,10 @@ pub const EnvVar = struct {
                 fun.name.print(c);
             },
 
-            // .ClassFun => |cfun| {
-            //     c.s("$");
-            //     cfun.cfun.name.print(c);
-            // },
+            .ClassFun => |cfun| {
+                const cfunName = cfun.cfun.name;
+                c.print(.{ "$", cfunName });
+            },
 
             .Var => |v| {
                 v.print(c);
@@ -1061,12 +1063,14 @@ pub const Scheme = struct {
     // tnums: []TNum, // TODO: tnubs :) I think it's better because we don't do weird casts.
     envVars: []EnvRef, // like unions. same environments can appear in different places, and they need to be the same thing.
     associations: []Association,
+    env: ?*Env,
 
     pub fn empty() @This() {
         return .{
             .tvars = &.{},
             .envVars = &.{},
             .associations = &.{},
+            .env = null,
         };
     }
 

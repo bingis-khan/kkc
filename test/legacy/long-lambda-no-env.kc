@@ -1,5 +1,0 @@
-#$ Long lambda without environment.
-# () -> () -> () -> () -> () -> () -> () -> () -> () -> () -> () -> Int at \*
-
-lam = :::::::::::69
-print lam

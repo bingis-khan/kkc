@@ -1,4 +1,3 @@
-#= todo
 #$ We shouldnt be getting tvars from instances in digThroughVar.
 # 988588544
 # 1
