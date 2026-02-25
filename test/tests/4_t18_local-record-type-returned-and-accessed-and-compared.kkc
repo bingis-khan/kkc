@@ -1,4 +1,3 @@
-#= todo
 #$ Local datatypes with local tvars escaping.
 # 123
 # ()
@@ -8,18 +7,18 @@
 
 fn f (x a)
 	Data b
-		external a
+		extern a
 		local b
 
-	return Data { fn external: x, fn local: Unit }
+	return Data { extern: x, local: Unit }
 
 x = f(123)
-println(x.external)
+println(x.extern)
 println(x.local)
 
 y = f(True)
-println(y.external)
+println(y.extern)
 println(y.local)
 
 z = f(123)
-println(x == z)
+println(@memeq(x, z))

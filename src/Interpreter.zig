@@ -983,8 +983,55 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
         .Con => |con| {
             // map it like function or sizeOf for cons!
             const oldTyMap = self.tymap;
-            var tymap = TypeMap{
+
+            // NOTE: COPYPASTA
+            // FIXES INFINITE LOOP for functions that operate on datatypes which have outer tvars.
+            // VERY HACKY.
+            // basically, when we're in a function which defines the tvars, the c.outerApplication has the tvar itself as its value
+            // so if we don't get the value of the tvar first, we get an infinite loop.
+            // maybe there is a better way which does not require allocation?
+            const outerApplication = self.arena.alloc(ast.TypeOrNum, con.outerApplication.len) catch unreachable; // TEMP
+            for (0..outerApplication.len) |i| {
+                const app = con.outerApplication[i];
+                switch (app) {
+                    .Type => |appt| {
+                        outerApplication[i] = .{
+                            .Type = switch (self.typeContext.getType(appt)) {
+                                .TVar => |tv| oldTyMap.getTVar(tv) orelse appt, // very bad!! xddd
+                                else => appt,
+                            },
+                        };
+                    },
+                    .Num => |appnum| {
+                        outerApplication[i] = .{
+                            .Num = switch (self.typeContext.getNum(appnum)) {
+                                .TNum => |tnum| oldTyMap.getTNum(tnum) orelse appnum,
+                                else => appnum,
+                            },
+                        };
+                    },
+                }
+            }
+            const outerTVScheme = ast.Scheme{
+                .tvars = con.type.outerTVars,
+                .envVars = &.{},
+                .associations = &.{},
+                .env = null,
+            };
+            const outerTVMatch = ast.Match{
+                .tvars = outerApplication,
+                .envVars = &.{},
+                .assocs = &.{},
+                .scheme = outerTVScheme,
+            };
+            const outerTVMap = TypeMap{
                 .prev = oldTyMap,
+                .scheme = &outerTVScheme,
+                .match = &outerTVMatch,
+            };
+
+            var tymap = TypeMap{
+                .prev = &outerTVMap,
                 .scheme = &con.type.scheme,
                 .match = con.application,
             };
@@ -1417,8 +1464,52 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
             }
 
             const oldTyMap = self.tymap;
-            const tymap = TypeMap{
+            // FIXES INFINITE LOOP for functions that operate on datatypes which have outer tvars.
+            // VERY HACKY.
+            // basically, when we're in a function which defines the tvars, the c.outerApplication has the tvar itself as its value
+            // so if we don't get the value of the tvar first, we get an infinite loop.
+            // maybe there is a better way which does not require allocation?
+            const outerApplication = self.arena.alloc(ast.TypeOrNum, c.outerApplication.len) catch unreachable; // TEMP
+            for (0..outerApplication.len) |i| {
+                const app = c.outerApplication[i];
+                switch (app) {
+                    .Type => |appt| {
+                        outerApplication[i] = .{
+                            .Type = switch (self.typeContext.getType(appt)) {
+                                .TVar => |tv| oldTyMap.getTVar(tv) orelse appt, // very bad!! xddd
+                                else => appt,
+                            },
+                        };
+                    },
+                    .Num => |appnum| {
+                        outerApplication[i] = .{
+                            .Num = switch (self.typeContext.getNum(appnum)) {
+                                .TNum => |tnum| oldTyMap.getTNum(tnum) orelse appnum,
+                                else => appnum,
+                            },
+                        };
+                    },
+                }
+            }
+            const outerTVScheme = ast.Scheme{
+                .tvars = c.type.outerTVars,
+                .envVars = &.{},
+                .associations = &.{},
+                .env = null,
+            };
+            const outerTVMatch = ast.Match{
+                .tvars = outerApplication,
+                .envVars = &.{},
+                .assocs = &.{},
+                .scheme = outerTVScheme,
+            };
+            const outerTVMap = TypeMap{
                 .prev = oldTyMap,
+                .scheme = &outerTVScheme,
+                .match = &outerTVMatch,
+            };
+            const tymap = TypeMap{
+                .prev = &outerTVMap,
                 .scheme = &c.type.scheme,
                 .match = c.application,
             };
@@ -1437,7 +1528,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     var numref = c.application.tvars[0].Num;
                     while (true) {
                         switch (self.typeContext.getNum(numref)) {
-                            .TNum => |tnum| numref = self.tymap.getTNum(tnum),
+                            .TNum => |tnum| numref = self.tymap.getTNum(tnum) orelse unreachable,
                             .Literal => |lit| break :b @intCast(lit),
                             .Unknown => unreachable,
                         }
@@ -1551,7 +1642,7 @@ fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usiz
 
 fn getType(self: *const Self, ogt: ast.Type) ast.TypeF(ast.Type) {
     return switch (self.typeContext.getType(ogt)) {
-        .TVar => |tv| self.getType(self.tymap.getTVar(tv)),
+        .TVar => |tv| self.getType(self.tymap.getTVar(tv) orelse unreachable),
         else => |t| t,
     };
 }
@@ -1600,7 +1691,7 @@ const TypeMap = struct {
     scheme: *const ast.Scheme,
     match: *const ast.Match,
 
-    fn getTVar(self: *const @This(), tv: ast.TVar) ast.Type {
+    fn getTVar(self: *const @This(), tv: ast.TVar) ?ast.Type {
         // SLOW
         for (self.scheme.tvars, self.match.tvars) |s, m| {
             switch (s) {
@@ -1613,11 +1704,11 @@ const TypeMap = struct {
                 else => {},
             }
         } else {
-            return (self.prev orelse unreachable).getTVar(tv);
+            return (self.prev orelse return null).getTVar(tv);
         }
     }
 
-    fn getTNum(self: *const @This(), tnum: ast.TNum) ast.NumRef {
+    fn getTNum(self: *const @This(), tnum: ast.TNum) ?ast.NumRef {
         for (self.scheme.tvars, self.match.tvars) |s, m| {
             switch (s) {
                 .TNum => |tn| {
@@ -1629,7 +1720,7 @@ const TypeMap = struct {
                 else => {},
             }
         } else {
-            return (self.prev orelse unreachable).getTNum(tnum);
+            return (self.prev orelse return null).getTNum(tnum);
         }
     }
 

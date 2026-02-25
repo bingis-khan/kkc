@@ -152,6 +152,7 @@ pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
         .intTypeTemp = try typeContext.newType(.{ .Con = .{
             .type = self.lookupData("Int").?.Data,
             .application = try common.allocOne(typeContext.arena, ast.Match.empty(ast.Scheme.empty())),
+            .outerApplication = &.{},
         } }),
     };
 }

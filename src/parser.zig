@@ -163,6 +163,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         .uid = self.gen.vars.newUnique(),
         .name = typename.literal(self.lexer.source),
         .scheme = undefined,
+        .outerTVars = undefined, // ERROR: when self referencing the type, there will be an undefined value. I guess we can make it a pointer, which we will instantiate later.
         .stuff = undefined,
         .annotations = annotations,
     });
@@ -196,6 +197,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                     .associations = &.{},
                     .env = null,
                 },
+                .outerTVars = &.{},
                 .annotations = data.annotations,
             };
             break :b;
@@ -207,11 +209,14 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         var assocs = std.ArrayList(AST.Association).init(self.arena);
         const tyconstr = Type.Constrain{ .Data = .{ .uid = data.uid, .assocs = &assocs } };
         var ftvs = TypeContext.FTVs.init(self.arena); // TODO: this is slow. We should add a pointer to an arraylist to the Type(..) constructor. FTV also does deduplication which is not needed here.
+        var outerTVarSet = Set(AST.TVarOrNum, AST.TVarOrNum.comparator()).init(self.arena);
         while (!self.check(.DEDENT)) {
             if (self.consume(.IDENTIFIER)) |recname| {
                 // record
                 const t = try Type.init(self, tyconstr).sepTyo();
+
                 try self.typeContext.ftvs(&ftvs, t.e);
+                try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, t.e);
 
                 try recs.append(.{
                     .field = recname.literal(self.lexer.source),
@@ -224,7 +229,9 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                 while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                     // TODO: for now, no complicated types!
                     const ty = try Type.init(self, tyconstr).typ();
+
                     try self.typeContext.ftvs(&ftvs, ty.e);
+                    try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, ty.e);
 
                     try tys.append(ty.e);
                 }
@@ -244,6 +251,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
             }
         }
 
+        // scheme
         // don't forget to add associations at the end!!!!
         for (assocs.items) |assoc| {
             try tvars.append(.{ .TVar = assoc.depends });
@@ -261,6 +269,15 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
             .associations = assocs.items,
             .env = null, // Datatypes don't need an Env reference.
         };
+
+        // outer tvars
+        var outerTVars = std.ArrayList(AST.TVarOrNum).init(self.arena);
+        var otvIt = outerTVarSet.iterator();
+        while (otvIt.next()) |tv| {
+            try outerTVars.append(tv.*);
+        }
+
+        data.outerTVars = outerTVars.items;
 
         if (cons.items.len > 0 and recs.items.len > 0) {
             try self.reportError(.{ .RecordsAndConstructorsPresent = .{} });
@@ -1010,12 +1027,8 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             const data = (try self.findQualifiedDataOrClass(qtypeName.modpath, qtypeName.name, qtypeName.loc) orelse unreachable).Data;
 
             const oldSelf = self.selfType;
-            const instantiatedSelfType = try self.typeContext.newType(.{
-                .Con = .{
-                    .type = data,
-                    .application = try self.instantiateScheme(data.scheme, null, qtypeName.loc),
-                },
-            });
+            const dataInst = try self.instantiateData(data, qtypeName.loc);
+            const instantiatedSelfType = dataInst.t;
             self.selfType = instantiatedSelfType;
             defer self.selfType = oldSelf;
 
@@ -3859,10 +3872,19 @@ const DataInst = struct {
 fn instantiateData(self: *Self, data: *AST.Data, l: ?Loc) !DataInst {
     const match = try self.instantiateScheme(data.scheme, null, l);
 
+    const outerTVars = try self.arena.alloc(AST.TypeOrNum, data.outerTVars.len);
+    for (data.outerTVars, 0..) |otv, i| {
+        switch (otv) {
+            .TVar => |tv| outerTVars[i] = .{ .Type = try self.typeContext.newType(.{ .TVar = tv }) },
+            .TNum => |tnum| outerTVars[i] = .{ .Num = try self.typeContext.newNum(.{ .TNum = tnum }) },
+        }
+    }
+
     return .{
         .t = try self.typeContext.newType(.{ .Con = .{
             .type = data,
             .application = match,
+            .outerApplication = outerTVars,
         } }),
         .tyArgs = match.tvars,
         .match = match,
@@ -3889,6 +3911,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         .uid = self.gen.vars.newUnique(),
         .stuff = .{ .cons = &.{} },
         .scheme = AST.Scheme.empty(),
+        .outerTVars = &.{},
         .annotations = &.{},
     });
     try self.reportError(.{
@@ -3900,6 +3923,7 @@ fn newPlaceholderType(self: *Self, typename: Str, location: Common.Location) !Da
         .t = try self.typeContext.newType(.{ .Con = .{
             .type = placeholderType,
             .application = match,
+            .outerApplication = &.{},
         } }),
         .tyArgs = &.{},
 

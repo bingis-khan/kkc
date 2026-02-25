@@ -926,7 +926,11 @@ pub fn TypeF(comptime a: ?type) type {
             }
         };
 
-        Con: struct { type: *Data, application: *Match },
+        Con: struct {
+            type: *Data,
+            application: *Match,
+            outerApplication: []TypeOrNum,
+        },
         Fun: struct {
             args: []Rec,
             ret: Rec,
@@ -947,6 +951,10 @@ pub fn TypeF(comptime a: ?type) type {
                         con.type.print(c);
                         c.s(" ");
                         c.sepBy(con.application.tvars, " ");
+                        if (con.outerApplication.len > 0) {
+                            c.s(" |> ");
+                            c.sepBy(con.outerApplication, " ");
+                        }
                         c.s(")");
                     } else {
                         con.type.print(c);
@@ -1009,6 +1017,7 @@ pub const Data = struct {
     name: Str,
 
     scheme: Scheme,
+    outerTVars: []TVarOrNum,
     stuff: union(enum) {
         cons: []Con,
         recs: []Record,
@@ -1088,6 +1097,32 @@ pub const TVarOrNum = union(enum) {
     TVar: TVar,
     TNum: TNum,
 
+    pub fn comparator() type {
+        return struct {
+            pub fn eql(ctx: @This(), a: TVarOrNum, b: TVarOrNum) bool {
+                _ = ctx;
+                return switch (a) {
+                    .TVar => |tv1| switch (b) {
+                        .TVar => |tv2| tv1.eq(tv2),
+                        else => false,
+                    },
+                    .TNum => |tnum1| switch (b) {
+                        .TNum => |tnum2| tnum1.uid == tnum2.uid,
+                        else => false,
+                    },
+                };
+            }
+
+            pub fn hash(ctx: @This(), k: TVarOrNum) u64 {
+                _ = ctx;
+                return switch (k) {
+                    .TVar => |tv| tv.uid,
+                    .TNum => |tnum| tnum.uid * 1337,
+                };
+            }
+        };
+    }
+
     fn print(self: @This(), c: Ctx) void {
         switch (self) {
             .TVar => |tv| tv.print(c),
@@ -1155,8 +1190,8 @@ pub const Association = struct {
 };
 pub const Match = struct {
     scheme: Scheme,
-    envVars: []EnvRef,
     tvars: []TypeOrNum,
+    envVars: []EnvRef,
     assocs: []?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined"
 
     pub const AssocRef = union(enum) {
@@ -1166,6 +1201,21 @@ pub const Match = struct {
         // I FUCKING HATE THESE NAMES
         pub const InstPair = struct { fun: *Function, m: *Match };
     };
+
+    pub fn fromOuterTVars(outerTVars: []TVarOrNum, outerApplication: []TypeOrNum) Match {
+        return .{
+            .scheme = Scheme{
+                .tvars = outerTVars,
+                .envVars = &.{},
+                .associations = &.{},
+                .env = null,
+            },
+
+            .tvars = outerApplication,
+            .envVars = &.{},
+            .assocs = &.{},
+        };
+    }
 
     pub fn mapTVar(self: *const @This(), tvar: TVar) ?Type {
         for (self.scheme.tvars, self.tvars) |tvOrNum, t| {

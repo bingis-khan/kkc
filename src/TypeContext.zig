@@ -194,6 +194,7 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                     }
 
                     try self.unifyMatch(lcon.application, rcon.application, locs, fullTys);
+                    try self.unifyParamsWithTNums(lcon.outerApplication, rcon.outerApplication, locs, fullTys);
                 },
 
                 .Anon => |fields2| {
@@ -322,7 +323,8 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
                 .recs => |recs| {
                     for (recs) |rec| {
                         if (common.streq(rec.field, mem)) {
-                            return try self.mapType(con.application, rec.t);
+                            const outerMatch = ast.Match.fromOuterTVars(data.outerTVars, con.outerApplication);
+                            return try self.mapType(con.application, try self.mapType(&outerMatch, rec.t));
                         }
                     } else {
                         // TODO: this one has funny locations. associations should carry more location info, bruh.
@@ -731,6 +733,59 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
     }
 }
 
+pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *Set(ast.TVarOrNum, ast.TVarOrNum.comparator()), tref: ast.Type) !void {
+    const t = self.getType(tref);
+    switch (t) {
+        .Anon => |fields| {
+            for (fields) |field_| {
+                try self.getOuterTVars(binding, store, field_.t);
+            }
+        },
+        .TyVar => |tyv| {
+            if (self.getFieldsForTVar(tyv)) |fields| {
+                for (fields) |field_| {
+                    try self.getOuterTVars(binding, store, field_.t);
+                }
+            }
+        },
+        .Con => |con| {
+            for (con.application.tvars) |mtOrNum| {
+                switch (mtOrNum) {
+                    .Type => |mt| try self.getOuterTVars(binding, store, mt),
+                    .Num => |tnumref| {
+                        switch (self.getNum(tnumref)) {
+                            .TNum => |tnum| {
+                                // only add nums NOT from the datatype
+                                if (!std.meta.eql(tnum.binding, binding)) {
+                                    try store.insert(.{ .TNum = tnum });
+                                }
+                            },
+                            else => {},
+                        }
+                    },
+                }
+            }
+
+            // should we also go through the outer datatypes for the con?
+            // TODO: devise a test case for this and then implement it
+            //  should also ftvs() check this place??
+        },
+        .Fun => |fun| {
+            for (fun.args) |arg| {
+                try self.getOuterTVars(binding, store, arg);
+            }
+
+            try self.getOuterTVars(binding, store, fun.ret);
+        },
+        .TVar => |tv| {
+            // only add tvars NOT from the datatype.
+            if (!std.meta.eql(tv.binding, binding)) {
+                try store.insert(.{ .TVar = tv });
+            }
+        },
+    }
+}
+
 pub const FTVs = struct {
     const TyVars = Set(FTV, struct {
         pub fn eql(ctx: @This(), a: FTV, b: FTV) bool {
@@ -813,14 +868,34 @@ pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMe
 
     return switch (t) {
         .Con => |con| b: {
-            const conMatch = try self.mapMatch(match, con.application) orelse {
-                break :b ty;
-            };
+            const mconMatch = try self.mapMatch(match, con.application);
 
-            break :b try self.newType(.{ .Con = .{
-                .type = con.type,
-                .application = conMatch,
-            } });
+            var changed = mconMatch != null;
+            const outerTys = try self.arena.alloc(ast.TypeOrNum, con.outerApplication.len);
+            for (con.outerApplication, 0..) |oldTyOrNum, i| {
+                switch (oldTyOrNum) {
+                    .Type => |oldTy| {
+                        const newTy = try self.mapType(match, oldTy);
+                        changed = changed or !newTy.eq(oldTy);
+                        outerTys[i] = .{ .Type = newTy };
+                    },
+                    .Num => |num| {
+                        const nuNum = self.mapNum(match, num);
+                        changed = changed or nuNum != null;
+                        outerTys[i] = .{ .Num = nuNum orelse num };
+                    },
+                }
+            }
+
+            if (changed) {
+                break :b try self.newType(.{ .Con = .{
+                    .type = con.type,
+                    .application = mconMatch orelse con.application,
+                    .outerApplication = outerTys,
+                } });
+            } else {
+                break :b ty;
+            }
         },
         .Fun => |fun| b: {
             var changed = false;
