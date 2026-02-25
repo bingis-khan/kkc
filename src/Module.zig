@@ -21,6 +21,7 @@ pub const DataOrClass = union(enum) {
     Synonym: *ast.TypeSynonym,
 };
 pub const DataInstance = std.AutoArrayHashMap(*ast.Data, *ast.Instance);
+pub const ClassInstance = std.AutoHashMap(*ast.Class, DataInstance);
 
 pub const Exports = struct {
     vars: std.StringHashMap(VarOrFun),

@@ -125,7 +125,7 @@ pub const Error = union(enum) {
     CouldNotFindInstanceForType: struct {
         data: *ast.Data,
         class: *ast.Class,
-        possibilities: Module.DataInstance,
+        possibilities: ?*Module.DataInstance,
         loc: Loc,
     },
 
@@ -316,9 +316,16 @@ pub const Error = union(enum) {
             .DataDoesNotExportThing => p("DataDoesNotExportThing", .{}),
             .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),
             .CouldNotFindInstanceForType => |e| {
-                err.atLocation(e.loc, .{
-                    .label = .{ "Could not find instance of ", e.class, " for type ", e.data, ". Possible instances: ", ast.Ctx.iter(e.possibilities.iterator(), ", ") },
-                });
+                if (e.possibilities) |possibs| {
+                    err.atLocation(e.loc, .{
+                        .label = .{ "Could not find instance of ", e.class, " for type ", e.data, ". Possible instances: ", ast.Ctx.iter(possibs.iterator(), ", ") },
+                    });
+                } else {
+                    // TODO: THIS IS BAD AAAAAAA
+                    err.atLocation(e.loc, .{
+                        .label = .{ "Could not find instance of ", e.class, " for type ", e.data, ". No instances found." },
+                    });
+                }
             },
             .ConstraintsLeft => |e| {
                 p("{s}: constraints left {}:", .{ module.name, e.len });

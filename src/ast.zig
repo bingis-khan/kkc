@@ -229,6 +229,7 @@ pub const Env = struct {
 
     pub fn print(self: *const @This(), c: Ctx) void {
         c.encloseSepBy(self.insts.items, ", ", "[", "]");
+        c.print(.{ "(", self.level, ")" });
     }
 
     // for special cases where there is no body

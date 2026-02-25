@@ -1013,7 +1013,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             const instantiatedSelfType = try self.typeContext.newType(.{
                 .Con = .{
                     .type = data,
-                    .application = try self.instantiateScheme(data.scheme, qtypeName.loc),
+                    .application = try self.instantiateScheme(data.scheme, null, qtypeName.loc),
                 },
             });
             self.selfType = instantiatedSelfType;
@@ -3256,7 +3256,7 @@ const Type = struct {
                 },
 
                 .Synonym => |syn| {
-                    const match = try self.instantiateScheme(syn.scheme, qloc);
+                    const match = try self.instantiateScheme(syn.scheme, null, qloc);
                     const t = try self.typeContext.mapType(match, syn.t);
                     return .{
                         .t = t,
@@ -3295,7 +3295,7 @@ const Type = struct {
                                     .from = t,
                                     .loc = qloc, // TODO!
                                     .class = class,
-                                    .instances = try self.getInstancesForClass(class),
+                                    .instances = try self.getInstances(),
                                     .default = class.default,
                                     .concrete = null,
                                 });
@@ -3316,7 +3316,7 @@ const Type = struct {
                             .from = t,
                             .loc = qloc, // TODO!
                             .class = class,
-                            .instances = try self.getInstancesForClass(class),
+                            .instances = try self.getInstances(),
                             .default = class.default,
                             .concrete = null,
                         });
@@ -3467,7 +3467,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
             .m = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
         },
         .Fun => |fun| b: {
-            const funTyAndMatch = try self.instantiateFunction(fun, self.loc(varTok));
+            const funTyAndMatch = try self.instantiateFunction(fun, null, self.loc(varTok));
             break :b .{
                 .v = .{ .Fun = fun },
                 .t = funTyAndMatch.t,
@@ -3493,7 +3493,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
         },
 
         .Extern => |extfun| {
-            const match = try self.instantiateScheme(extfun.scheme, self.loc(varTok));
+            const match = try self.instantiateScheme(extfun.scheme, null, self.loc(varTok));
 
             var params = std.ArrayList(AST.Type).init(self.arena);
             for (extfun.params) |p| {
@@ -3572,7 +3572,7 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
     t: AST.Type,
     m: *AST.Match,
 } {
-    const match = try self.instantiateScheme(cfun.scheme, l);
+    const match = try self.instantiateScheme(cfun.scheme, null, l);
 
     // mk new, instantiated type
     var params = std.ArrayList(AST.Type).init(self.arena);
@@ -3589,7 +3589,7 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
 
     const classSelf = try self.typeContext.mapType(match, cfun.self);
 
-    const instances = try self.getInstancesForClass(cfun.class);
+    const instances = try self.getInstances();
 
     const ref: *?AST.Match.AssocRef = try Common.allocOne(self.arena, @as(?AST.Match.AssocRef, null));
 
@@ -3617,8 +3617,8 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
     };
 }
 
-fn instantiateFunction(self: *Self, fun: *AST.Function, l: ?Loc) !struct { t: AST.Type, m: *AST.Match } {
-    const match = try self.instantiateScheme(fun.scheme, l);
+fn instantiateFunction(self: *Self, fun: *AST.Function, instances: ?Module.ClassInstance, l: ?Loc) !struct { t: AST.Type, m: *AST.Match } {
+    const match = try self.instantiateScheme(fun.scheme, instances, l);
 
     // mk normal, uninstantiated type.
     var params = std.ArrayList(AST.Type).init(self.arena);
@@ -3652,21 +3652,31 @@ fn instantiateFunction(self: *Self, fun: *AST.Function, l: ?Loc) !struct { t: AS
 }
 
 // CURRENTLY VERY SLOW!
-fn getInstancesForClass(self: *Self, class: *AST.Class) !Module.DataInstance {
+fn getInstances(self: *Self) !Module.ClassInstance {
     // OPTIMIZATION POSSIBILITY: Instance declarations happen often in sequence, then are used. Right now, the list is copied each time. Instead, we can make instances copied on demand.
     //  1. lots of instance declarations, then class:
     //      copy hashmap and insert into associations and assign to function class
     //  2. lots of function class calls, then instance
     //      copy hashmap and then insert into associations and add instance
     // basically, when unchanged, pass the current one and create a copy when it needs to be changed.
-    var foundInsts = Module.DataInstance.init(self.arena);
+    // ALSO ITS BAD YO BECAUSE WE HAVE TO COPY EVERYTHING!!!! AAAAAAAAAA
+    // BECAUSE AN INSTANCE MIGHT HAVE OTHER "REQUIREMENTS"
+    var foundInsts = Module.ClassInstance.init(self.arena);
     var scopeIt = self.scope.scopes.iterateFromTop();
     while (scopeIt.nextPtr()) |sc| {
-        if (sc.instances.getPtr(class)) |insts| {
+        var classIt = sc.instances.iterator();
+        while (classIt.next()) |classDataInsts| {
+            const nuInstsEntry = try foundInsts.getOrPut(classDataInsts.key_ptr.*);
+            if (!nuInstsEntry.found_existing) {
+                nuInstsEntry.value_ptr.* = Module.DataInstance.init(self.arena);
+            }
+            const nuInsts = nuInstsEntry.value_ptr;
+
+            const insts = classDataInsts.value_ptr;
             var instIt = insts.iterator();
             while (instIt.next()) |inst| {
-                if (foundInsts.getKey(inst.key_ptr.*) == null) {
-                    try foundInsts.put(inst.key_ptr.*, inst.value_ptr.*);
+                if (nuInsts.getKey(inst.key_ptr.*) == null) {
+                    try nuInsts.put(inst.key_ptr.*, inst.value_ptr.*);
                 }
             }
         }
@@ -3720,7 +3730,7 @@ fn solveAvailableConstraints(self: *Self) !void {
             defer i +%= 1;
             switch (self.typeContext.getType(assoc.from)) {
                 .Con => |con| {
-                    if (assoc.instances.get(con.type)) |inst| {
+                    if (if (assoc.instances.getPtr(assoc.class)) |dataInstances| dataInstances.get(con.type) else null) |inst| {
                         if (assoc.concrete) |conc| {
                             // NOTE: modifying self.associations while iterating assocs.
                             const fun: *AST.Function = b: {
@@ -3736,22 +3746,22 @@ fn solveAvailableConstraints(self: *Self) !void {
                                 //  Then here, we would return some placeholder (or the placeholder will be provided then)
                                 unreachable;
                             };
-                            const funTyAndMatch = try self.instantiateFunction(fun, assoc.loc);
+                            const funTyAndMatch = try self.instantiateFunction(fun, assoc.instances, assoc.loc);
                             const funTy = funTyAndMatch.t;
 
                             try self.typeContext.unify(conc.to, funTy, if (assoc.loc) |l| &.{ .l = l } else null);
 
                             conc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
 
-                            // try addToEnvUpUntilALevel(
-                            //     conc.env,
-                            //     .{
-                            //         .v = .{ .Fun = fun },
-                            //         .t = funTyAndMatch.t,
-                            //         .m = funTyAndMatch.m,
-                            //     },
-                            //     inst.level,
-                            // );
+                            try addToEnvIfPossible(
+                                conc.env,
+                                .{
+                                    .v = .{ .Fun = fun },
+                                    .t = funTyAndMatch.t,
+                                    .m = funTyAndMatch.m,
+                                    .l = fun.env.level - 1, // NOTE: this is funny! I think it's because normally, the level is not equal when instantiating variables, but envs have indented level so ????? just trust the science
+                                },
+                            );
                         } else {
                             // nothing. it's good.
                         }
@@ -3761,7 +3771,7 @@ fn solveAvailableConstraints(self: *Self) !void {
                             .CouldNotFindInstanceForType = .{
                                 .data = con.type,
                                 .class = assoc.class,
-                                .possibilities = assoc.instances,
+                                .possibilities = assoc.instances.getPtr(assoc.class),
                                 .loc = assoc.loc.?, // TODO: is this safe?
                             },
                         });
@@ -3847,7 +3857,7 @@ const DataInst = struct {
     match: *AST.Match,
 };
 fn instantiateData(self: *Self, data: *AST.Data, l: ?Loc) !DataInst {
-    const match = try self.instantiateScheme(data.scheme, l);
+    const match = try self.instantiateScheme(data.scheme, null, l);
 
     return .{
         .t = try self.typeContext.newType(.{ .Con = .{
@@ -4062,7 +4072,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
 }
 
 // SCHEMES
-fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
+fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassInstance, l: ?Loc) !*AST.Match {
     const tvars = try self.arena.alloc(AST.TypeOrNum, scheme.tvars.len);
     for (scheme.tvars, 0..) |tvOrNum, i| {
         tvars[i] = switch (tvOrNum) {
@@ -4088,27 +4098,33 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, l: ?Loc) !*AST.Match {
         .scheme = scheme,
     };
 
-    // should prolly add assocs to "Match", but we don't need em yet.
-    for (scheme.associations, assocs) |assoc, *ref| {
-        try self.addAssociation(.{
-            .from = try self.typeContext.mapType(&tvarMatch, try self.typeContext.newType(
-                .{ .TVar = assoc.depends },
-            )),
-            .instances = try self.getInstancesForClass(assoc.class),
-            .loc = l,
-            .class = assoc.class,
+    if (scheme.associations.len > 0) {
+        // NOTE: it's nullable, because always instantiating instances when it's an argument was SUPER SLOW!
+        // later, it's gonna be cached AND THEN it's also going to be a pointer, so passing it as an argument won't be a problem
+        const instances = minstances orelse try self.getInstances();
 
-            .concrete = if (assoc.concrete) |conc| .{
-                .to = try self.typeContext.mapType(&tvarMatch, conc.to),
+        // should prolly add assocs to "Match", but we don't need em yet.
+        for (scheme.associations, assocs) |assoc, *ref| {
+            try self.addAssociation(.{
+                .from = try self.typeContext.mapType(&tvarMatch, try self.typeContext.newType(
+                    .{ .TVar = assoc.depends },
+                )),
+                .instances = instances,
+                .loc = l,
+                .class = assoc.class,
 
-                .classFun = conc.classFun,
-                .ref = ref,
-                .env = conc.env,
-                .envType = .AssociatedInstantiation,
+                .concrete = if (assoc.concrete) |conc| .{
+                    .to = try self.typeContext.mapType(&tvarMatch, conc.to),
 
-                .match = try self.typeContext.mapMatch(&tvarMatch, conc.match) orelse conc.match,
-            } else null,
-        });
+                    .classFun = conc.classFun,
+                    .ref = ref,
+                    .env = conc.env,
+                    .envType = .AssociatedInstantiation,
+
+                    .match = try self.typeContext.mapMatch(&tvarMatch, conc.match) orelse conc.match,
+                } else null,
+            });
+        }
     }
 
     // now members fields
@@ -4376,7 +4392,7 @@ pub const Association = struct {
     from: AST.Type,
     loc: ?Loc,
     class: *AST.Class,
-    instances: Module.DataInstance,
+    instances: Module.ClassInstance,
     default: ?*AST.Data = null, // for now, when generalizing, we DON'T keep defaults. I'm thinking of applying defaults before generalizing, so that returning strings works correctly. Or make a different default type: `late` and `eager`
 
     // when it's null, it's just a `constraint` and not based on a class function call.
