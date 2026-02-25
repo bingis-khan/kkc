@@ -1,5 +1,5 @@
 #$ We shouldnt be getting tvars from instances in digThroughVar.
-# 988588544
+# 77307048000
 # 1
 
 class IntoIter
@@ -84,8 +84,9 @@ fn reduce (iterable it, base a, fun (item, a) -> a) -> a <= IntoIter it
 		case next(&it)
 			None
 				return x
-			fn Just(res)
+			Just(res)
 				x <= fun(res, x)
+	return unreachable()
 
 
 fn sum (iterable it) <= IntoIter it
@@ -101,7 +102,7 @@ fn for-each-print (iterable it) <= IntoIter it
 			None
 				return
 
-			fn Just(x)
+			Just(x)
 				println(x)
 
 
@@ -137,8 +138,8 @@ fn bool-range () -> BoolRange
 	return BoolRange { cur: 0 }
 
 
-const = 420
-r = map(filter(map(range(12, 20), fn x: x + const), fn x: x /= 435), fn x: x + 4)
+const = 3
+r = map(filter(map(range(12, 20), fn x: x + const), fn x: x /= 18), fn x: x + 4)
 println(multiply(r))
 
 println(sum(map(bool-range(), bool-to-int)))
