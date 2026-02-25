@@ -21,7 +21,7 @@ fn myget (mt MyThing a) -> a
 whatever = Unit
 fn furech (iterable MyThing a, fun a -> whatever)  # the error is that the union for this will be the same for functions with different parameter types.
 	iterable.x fun()
-	println(whatever  # including something inside will cause the union to be generated at compile time for furech.)
+	println(whatever)  # including something inside will cause the union to be generated at compile time for furech.
 	return
 
 fn my-thing (self MyThing a) <= Whattf a
