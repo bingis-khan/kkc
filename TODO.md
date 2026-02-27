@@ -9,7 +9,7 @@
 - recursive datatypes + checking with the help of Ptr.
 - (fast!) occurs check
 - [?] recursive functions!!!
-	- [ ] basics work, but there are more complicated versions.
+	- [ ] basics work, but there are more complicated versions. (we should be able to do mutual recursion with one outer function)
 - [?] chars
 	- not fully - type defaulting is kinda spaghetti (but behavior seems to be correct).
 - [V] array literals

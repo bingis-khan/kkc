@@ -25,6 +25,11 @@ Float
 #[ctype 'const char*']
 ConstStr  # TODO: later, make a ptr + length struct string.
 
+# Future thing: word size and last byte must be zero.
+# max size would be num-bytes - 1, because when the last char can be 0, we gain the ability to cast SmolStr to ConstStr.
+# also FromChar should not have type SmolStr -> Char tho, because its easy to ConstStr -> SmolStr, but not the other way around.
+SmolStr
+
 #[ctype 'char', bytes '1']
 Char  # later change to RUNE!
 

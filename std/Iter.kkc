@@ -356,6 +356,25 @@ fn for-each (iterable, fun)
 				_ = fun(x)
 
 
+BreakForEach
+	Continue
+	Break
+
+fn for-each-break (iterable, fun)
+	it =& into-iter(iterable)
+	while True
+		case next(it)
+			None
+				return
+			Just(x)
+				res = fun(x)
+				case res
+					Continue
+						pass
+					Break
+						return
+
+
 fn reduce (iterable it, base a, fun (item, a) -> a) -> a <= IntoIter it
 	x = base
 	it = into-iter(iterable)

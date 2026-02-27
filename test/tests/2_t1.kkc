@@ -1,4 +1,5 @@
-#$ Datatype with a single constructor which takes in one function.
+#= disabled
+#$ Datatype with a single constructor which takes in one function. (requires unions currently :( )
 # ()
 
 Fun

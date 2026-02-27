@@ -13,11 +13,11 @@ const Loc = common.Location;
 // Personal Note: bruh, I mean, an allocator for this would basically be the same.
 // I guess this is more local.
 const TyRef = ast.TyRef;
-const TyStoreElem = union(enum) {
+pub const TyStoreElem = union(enum) {
     Ref: TyRef,
     Type: ast.TypeF(TyRef), // not necessarily good, because it takes a lot of space. Ideally, it would be a second index to an array of actual immutable AST types.
 };
-const TyStore = std.ArrayList(TyStoreElem);
+const TyStore = std.ArrayList(if (ast.TyRefPointer) *TyStoreElem else TyStoreElem);
 
 const EnvRef = ast.EnvRef;
 pub const Env = struct {
@@ -84,9 +84,15 @@ pub fn fresh(self: *Self) !ast.Type {
 }
 
 pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
-    try self.context.append(.{ .Type = t });
-    const tid = self.context.items.len - 1;
-    return .{ .id = tid };
+    if (!ast.TyRefPointer) {
+        try self.context.append(.{ .Type = t });
+        const tid = self.context.items.len - 1;
+        return .{ .id = tid };
+    } else {
+        const tp = try common.allocOne(self.arena, TyStoreElem{ .Type = t });
+        try self.context.append(tp);
+        return .{ .id = tp };
+    }
 }
 
 pub fn newEnv(self: *Self, e: ?Env) !ast.EnvRef {
@@ -407,9 +413,9 @@ pub fn unifyMatch(self: *Self, lm: *const ast.Match, rm: *const ast.Match, locs:
     try self.unifyParamsWithTNums(lm.tvars, rm.tvars, locs, full);
 
     // TODO: geg, stuff fails to compile with this.
-    // for (lm.envVars, rm.envVars) |le, re| {
-    //     try self.unifyEnv(le, re, locs, full);
-    // }
+    for (lm.envVars, rm.envVars) |le, re| {
+        try self.unifyEnv(le, re, locs, full);
+    }
 }
 
 pub fn unifyParamsWithTNums(self: *Self, lps: []ast.TypeOrNum, rps: []ast.TypeOrNum, locs: Locs, full: Full) !void {
@@ -522,6 +528,7 @@ fn envMismatch(self: *Self, lenv: *ast.Env, renv: *ast.Env, locs: Locs) !void {
         .lpos = locs.?.l,
         .rpos = locs.?.r,
     } });
+    // unreachable;
 }
 
 fn paramLenMismatch(self: *Self, lpl: usize, rpl: usize, locs: Locs, full: Full) !void {
@@ -617,8 +624,13 @@ fn setType(self: *Self, tref: TyRef, tdest: TyRef, locs: Locs, reversed: bool) !
         if (current.eq(tdest)) { // check for cycles. checking here to shorten.
             break;
         }
-        const next = self.context.items[current.id];
-        self.context.items[current.id] = .{ .Ref = tdest };
+        const next = if (ast.TyRefPointer) current.id.* else self.context.items[current.id];
+        if (ast.TyRefPointer) {
+            current.id.* = .{ .Ref = tdest };
+        } else {
+            self.context.items[current.id] = .{ .Ref = tdest };
+        }
+
         switch (next) {
             .Ref => |newTy| current = newTy,
             .Type => return,
@@ -669,19 +681,14 @@ fn occursCheckMatch(self: *const Self, tyv: ast.TyVar, match: *const ast.Match) 
 }
 
 pub fn getType(self: *const Self, t: TyRef) ast.TypeF(TyRef) {
-    var current = t;
-    while (true) {
-        switch (self.context.items[current.id]) {
-            .Ref => |newTy| current = newTy,
-            .Type => |actualType| return actualType,
-        }
-    }
+    return self.getTypeAndBase(t).t;
 }
 
 fn getTypeAndBase(self: *const Self, t: TyRef) struct { base: ast.Type, t: ast.TypeF(TyRef) } {
     var current = t;
     while (true) {
-        switch (self.context.items[current.id]) {
+        const next = if (ast.TyRefPointer) current.id.* else self.context.items[current.id];
+        switch (next) {
             .Ref => |newTy| current = newTy,
             .Type => |actualType| return .{ .base = current, .t = actualType },
         }
@@ -716,6 +723,13 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
                     },
                 }
             }
+
+            for (con.application.envVars) |envVar| {
+                const env = self.getEnv(envVar);
+                if (env.env == null) { // NOTE: same thing as the case for .Fun. NOTE: technically, we also check for nulls when turning FTVs -> Scheme in mkSchemeForFunction, but it's due to some bug, where some envs are not null for some reason.
+                    try store.envs.insert(env.base);
+                }
+            }
         },
         .Fun => |fun| {
             for (fun.args) |arg| {
@@ -723,7 +737,7 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
             }
 
             const env = self.getEnv(fun.env);
-            if (env.env == null) {
+            if (env.env == null) { // Q: @grok is this correct? A: if we add unions, we should remove this check.
                 try store.envs.insert(env.base);
             }
 

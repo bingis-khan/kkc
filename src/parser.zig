@@ -227,7 +227,6 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                 // constructor
                 var tys = std.ArrayList(AST.Type).init(self.arena);
                 while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
-                    // TODO: for now, no complicated types!
                     const ty = try Type.init(self, tyconstr).typ();
 
                     try self.typeContext.ftvs(&ftvs, ty.e);

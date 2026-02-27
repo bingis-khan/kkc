@@ -6,6 +6,8 @@ const common = @import("common.zig");
 const Intrinsic = @import("Intrinsic.zig");
 const Loc = common.Location;
 
+pub const TyRefPointer = false;
+
 toplevel: []*Stmt, // top level
 
 pub const Ctx = struct {
@@ -819,7 +821,7 @@ pub const InstFunInst = *?Match.AssocRef;
 
 pub const Type = TyRef;
 pub const TyRef = struct {
-    id: usize,
+    id: if (!TyRefPointer) usize else *TypeContext.TyStoreElem,
 
     pub fn print(tid: @This(), c: Ctx) void {
         c.typeContext.getType(tid).print(c);
@@ -946,11 +948,17 @@ pub fn TypeF(comptime a: ?type) type {
                     c.encloseSepBy(fields, ", ", "{ ", " }");
                 },
                 .Con => |con| {
-                    if (con.application.tvars.len > 0) {
+                    if (con.application.tvars.len > 0 or con.application.envVars.len > 0 or con.outerApplication.len > 0) {
                         c.s("(");
                         con.type.print(c);
-                        c.s(" ");
-                        c.sepBy(con.application.tvars, " ");
+                        if (con.application.tvars.len > 0) {
+                            c.s(" ");
+                            c.sepBy(con.application.tvars, " ");
+                        }
+                        if (con.application.envVars.len > 0) {
+                            c.s(" |] ");
+                            c.sepBy(con.application.envVars, " ");
+                        }
                         if (con.outerApplication.len > 0) {
                             c.s(" |> ");
                             c.sepBy(con.outerApplication, " ");
@@ -963,7 +971,7 @@ pub fn TypeF(comptime a: ?type) type {
 
                 .Fun => |fun| {
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    // fun.env.print(c);  // TEMP
+                    // fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                 },
@@ -1087,6 +1095,8 @@ pub const Scheme = struct {
     fn print(self: @This(), c: Ctx) void {
         c.s("{");
         c.sepBy(self.tvars, ", ");
+        c.s("|");
+        c.sepBy(self.envVars, ", ");
         c.s("|");
         c.sepBy(self.associations, ", ");
         c.s("}");

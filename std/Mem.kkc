@@ -38,7 +38,7 @@ fn cast-on-zeroed(x a) -> b
 	return y&
 
 # TODO: maybe make a module "Ptr"?
-# Also, this is only used for C shit... so this should not be here.
+# Also, this is only used for C shit... because in the final std, the Ptr type should not be nullable, so this should not be here.
 # For undefined stuff we should have 0xabcdef and stuff.
 fn null-ptr() -> Ptr a: zeroed()
 fn is-ptr-null(p Ptr a): @memeq(p, null-ptr())

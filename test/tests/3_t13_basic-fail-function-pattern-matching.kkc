@@ -1,4 +1,5 @@
 #= disabled
+## disabled, because it tests an error, which will definitely look different in the final version.
 #$ Basic failing pattern for function pattern matching.
 # Pattern not satisfied to enter function (line \*
 #? 1

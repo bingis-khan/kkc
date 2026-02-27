@@ -26,6 +26,7 @@ use Iter
 	append
 
 	for-each
+	for-each-break
 	reduce
 	count
 	all

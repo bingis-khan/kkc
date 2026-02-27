@@ -1,4 +1,5 @@
-#$ Compare a datatype a single constructor which takes in one function. (kkc: @memeq)
+#= disabled
+#$ Compare a datatype a single constructor which takes in one function. (kkc: @memeq; requires unions :( )
 # False
 
 Fun

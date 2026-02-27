@@ -284,13 +284,23 @@ pub const Error = union(enum) {
                 }
             },
             .MismatchingEnv => |e| {
-                c.s("Mismatching envs: ");
-                e.le.print(c);
-                // c.encloseSepBy(e.le, ", ", "[", "]"); // UGLY
-                c.s(" =/= ");
-                e.re.print(c);
-                // c.encloseSepBy(e.re, ", ", "[", "]");
-                p("", .{}); // newline
+                if (e.rpos) |rpos| {
+                    err.atLocation(e.lpos, .{ .label = .{
+                        "Mismatching envs: expected env ",
+                        e.le,
+                    } });
+                    err.atLocation(rpos, .{ .label = .{
+                        "but got env ",
+                        e.re,
+                    } });
+                } else {
+                    err.atLocation(e.lpos, .{ .label = .{
+                        "Mismatching envs\n    expected env ",
+                        e.le,
+                        ",\n    but got env ",
+                        e.re,
+                    } });
+                }
             },
             .MismatchingParamLen => |e| {
                 if (e.rloc) |rloc| {
