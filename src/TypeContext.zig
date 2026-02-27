@@ -409,13 +409,26 @@ fn setEnvRef(self: *Self, src: EnvRef, dest: EnvRef) void {
     }
 }
 
-pub fn unifyMatch(self: *Self, lm: *const ast.Match, rm: *const ast.Match, locs: Locs, full: Full) !void {
+fn unifyMatch(self: *Self, lm: *const ast.Match, rm: *const ast.Match, locs: Locs, full: Full) !void {
     try self.unifyParamsWithTNums(lm.tvars, rm.tvars, locs, full);
 
-    // TODO: geg, stuff fails to compile with this.
     for (lm.envVars, rm.envVars) |le, re| {
         try self.unifyEnv(le, re, locs, full);
     }
+
+    // when should / does matching associations happen?
+    // ONLY when matching datatypes (Con)
+    //    what does that mean?
+    // it means that unifyMatch happens only in DTs like this:
+    // StrBox
+    //   StrBox Str  <- Str is a class. this, we ALLOW.
+    // 1. the Str (== `from` type in the association) type must be the same.
+    //    It already lands in scheme's tvars, so it's checked before.
+    // 2. check that the selected instance is the same / unify assocs.
+    //    NAH. (5_t50)
+    //    We don't actually want that. In the end, we want them to be resolved at function call and not during construction.
+    //    The assosation that is created is also weak - we only care that the instance is implemented at all.
+    //    Since we already checked, that the types are the same, then both either implement it or don't so that's enough.
 }
 
 pub fn unifyParamsWithTNums(self: *Self, lps: []ast.TypeOrNum, rps: []ast.TypeOrNum, locs: Locs, full: Full) !void {
@@ -1002,7 +1015,7 @@ pub fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*a
         .scheme = mm.scheme,
         .tvars = tvars.items,
         .envVars = envs.items,
-        .assocs = match.assocs,
+        .assocs = mm.assocs,
     });
 }
 

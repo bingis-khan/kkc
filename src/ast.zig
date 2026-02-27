@@ -6,7 +6,7 @@ const common = @import("common.zig");
 const Intrinsic = @import("Intrinsic.zig");
 const Loc = common.Location;
 
-pub const TyRefPointer = false;
+pub const TyRefPointer = true;
 
 toplevel: []*Stmt, // top level
 

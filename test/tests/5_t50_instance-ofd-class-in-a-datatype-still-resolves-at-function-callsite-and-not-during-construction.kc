@@ -1,0 +1,32 @@
+#$ Class in datatype instance resolution is still callsite based like tvars and normal types.
+## Which means, assocs in a scheme don't need to be unified.
+# miau 1!
+# non miau 1!
+# non miau 1!
+class Miau
+	miau (self _)
+
+MiauBox
+	MiauBox Miau
+
+fn boxed-miau(MiauBox(n))
+	n miau()
+
+inst Miau Int
+	miau (self _)
+		println('miau \(self)!')
+
+
+x = MiauBox(1)
+boxed-miau(x)
+
+
+inst Miau Int
+	miau (self _)
+		println('non miau \(self)!')
+
+case x
+	MiauBox(n)
+		n miau()
+
+boxed-miau(x)
