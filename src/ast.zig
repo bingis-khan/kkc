@@ -201,6 +201,15 @@ pub fn print(self: @This(), c: Ctx) void {
 }
 
 pub const Function = struct {
+    pub const Instantiation = struct {
+        t: Type,
+        m: *Match,
+
+        fn print(self: @This(), c: Ctx) void {
+            self.t.print(c);
+        }
+    };
+
     name: Var,
     params: []*Decon,
     ret: Type,
@@ -209,11 +218,27 @@ pub const Function = struct {
     env: *Env,
     temp__isRecursive: bool, // TODO(true-recursion): very hacky!!
 
+    // TODO(environment-representation)
+    // so, uhh, there were problems properly adding proper environments. currently it's all fucked up.
+    // In short, problems and stuff Ive done. This will be useful, because even though i might change the way it gets typechecked, itll still be useful for monomorphising. currently, i tried the monomorphization-friendly version.
+    //  - top level calls were wrong and i discovered the weird environment making thingy.
+    //  - what even should I put in the env? i tried making themem properly monomorphised (if I figure it out and make it fast, mono is gonna be easy)
+    //     - in the future, i should make a basic version that would work for a polymorphic interpreter / bytecode compiler and by these metrics define correctness. it should also be fast.
+    //  - current version is requires tracking calls and if we're finished parsing
+    //   - tracking parsing state is because when we close over the function, we later use it to "spill over", so adding stuff to lower envs would duplicate env insts.
+    //  - with class calls, we need to add "monomorphised" versions of functions, which means we must track through which "match"es they are called, so we need to track calls to duplicate the environment through each type of call.
+    //  - as a hack, the call to addEnvIfPossible is split into two versions.
+    //  - the other version expands environment from the place of the function (because outer class functions can call "inner" functions, check 5_t36)
+    //  - but, when evaluating recursive class calls, we actively add calls, so we have to check if the call is coming from the same function we are expanding the environment from and only use its one match it came from.(all of it is in addEnvIfPossible)
+    temp__calls: std.ArrayList(Instantiation), // when retroactively adding stuff to env, we want to know if a function was even called and HOW.
+    temp__finishedParsing: bool,
+
     fn print(self: @This(), c: Ctx) void {
         c.print(.{ self.name, " (" });
         c.sepBy(self.params, ", ");
         c.s(")");
         self.env.print(c);
+        c.encloseSepBy(self.temp__calls.items, ", ", "[", "]");
         c.s(" -> ");
         self.ret.print(c);
         c.s(" ## ");
@@ -224,10 +249,18 @@ pub const Function = struct {
     }
 };
 
+pub const EnvFun = struct {
+    env: *Env,
+    fun: ?*Function,
+
+    pub fn getEnv(mself: ?@This()) ?*Env {
+        return if (mself) |self| self.env else null;
+    }
+};
 pub const Env = struct {
     insts: std.ArrayList(EnvVar),
     level: usize,
-    outer: ?*Env,
+    outer: ?EnvFun,
 
     pub fn print(self: *const @This(), c: Ctx) void {
         c.encloseSepBy(self.insts.items, ", ", "[", "]");
@@ -265,10 +298,14 @@ pub const EnvVar = struct {
             .Fun => |fun| fun.name,
             .ClassFun => |cfun| cfun.cfun.name,
             .Var => |v| v,
+            .TNum => |tnum| .{
+                .name = tnum.name,
+                .uid = tnum.uid,
+            },
         };
     }
 
-    fn print(self: @This(), c: Ctx) void {
+    pub fn print(self: @This(), c: Ctx) void {
         switch (self.v) {
             .TNum => |tnum| {
                 tnum.print(c);
@@ -289,6 +326,7 @@ pub const EnvVar = struct {
             },
         }
 
+        c.print(.{ "(", self.l, ")" });
         c.s(" ");
         self.t.print(c);
     }
@@ -1177,7 +1215,7 @@ pub const Association = struct {
         classFun: *ClassFun,
         ref: InstFunInst,
 
-        env: ?*Env, // when ~instantiating the scheme~ this is special :3 (fukkk i dont know how to explain it.)
+        env: ?EnvFun, // when ~instantiating the scheme~ this is special :3 (fukkk i dont know how to explain it.)
 
         // NOTE: kinda bad, used only for ClassFunctions
         match: *Match,

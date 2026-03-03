@@ -229,19 +229,23 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     try self.full.append(module.ast);
     try self.modules.put(fullPath, module);
 
+    // ctx
+    var hadNewline: bool = undefined;
+    const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+
     if (opts.printAST orelse self.opts.printAST) {
-        var hadNewline: bool = undefined;
-        const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
         module.ast.print(ctx);
     }
 
     // module exports
     if (self.opts.printExports) {
-        var hadNewline: bool = undefined;
-        const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
         ctx.print(.{ "Exports for module ", moduleName, "\n" });
         module.exports.print(ctx);
     }
+
+    // ctx.print(.{ fullPath.path[fullPath.path.len - 1], ": " });
+    // ctx.encloseSepBy(module.calls, ", ", "[", "]");
+    // ctx.print("\n");
 
     return module;
 }

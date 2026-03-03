@@ -37,10 +37,12 @@ pub fn main() !void {
 
     std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
 
+    // context setup
+    var fakeNewline: bool = undefined;
+    const fakeHackCtx = ast.Ctx.init(&fakeNewline, modules.typeContext);
+    fakeNewline = false; // SIKE (but obv. temporary)
+
     if (!opts.hideErrors) {
-        var fakeNewline: bool = undefined;
-        const fakeHackCtx = ast.Ctx.init(&fakeNewline, modules.typeContext);
-        fakeNewline = false; // SIKE (but obv. temporary)
         for (modules.errors.items) |err| {
             err.err.print(fakeHackCtx, err.module);
         }
