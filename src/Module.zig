@@ -99,7 +99,7 @@ pub const BasePath = struct {
 
 ast: ast,
 exports: Exports,
-calls: []ast.EnvVar,
+calls: []ast.Function.Use,
 
 pub fn lookupVar(self: *const Self, varName: Str) ?VarOrFun {
     return self.exports.vars.get(varName);

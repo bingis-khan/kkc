@@ -16,6 +16,7 @@ pub const ModuleLookup = std.HashMap(Module.BasePath, ?Module, Module.BasePath.C
 
 pub const Gen = struct {
     vars: UniqueGen,
+    envs: UniqueGen,
     types: UniqueGen,
     cons: UniqueGen,
     tvars: UniqueGen,
@@ -44,6 +45,7 @@ preludeExports: ?Module.Exports, // TODO: instead of re-adding stuff for every m
 stdExports: ?Module.Exports,
 prelude: ?Prelude,
 full: std.ArrayList(ast),
+roots: std.ArrayList(ast.Function.Use),
 rootPath: Str,
 stdPath: Str,
 gen: Gen,
@@ -59,6 +61,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
         .stdExports = null,
         .prelude = null,
         .full = std.ArrayList(ast).init(al),
+        .roots = std.ArrayList(ast.Function.Use).init(al),
         .stdPath = stdPath,
         .rootPath = root,
         .gen = Gen.init(),
@@ -227,6 +230,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
     const module = try parser.parse();
     try self.full.append(module.ast);
+    try self.roots.appendSlice(module.calls);
     try self.modules.put(fullPath, module);
 
     // ctx
@@ -243,15 +247,19 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         module.exports.print(ctx);
     }
 
-    // ctx.print(.{ fullPath.path[fullPath.path.len - 1], ": " });
-    // ctx.encloseSepBy(module.calls, ", ", "[", "]");
-    // ctx.print("\n");
+    ctx.print(.{ fullPath.path[fullPath.path.len - 1], ": " });
+    ctx.encloseSepBy(module.calls, ", ", "[", "]");
+    ctx.print("\n");
 
     return module;
 }
 
 pub fn getAST(self: *const Self) []ast {
     return self.full.items;
+}
+
+pub fn getRoots(self: *const Self) []ast.Function.Use {
+    return self.roots.items;
 }
 
 fn readSource(self: *Self, filepath: Str) !Str {

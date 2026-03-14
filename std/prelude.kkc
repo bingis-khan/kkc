@@ -242,3 +242,4 @@ inst ListLike Array
 
 inst ListLike SmolArray
 	from-listlike (arr): SmolArray { arr }
+

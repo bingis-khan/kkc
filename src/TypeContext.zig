@@ -9,6 +9,7 @@ const common = @import("common.zig");
 const Str = common.Str;
 const Set = @import("Set.zig").Set;
 const Loc = common.Location;
+const TypeMap = @import("TypeMap.zig").TypeMap;
 
 // Personal Note: bruh, I mean, an allocator for this would basically be the same.
 // I guess this is more local.
@@ -24,9 +25,9 @@ pub const Env = struct {
     env: *ast.Env,
     match: *const ast.Match,
 
-    pub fn empty(al: std.mem.Allocator) !@This() {
+    pub fn empty(id: Unique, al: std.mem.Allocator) !@This() {
         return .{
-            .env = try common.allocOne(al, ast.Env.empty()),
+            .env = try common.allocOne(al, ast.Env.empty(id)),
             .match = try common.allocOne(al, ast.Match.empty(ast.Scheme.empty())),
         };
     }
@@ -895,7 +896,7 @@ pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMe
 
     return switch (t) {
         .Con => |con| b: {
-            const mconMatch = try self.mapMatch(match, con.application);
+            const mconMatch = try self.mapMatch_(match, con.application);
 
             var changed = mconMatch != null;
             const outerTys = try self.arena.alloc(ast.TypeOrNum, con.outerApplication.len);
@@ -978,8 +979,12 @@ pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMe
     };
 }
 
+pub fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !*const ast.Match {
+    return (try self.mapMatch_(match, mm)) orelse mm;
+}
+
 // null when match did not change (so we can keep the same data structure)
-pub fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.Match {
+fn mapMatch_(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.Match {
     var changed = false;
 
     var tvars = std.ArrayList(ast.TypeOrNum).init(self.arena);
@@ -1005,9 +1010,39 @@ pub fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*a
         try envs.append(nuEnv);
     }
 
+    var assocs = std.ArrayList(?ast.Match.AssocRef).init(self.arena);
+    for (mm.assocs) |moldAssoc| {
+        if (moldAssoc) |oldAssoc| {
+            switch (oldAssoc) {
+                .Id => |id| {
+                    if (match.tryGetFunctionByID(id)) |nuId| {
+                        try assocs.append(.{ .InstFun = nuId });
+                        changed = true;
+                        continue;
+                    }
+                },
+                .InstFun => |ifun| {
+                    if (try self.mapMatch_(match, ifun.m)) |nuMatch| {
+                        try assocs.append(.{ .InstFun = .{
+                            .fun = ifun.fun,
+                            .m = nuMatch,
+                        } });
+                    } else {
+                        try assocs.append(moldAssoc);
+                    }
+                    continue;
+                },
+            }
+
+            unreachable;
+        }
+        try assocs.append(moldAssoc);
+    }
+
     if (!changed) {
         tvars.deinit();
         envs.deinit();
+        assocs.deinit();
         return null;
     }
 
@@ -1015,7 +1050,7 @@ pub fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*a
         .scheme = mm.scheme,
         .tvars = tvars.items,
         .envVars = envs.items,
-        .assocs = mm.assocs,
+        .assocs = assocs.items,
     });
 }
 
@@ -1042,7 +1077,7 @@ fn mapNum(self: *Self, match: *const ast.Match, numref: ast.NumRef) ?ast.NumRef 
 fn mapEnv(self: *Self, match: *const ast.Match, envref: ast.EnvRef) error{OutOfMemory}!ast.EnvRef {
     const envAndBase = self.getEnv(envref);
     return if (envAndBase.env) |*env| bb: {
-        const menvMatch = try self.mapMatch(match, env.match);
+        const menvMatch = try self.mapMatch_(match, env.match);
         break :bb if (menvMatch) |envMatch| b: {
             break :b try self.newEnv(.{
                 .env = env.env,

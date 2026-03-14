@@ -36,7 +36,7 @@ gen: *Modules.Gen,
 scope: Scope,
 env: ?AST.EnvFun,
 base: Module.BasePath,
-topLevels: std.ArrayList(AST.EnvVar),
+topLevels: std.ArrayList(AST.Function.Use),
 
 // type zone
 typeContext: *TypeContext,
@@ -81,7 +81,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str,
         .env = null,
         .gen = &modules.gen,
         .base = base,
-        .topLevels = std.ArrayList(AST.EnvVar).init(arena),
+        .topLevels = std.ArrayList(AST.Function.Use).init(arena),
 
         // typeshit
         .typeContext = context,
@@ -403,6 +403,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         .body = undefined,
         .temp__calls = fun.temp__calls,
         .temp__finishedParsing = fun.temp__finishedParsing,
+        .temp__mono = fun.temp__mono,
     };
 
     const fnBody = if (self.check(.COLON)) b: {
@@ -453,6 +454,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         .temp__isRecursive = false,
         .temp__calls = fun.temp__calls,
         .temp__finishedParsing = true,
+        .temp__mono = fun.temp__mono,
     };
 
     return fun;
@@ -1058,6 +1060,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     .temp__isRecursive = true,
                     .temp__calls = std.ArrayList(AST.Function.Instantiation).init(self.arena),
                     .temp__finishedParsing = false,
+                    .temp__mono = AST.Function.Mono.empty(self.typeContext, self.arena),
                 };
                 const fun = try self.function(funptr, self.loc(funName));
 
@@ -2691,7 +2694,7 @@ fn constructorExpression(self: *Self, modpath: Module.Path, name: Token) !*AST.E
         .Fun = .{
             .args = ct.tys,
             .ret = ct.t,
-            .env = try self.typeContext.newEnv(try TypeContext.Env.empty(self.arena)), // nocheckin: we have to figure out if the env is the same.
+            .env = try self.typeContext.newEnv(try TypeContext.Env.empty(self.gen.envs.newUnique(), self.arena)), // nocheckin: we have to figure out if the env is the same.
         },
     });
     return self.allocExpr(.{
@@ -2966,7 +2969,7 @@ fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
                     .ret = sci.t,
                     .args = tyArgs,
                     .env = try self.typeContext.newEnv(.{
-                        .env = try Common.allocOne(self.arena, AST.Env.empty()),
+                        .env = try Common.allocOne(self.arena, AST.Env.empty(self.gen.envs.newUnique())),
                         .match = sci.match,
                     }),
                 } }),
@@ -3192,7 +3195,7 @@ const Type = struct {
                                 try self.typeContext.newEnv(null)
                             else
                                 // in external functions, assume no environment.
-                                try self.typeContext.newEnv(try TypeContext.Env.empty(self.arena)),
+                                try self.typeContext.newEnv(try TypeContext.Env.empty(self.gen.envs.newUnique(), self.arena)),
                         },
                     }),
                     .l = l.between(ret.l),
@@ -3425,6 +3428,7 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
         .temp__isRecursive = true,
         .temp__calls = std.ArrayList(AST.Function.Instantiation).init(self.arena),
         .temp__finishedParsing = false,
+        .temp__mono = AST.Function.Mono.empty(self.typeContext, self.arena),
     };
     try self.scope.currentScope().vars.put(varName, .{ .Fun = funPtr });
     return funPtr;
@@ -3504,6 +3508,14 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
             // not needed here, done in addToEnvIfPossible
             // try self.expandFunctionEnvIntoCurrentEnv(self.env, fun.env, funTyAndMatch.m);
 
+            // add uses
+            const use = AST.Function.Use{ .Fun = .{ .fun = fun, .m = funTyAndMatch.m } };
+            if (AST.EnvFun.getFun(self.env)) |envfun| {
+                try envfun.temp__mono.uses.append(use);
+            } else {
+                try self.topLevels.append(use);
+            }
+
             break :b .{
                 .v = .{ .Fun = fun },
                 .t = funTyAndMatch.t,
@@ -3525,6 +3537,8 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
                 .m = ifn.m,
             };
 
+            // NOTE: "use" is added in the instantiateClassFunction
+
             break :b varInst;
         },
 
@@ -3541,7 +3555,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
                 .Fun = .{
                     .args = params.items,
                     .ret = ret,
-                    .env = try self.typeContext.newEnv(try TypeContext.Env.empty(self.arena)),
+                    .env = try self.typeContext.newEnv(try TypeContext.Env.empty(self.gen.envs.newUnique(), self.arena)),
                 },
             });
 
@@ -3582,11 +3596,6 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
         };
         // try addToEnvUpUntilALevel(self.env, envVar, vorfAndScope.level);
         try self.addToEnvIfPossible(self.env, envVar, false);
-
-        // // add top level calls
-        // if (self.env == null) {
-        //     try self.topLevels.append(envVar);
-        // }
     }
     return varInst;
 }
@@ -3653,7 +3662,9 @@ fn expandFunctionEnvIntoCurrentEnv(self: *Self, mcurrentEnv: ?*AST.Env, env: *AS
 
 // TODO: add to envs up until a function.
 fn addToEnvIfPossible(self: *Self, menv: ?AST.EnvFun, inst: AST.EnvVar, temp__solvingConstraints: bool) !void {
-    if (!temp__solvingConstraints) {
+    // if (!temp__solvingConstraints) {
+    _ = temp__solvingConstraints;
+    if (!false) {
         if (menv) |envfun| {
             const env = envfun.env;
             if (env.level > inst.l) {
@@ -3663,15 +3674,14 @@ fn addToEnvIfPossible(self: *Self, menv: ?AST.EnvFun, inst: AST.EnvVar, temp__so
                 switch (inst.v) {
                     .Fun => |fun| {
                         // _ = self;
-                        // _ = fun;
-                        try self.expandFunctionEnvIntoCurrentEnv(env, fun.env, inst.m);
+                        _ = fun;
+                        // try self.expandFunctionEnvIntoCurrentEnv(env, fun.env, inst.m);
                     },
                     else => {},
                 }
             }
         } else {
             // _ = self;
-            // try self.topLevels.append(inst);
         }
     } else {
         // very hacky FUCK
@@ -3814,6 +3824,21 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
             .match = match,
         },
     });
+
+    // NOTE: everywhere this function was called we want to add the "USE"
+    const use = AST.Function.Use{
+        .ClassFun = .{
+            .cfun = cfun,
+            .ref = ref,
+        },
+    };
+
+    // add uses
+    if (AST.EnvFun.getFun(self.env)) |fun| {
+        try fun.temp__mono.uses.append(use);
+    } else {
+        try self.topLevels.append(use);
+    }
 
     return .{
         .ref = ref,
@@ -3964,16 +3989,37 @@ fn solveAvailableConstraints(self: *Self) !void {
 
                             conc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
 
+                            const envInst = AST.EnvVar{
+                                .v = .{ .Fun = fun },
+                                .t = funTyAndMatch.t,
+                                .m = funTyAndMatch.m,
+                                .l = fun.env.level - 1, // NOTE: this is funny! I think it's because normally, the level is not equal when instantiating variables, but envs have indented level so ????? just trust the science
+                            };
                             try self.addToEnvIfPossible(
                                 conc.env,
-                                .{
-                                    .v = .{ .Fun = fun },
-                                    .t = funTyAndMatch.t,
-                                    .m = funTyAndMatch.m,
-                                    .l = fun.env.level - 1, // NOTE: this is funny! I think it's because normally, the level is not equal when instantiating variables, but envs have indented level so ????? just trust the science
-                                },
+                                envInst,
                                 true,
                             );
+
+                            // if top level, add inst
+                            // switch (conc.envType) {
+                            //     .ClassFunInstantiation => {
+                            //         if (AST.EnvFun.getFun(conc.env)) |afun| {
+                            //             try afun.temp__uses.append(envInst);
+                            //         } else {
+                            //             try self.topLevels.append(envInst);
+                            //         }
+                            //     },
+                            //     .AssociatedInstantiation => {
+                            //         // TODO?
+                            //         // if (AST.EnvFun.getFun(conc.env)) |afun| {
+                            //         //     _ = afun;
+                            //         // }
+                            //     },
+                            // }
+                            // if (fun.env.outer == null and conc.envType == .ClassFunInstantiation and conc.env == null) {
+                            //     try self.topLevels.append(envInst);
+                            // }
                         } else {
                             // nothing. it's good.
                         }
@@ -4344,7 +4390,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
                     .env = conc.env,
                     .envType = .AssociatedInstantiation,
 
-                    .match = try self.typeContext.mapMatch(&tvarMatch, conc.match) orelse conc.match,
+                    .match = try self.typeContext.mapMatch(&tvarMatch, conc.match),
                 } else null,
             });
         }
@@ -4627,7 +4673,7 @@ pub const Association = struct {
 
         // NOTE: These two are only used for class functions.
         // BUT, with the `ref` we technically don't have to add them to the environment, since it's in the SCHEME!
-        env: ?AST.EnvFun,
+        env: ?AST.EnvFun, // fyi: this is self.env in class function instantiation and fun.env.outer when it's AssociatedInstantiation (when generalized)
 
         // when a class function instantiation's type is known imm. (never generalized), we want to add the class function to the enclosing environment (like a normal function call)
         // when it gets generalized, however, we don't want to add it to the environment that got it generalized - only the one "outer" to it.
@@ -4636,7 +4682,7 @@ pub const Association = struct {
             AssociatedInstantiation,
         },
 
-        match: *AST.Match, // this is funny - not sure if it should be here, as it is only used for the class match (because we are adding it later.)
+        match: *const AST.Match, // this is funny - not sure if it should be here, as it is only used for the class match (because we are adding it later.)
 
     },
 };
@@ -4659,9 +4705,13 @@ fn beginEnv(self: *Self, fun: ?*AST.Function) !*AST.Env {
     self.beginScope(); // x -> x + 1
 
     const nuEnv = try Common.allocOne(self.arena, AST.Env{
+        .id = self.gen.envs.newUnique(),
         .insts = std.ArrayList(AST.EnvVar).init(self.arena),
         .level = self.level(), // x + 1 ;; number of scopes -> level
         .outer = self.env,
+        .monoInsts = AST.Env.Mono.initContext(self.arena, .{
+            .typeContext = self.typeContext,
+        }),
     });
     self.env = .{ .env = nuEnv, .fun = fun };
     return nuEnv;

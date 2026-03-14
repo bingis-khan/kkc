@@ -15,6 +15,10 @@ pub fn Set(comptime K: type, comptime Context: type) type {
             return .{ .hash = Hash.init(al) };
         }
 
+        pub fn initContext(al: std.mem.Allocator, ctx: Context) Self {
+            return .{ .hash = Hash.initContext(al, ctx) };
+        }
+
         // NOTE: I will be using normal/Haskell terminology for simplicity (insert/delete instead of put/remove)
         pub fn insert(self: *Self, x: K) !void {
             try self.hash.put(x, .{});
@@ -24,11 +28,13 @@ pub fn Set(comptime K: type, comptime Context: type) type {
             return self.hash.contains(e);
         }
 
+        // TODO: change it to remove later (too Haskell brained)
         pub fn delete(self: *Self, x: K) void {
             _ = self.hash.remove(x);
         }
 
-        pub fn iterator(self: *const Self) Hash.KeyIterator {
+        pub const Iterator = Hash.KeyIterator;
+        pub fn iterator(self: *const Self) Iterator {
             return self.hash.keyIterator();
         }
 
@@ -41,6 +47,12 @@ pub fn Set(comptime K: type, comptime Context: type) type {
 
         pub fn deinit(self: *Self) void {
             self.hash.deinit();
+        }
+
+        pub fn clone(self: *const Self) !Self {
+            return .{
+                .hash = try self.hash.clone(),
+            };
         }
     };
 }

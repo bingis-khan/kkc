@@ -1,0 +1,28 @@
+#= envsize a 1
+#= envsize b 1
+## a is not called, so c's environment is 0!
+#= envsize c 0
+fn cast(x): @cast(x)
+# safe cast for pointers
+# bfn cast-ptr5 (p Ptr a) -> Ptr a: @cast(p)
+# fn cast-ptr4 (p Ptr a) -> Ptr a: cast-ptr5(p)
+# fn cast-ptr3 (p Ptr a) -> Ptr a: cast-ptr4(p)
+# fn cast-ptr2 (p Ptr a) -> Ptr a: cast-ptr3(p)
+# fn cast-ptr (p Ptr a) -> Ptr a: cast-ptr2(p)
+# cast-ptr(&1)
+
+# safe cast for pointers
+fn cast-ptr5-2 (p Ptr a) -> Ptr a: cast(p)
+fn cast-ptr4-2 (p Ptr a) -> Ptr a: cast-ptr5-2(p)
+fn cast-ptr3-2 (p Ptr a) -> Ptr a: cast-ptr4-2(p)
+fn cast-ptr2-2 (p Ptr a) -> Ptr a: cast-ptr3-2(p)
+fn cast-ptr-2 (p Ptr a) -> Ptr a: cast-ptr2-2(p)
+cast-ptr-2(&1)
+
+# fn reff(): 1
+
+# fn a()
+# 	fn b()
+# 		reff()
+# 	b()
+# a()

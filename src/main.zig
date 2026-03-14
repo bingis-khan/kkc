@@ -11,6 +11,7 @@ const common = @import("common.zig");
 const Str = common.Str;
 const Args = @import("Args.zig");
 const Module = @import("Module.zig");
+const mono = @import("mono.zig");
 
 pub fn main() !void {
     // SETUP
@@ -52,16 +53,23 @@ pub fn main() !void {
         }
     }
 
+    const moduleAST = modules.getAST();
+
     // go and interpret
-    if (modules.errors.items.len == 0 and !opts.dontRun) {
+    const interp = false;
+    if (interp and modules.errors.items.len == 0 and !opts.dontRun) {
         const interpretStartTime = try std.time.Instant.now();
-        const moduleAST = modules.getAST();
         const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa);
         const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
 
         std.debug.print("=== return value: {} ===\n", .{ret});
         std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
     }
+
+    // mono it
+    if (modules.errors.items.len > 0) return;
+    const monoAST = try mono.mono(moduleAST, modules.getRoots(), modules.prelude.?, modules.typeContext, aa);
+    _ = monoAST;
 }
 
 pub const CompilationStuff = struct {

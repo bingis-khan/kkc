@@ -5,6 +5,9 @@ const TypeContext = @import("TypeContext.zig");
 const common = @import("common.zig");
 const Intrinsic = @import("Intrinsic.zig");
 const Loc = common.Location;
+const Set = @import("Set.zig").Set;
+const stack_set = @import("stack_set.zig");
+const StackSet = stack_set.StackSet;
 
 pub const TyRefPointer = true;
 
@@ -14,10 +17,13 @@ pub const Ctx = struct {
     indent: u32,
     hadNewline: *bool, // check newlines and automatically indent
     typeContext: *const TypeContext,
+    mapTypes: ?*const Match,
 
     pub fn pp(typeContext: *const TypeContext, x: anytype) void {
         var hadNewline = false;
-        Ctx.init(&hadNewline, typeContext).print(.{ x, "\n" });
+        var ctx = Ctx.init(&hadNewline, typeContext);
+        ctx.print(x);
+        ctx.print("\n");
     }
 
     const Self = @This();
@@ -27,6 +33,7 @@ pub const Ctx = struct {
             .indent = 0,
             .hadNewline = hadNewline,
             .typeContext = typeContext,
+            .mapTypes = null,
         };
     }
 
@@ -71,9 +78,15 @@ pub const Ctx = struct {
 
             pub fn print(self: *const @This(), c: Ctx) void {
                 var it = self.it;
+                if (it.next()) |x| {
+                    x.*.print(c);
+                } else {
+                    return;
+                }
+
                 while (it.next()) |x| {
-                    x.key_ptr.*.print(c); // TODO: when needed, make it more general. (eg: take in a function.)
                     c.s(self.sep);
+                    x.*.print(c); // TODO: when needed, make it more general. (eg: take in a function.)
                 }
             }
         };
@@ -167,7 +180,7 @@ pub const Ctx = struct {
         }
     }
 
-    fn sepBy(self: Self, args: anytype, sep: Str) void {
+    pub fn sepBy(self: Self, args: anytype, sep: Str) void {
         if (args.len == 0) return;
 
         var margs = args;
@@ -210,6 +223,66 @@ pub const Function = struct {
         }
     };
 
+    pub const Use = union(enum) {
+        Fun: struct { fun: *Function, m: *const Match },
+        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst },
+
+        fn print(self: @This(), c: Ctx) void {
+            switch (self) {
+                .Fun => |fun| {
+                    c.s("@"); // tag that it's a function instantiation.
+                    fun.fun.name.print(c);
+                },
+                .ClassFun => |cf| {
+                    const cfunName = cf.cfun.name;
+                    c.print(.{ "$", cfunName });
+                },
+            }
+        }
+    };
+
+    pub const MonoMatchStuff = struct {
+        uses: u32,
+        completes: EnvCompletes,
+    };
+    pub const MonoMatches = std.HashMap(*const Match, MonoMatchStuff, Match.Comparator, std.hash_map.default_max_load_percentage);
+    pub const EnvCompletes = Set(FunApp, FunApp.Comparator);
+    pub const FunApp = struct {
+        fun: *Function,
+        m: *const Match,
+
+        pub fn print(self: @This(), c: Ctx) void {
+            c.print(.{ self.fun.name, self.m });
+        }
+
+        pub const Comparator = struct {
+            typeContext: *const TypeContext,
+
+            pub fn eql(ctx: @This(), a: FunApp, b: FunApp) bool {
+                return a.fun.name.uid == b.fun.name.uid and Match.Comparator.eql(.{ .typeContext = ctx.typeContext }, a.m, b.m);
+            }
+
+            pub fn hash(ctx: @This(), k: FunApp) u64 {
+                return k.fun.name.uid * 497192 + Match.Comparator.hash(.{ .typeContext = ctx.typeContext }, k.m);
+            }
+        };
+    };
+    pub const Mono = struct {
+        uses: std.ArrayList(Use),
+        alreadyExpanded: bool,
+        alreadyGenerated: bool, // TEMP: unused for now
+        matches: MonoMatches,
+
+        pub fn empty(typeContext: *const TypeContext, al: std.mem.Allocator) @This() {
+            return .{
+                .uses = std.ArrayList(Use).init(al),
+                .alreadyExpanded = false,
+                .alreadyGenerated = false,
+                .matches = MonoMatches.initContext(al, .{ .typeContext = typeContext }),
+            };
+        }
+    };
+
     name: Var,
     params: []*Decon,
     ret: Type,
@@ -217,6 +290,8 @@ pub const Function = struct {
     scheme: Scheme,
     env: *Env,
     temp__isRecursive: bool, // TODO(true-recursion): very hacky!!
+
+    temp__mono: Mono,
 
     // TODO(environment-representation)
     // so, uhh, there were problems properly adding proper environments. currently it's all fucked up.
@@ -247,6 +322,12 @@ pub const Function = struct {
 
         printBody(self.body, c);
     }
+
+    pub fn isDefinedAfterOrAt(self: *const @This(), other: *const @This()) bool {
+        // FUNNY IMPLEMENTATION BRUHHHHHHH but technically true.
+        // TODO: what about "recursive" definitions?
+        return self.name.uid >= other.name.uid;
+    }
 };
 
 pub const EnvFun = struct {
@@ -256,11 +337,29 @@ pub const EnvFun = struct {
     pub fn getEnv(mself: ?@This()) ?*Env {
         return if (mself) |self| self.env else null;
     }
+
+    pub fn getFun(mself: ?@This()) ?*Function {
+        var mef = mself;
+        while (mef) |ef| {
+            if (ef.fun) |fun| {
+                return fun;
+            }
+
+            mef = ef.env.outer;
+        }
+
+        return null;
+    }
 };
 pub const Env = struct {
+    id: Unique,
     insts: std.ArrayList(EnvVar),
     level: usize,
+    monoInsts: Mono, // TEMP/TODO: for now we will reuse this env struct for mono insts. We might need to remake the structure??
+
     outer: ?EnvFun,
+
+    pub const Mono = Set(EnvVar, EnvVar.Comparator);
 
     pub fn print(self: *const @This(), c: Ctx) void {
         c.encloseSepBy(self.insts.items, ", ", "[", "]");
@@ -268,8 +367,9 @@ pub const Env = struct {
     }
 
     // for special cases where there is no body
-    pub fn empty() Env {
+    pub fn empty(id: Unique) Env {
         return .{
+            .id = id,
             .insts = std.ArrayList(EnvVar){
                 .allocator = undefined,
                 .capacity = 0,
@@ -277,6 +377,13 @@ pub const Env = struct {
             },
             .level = 0,
             .outer = null,
+            .monoInsts = Mono{
+                .hash = .{
+                    .unmanaged = .{},
+                    .allocator = undefined,
+                    .ctx = undefined,
+                },
+            },
         };
     }
 };
@@ -289,9 +396,11 @@ pub const EnvVar = struct {
         Var: Var,
         TNum: TNum,
     },
-    m: *Match,
+    m: *const Match,
     t: Type,
     l: Level,
+
+    // when we get to equality, we'll ignore the type and level, because I think they are irrelevant except for displaying.
 
     pub fn getVar(self: @This()) Var {
         return switch (self.v) {
@@ -330,6 +439,39 @@ pub const EnvVar = struct {
         c.s(" ");
         self.t.print(c);
     }
+
+    const Comparator = struct {
+        typeContext: *const TypeContext,
+
+        pub fn eql(ctx: @This(), a: EnvVar, b: EnvVar) bool {
+            return switch (a.v) {
+                .Fun => |f1| switch (b.v) {
+                    .Fun => |f2| bb: {
+                        if (!Var.comparator().eql(.{}, f1.name, f2.name)) break :bb false;
+
+                        return Match.Comparator.eql(.{ .typeContext = ctx.typeContext }, a.m, b.m);
+                    },
+                    else => false,
+                },
+                .ClassFun => unreachable,
+                .Var => |v1| switch (b.v) {
+                    .Var => |v2| Var.comparator().eql(.{}, v1, v2),
+                    else => false,
+                },
+                .TNum => unreachable,
+            };
+        }
+
+        pub fn hash(ctx: @This(), k: EnvVar) u64 {
+            _ = ctx;
+            return switch (k.v) {
+                .Fun => |fun| fun.name.uid * 557891,
+                .ClassFun => unreachable,
+                .Var => |v| v.uid * 1337,
+                .TNum => unreachable,
+            };
+        }
+    };
 };
 
 fn printBody(stmts: []*Stmt, oldC: Ctx) void {
@@ -385,7 +527,7 @@ pub const Stmt = union(enum) {
         },
     };
 
-    fn print(self: @This(), c: Ctx) void {
+    pub fn print(self: @This(), c: Ctx) void {
         switch (self) {
             .Pass => |mlbl| {
                 c.s("pass");
@@ -868,12 +1010,43 @@ pub const TyRef = struct {
     pub fn eq(l: @This(), r: @This()) bool {
         return l.id == r.id;
     }
+
+    pub fn tyEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
+        if (l.eq(r)) return true;
+        return switch (tyc.getType(l)) {
+            .Con => |c1| switch (tyc.getType(r)) {
+                .Con => |c2| {
+                    if (!c1.type.eq(c2.type)) return false;
+                    return Match.Comparator.eql(.{ .typeContext = tyc }, c1.application, c2.application);
+                },
+                .TVar => unreachable,
+                .TyVar => unreachable,
+                else => false,
+            },
+            .Fun => unreachable,
+            .Anon => unreachable,
+
+            .TVar => unreachable,
+            .TyVar => unreachable,
+        };
+    }
+
+    // fn mapTVar(self: @This(), tyc: *const TypeContext) @This() {
+    //     return switch (tyc.getType(self)) {
+    //         .TVar => |tv| {
+    //         },
+    //         else => self,
+    //     };
+    // }
 };
 pub const EnvRef = struct {
     id: usize,
 
     pub fn print(eid: @This(), c: Ctx) void {
-        if (c.typeContext.getEnv(eid).env) |env| {
+        const eb = c.typeContext.getEnv(eid);
+        // c.print(.{ "(", eb.env.id, ")" });
+        if (eb.env) |env| {
+            c.print(.{ "(", env.env.id, ")", "(", env.match, ")" });
             env.env.print(c);
         } else {
             c.s("[X]");
@@ -1019,7 +1192,15 @@ pub fn TypeF(comptime a: ?type) type {
                 },
 
                 .TVar => |tv| {
-                    tv.print(c);
+                    if (c.mapTypes) |m| {
+                        if (m.mapTVar(tv)) |t| {
+                            t.print(c);
+                        } else {
+                            tv.print(c);
+                        }
+                    } else {
+                        tv.print(c);
+                    }
                 },
                 // else => unreachable,
             }
@@ -1130,7 +1311,7 @@ pub const Scheme = struct {
         };
     }
 
-    fn print(self: @This(), c: Ctx) void {
+    pub fn print(self: @This(), c: Ctx) void {
         c.s("{");
         c.sepBy(self.tvars, ", ");
         c.s("|");
@@ -1218,7 +1399,7 @@ pub const Association = struct {
         env: ?EnvFun, // when ~instantiating the scheme~ this is special :3 (fukkk i dont know how to explain it.)
 
         // NOTE: kinda bad, used only for ClassFunctions
-        match: *Match,
+        match: *const Match,
     },
 
     pub const ID = Unique;
@@ -1249,6 +1430,38 @@ pub const Match = struct {
         // I FUCKING HATE THESE NAMES
         pub const InstPair = struct { fun: *Function, m: *Match };
     };
+
+    pub fn print(self: @This(), c: Ctx) void {
+        c.s("(");
+        if (self.tvars.len > 0) {
+            c.sepBy(self.tvars, " ");
+        }
+        if (self.envVars.len > 0) {
+            c.s(" |] ");
+            c.sepBy(self.envVars, " ");
+        }
+        if (self.assocs.len > 0) {
+            c.s(" |> ");
+            for (self.assocs, 0..) |maref, i| {
+                if (maref) |aref| {
+                    if (i >= 1) {
+                        c.print(" ");
+                    }
+
+                    switch (aref) {
+                        .InstFun => |ifn| {
+                            c.print(.{ "[", ifn.fun.name, " ", ifn.m, "]" });
+                        },
+                        .Id => |iid| c.print(iid),
+                    }
+                } else {
+                    c.print("[X]");
+                }
+            }
+            // c.sepBy(self.assocs, " ");
+        }
+        c.s(")");
+    }
 
     pub fn fromOuterTVars(outerTVars: []TVarOrNum, outerApplication: []TypeOrNum) Match {
         return .{
@@ -1291,6 +1504,19 @@ pub const Match = struct {
         return null;
     }
 
+    pub fn tryGetFunctionByID(self: *const @This(), uid: Association.ID) ?Match.AssocRef.InstPair {
+        for (self.scheme.associations, self.assocs) |a, r| {
+            if (a.uid == uid) {
+                return switch (r.?) {
+                    .Id => null,
+                    .InstFun => |instfun| instfun,
+                };
+            }
+        } else {
+            return null;
+        }
+    }
+
     pub fn empty(scheme: Scheme) @This() {
         // sanity check. right now only used for placeholders in case of errors.
         if (scheme.tvars.len > 0) {
@@ -1303,6 +1529,55 @@ pub const Match = struct {
             .assocs = &.{},
         };
     }
+
+    const Comparator = struct {
+        typeContext: *const TypeContext,
+
+        pub fn eql(ctx: @This(), a: *const Match, b: *const Match) bool {
+            for (a.tvars, b.tvars) |ltv, rtv| {
+                switch (ltv) {
+                    .Type => |lt| if (!lt.tyEq(rtv.Type, ctx.typeContext)) return false,
+                    .Num => unreachable,
+                }
+            }
+
+            for (a.envVars, b.envVars) |leRef, reRef| {
+                // ENV SHOULD BE THE SAME SIZE (thats what I'm )
+                const le = ctx.typeContext.getEnv(leRef);
+                const re = ctx.typeContext.getEnv(reRef);
+                // currently, we don't care about structural equality that much, especially if we're gonna implement unions.
+                if (le.env.?.env.id != re.env.?.env.id) return false;
+                // Ctx.pp(ctx.typeContext, a);
+                if (!ctx.eql(le.env.?.match, re.env.?.match)) return false;
+            }
+
+            for (a.assocs, b.assocs) |mla, mra| {
+                if (mla) |la| {
+                    const ra = mra.?;
+                    switch (la) {
+                        .InstFun => |lifn| {
+                            const rifn = ra.InstFun;
+                            if (!Var.comparator().eql(.{}, lifn.fun.name, rifn.fun.name)) return false;
+                            if (!Match.Comparator.eql(ctx, lifn.m, rifn.m)) return false;
+                        },
+                        .Id => unreachable,
+                    }
+                } else {
+                    std.debug.assert(mra == null);
+                }
+            }
+
+            return true;
+        }
+
+        pub fn hash(ctx: @This(), k: *const Match) u64 {
+            _ = ctx;
+            _ = k;
+            // TODO: pointless doing it by len, because the Match Sets will be instantiations of the same scheme. do real hash.
+            // ALSO OBV TEMP, because we want to test equality.
+            return 0;
+        }
+    };
 };
 
 pub const TypeOrNum = union(enum) {
@@ -1450,3 +1725,91 @@ pub const Annotation = struct {
         return null;
     }
 };
+
+//////////////////////////////////
+
+// pub fn Cata(comptime C: type, comptime checkStmt: fn (*C, *Stmt) void, comptime checkExpr: fn (*C, *Expr) void, comptime checkType: fn (*C, *TyRef) void) type {
+//     return struct {
+//         ctx: *C,
+
+//         // TODO: for later adaptation, change void to custom type.
+//         pub fn cataExpr(self: *@This(), expr: *Expr) void {
+//             checkType(self.ctx, expr.t);
+//             switch (expr.e) {
+//                 .Var => {},
+//                 .Con => {},
+//                 .Int => {},
+//                 .Float => {},
+//                 .Char => {},
+//                 .Str => {},
+//                 .Intrinsic => |intr| {
+//                     for (intr.args) |arg| {
+//                         self.cataExpr(arg);
+//                     }
+//                 },
+//                 .BinOp => |bop| {
+//                     self.cataExpr(bop.l);
+//                     self.cataExpr(bop.r);
+//                 },
+//                 .UnOp => |uop| {
+//                     self.cataExpr(uop.e);
+//                     switch (uop.op) {
+//                         .Update => |upd| {
+//                             for (upd) |ex| {
+//                                 self.cataExpr(ex.value);
+//                             }
+//                         },
+//                         .As => |t| {
+//                             self.cataType(t);
+//                         },
+//                         else => {},
+//                     }
+//                 },
+//                 .Call => |call| {
+//                     self.cataExpr(call.callee);
+//                     for (call.args) |arg| {
+//                         self.cataExpr(arg);
+//                     }
+//                 },
+
+//                 .AnonymousRecord => |fields| {
+//                     for (fields) |field| {
+//                         self.cataExpr(field.value);
+//                     }
+//                 },
+//                 .NamedRecord => |nrec| {
+//                     for (nrec.fields) |field| {
+//                         self.cataExpr(field.value);
+//                     }
+//                 },
+//                 .Lam => |l| {
+//                     for (l.body)kk
+//                 },
+//                 .StaticArray => |arr| {
+//                     c.encloseSepBy(arr, ", ", "[", "]");
+//                 },
+//                 .IfElse => |ifelse| {
+//                     c.print(.{ "if ", ifelse.cond, ": ", ifelse.ifTrue });
+//                     for (ifelse.ifOthers) |elif| {
+//                         c.print(.{ " elif ", elif.cond, ": ", elif.then });
+//                     }
+//                     c.print(.{ " else: ", ifelse.ifFalse });
+//                 },
+//                 .CaseExpr => |caseexpr| {
+//                     c.print(.{ "case ", caseexpr.switchOn, "{\n" });
+
+//                     var ic = c;
+//                     ic.indent +%= 1;
+
+//                     for (caseexpr.cases) |case| {
+//                         case.print(ic);
+//                     }
+
+//                     c.print("}");
+//                 },
+//             }
+
+//             checkExpr(ctx, self);
+//         }
+//     };
+// }

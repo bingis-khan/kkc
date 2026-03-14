@@ -10,6 +10,7 @@ const TypeContext = @import("TypeContext.zig");
 const Args = @import("Args.zig");
 const errr = @import("error.zig");
 const stdlib = @cImport(@cInclude("stdlib.h"));
+const TypeMap = @import("TypeMap.zig").TypeMap;
 
 const Self = @This();
 
@@ -1683,58 +1684,6 @@ const Scope = struct {
 
     fn getFun(self: *const @This(), v: ast.Var) EnvSnapshot {
         return self.funs.get(v) orelse (self.prev orelse unreachable).getFun(v);
-    }
-};
-
-const TypeMap = struct {
-    prev: ?*const @This(),
-    scheme: *const ast.Scheme,
-    match: *const ast.Match,
-
-    fn getTVar(self: *const @This(), tv: ast.TVar) ?ast.Type {
-        // SLOW
-        for (self.scheme.tvars, self.match.tvars) |s, m| {
-            switch (s) {
-                .TVar => |stv| {
-                    if (stv.eq(tv)) {
-                        return m.Type;
-                    }
-                },
-
-                else => {},
-            }
-        } else {
-            return (self.prev orelse return null).getTVar(tv);
-        }
-    }
-
-    fn getTNum(self: *const @This(), tnum: ast.TNum) ?ast.NumRef {
-        for (self.scheme.tvars, self.match.tvars) |s, m| {
-            switch (s) {
-                .TNum => |tn| {
-                    if (tn.uid == tnum.uid) {
-                        return m.Num;
-                    }
-                },
-
-                else => {},
-            }
-        } else {
-            return (self.prev orelse return null).getTNum(tnum);
-        }
-    }
-
-    fn tryGetFunctionByID(self: *const @This(), uid: ast.Association.ID) ?ast.Match.AssocRef.InstPair {
-        for (self.scheme.associations, self.match.assocs) |a, r| {
-            if (a.uid == uid) {
-                return switch (r.?) {
-                    .Id => |refuid| return self.tryGetFunctionByID(refuid),
-                    .InstFun => |instfun| instfun,
-                };
-            }
-        } else {
-            return (self.prev orelse return null).tryGetFunctionByID(uid);
-        }
     }
 };
 
