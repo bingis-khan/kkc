@@ -116,6 +116,8 @@ pub fn parse(self: *Self) !Module {
         if (dec != null) try decs.append(dec.?);
     }
 
+    // dont add a return here, because we don't know if its the last file.
+
     try self.solveAvailableConstraintsAndApplyDefaultsIfPossible();
 
     if (self.associations.items.len > 0) {

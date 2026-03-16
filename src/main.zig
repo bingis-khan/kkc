@@ -12,6 +12,7 @@ const Str = common.Str;
 const Args = @import("Args.zig");
 const Module = @import("Module.zig");
 const mono = @import("mono.zig");
+const Bytecode = @import("mono/bytecode.zig").Mono;
 
 pub fn main() !void {
     // SETUP
@@ -68,8 +69,12 @@ pub fn main() !void {
 
     // mono it
     if (modules.errors.items.len > 0) return;
-    const monoAST = try mono.mono(moduleAST, modules.getRoots(), modules.prelude.?, modules.typeContext, aa);
-    _ = monoAST;
+
+    var backend = Bytecode.Backend.init(aa);
+    try Bytecode.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &backend, aa);
+    backend.cur.print(fakeHackCtx);
+    const retVal = try backend.cur.exec(aa);
+    std.debug.print("VM: {}\n", .{retVal});
 }
 
 pub const CompilationStuff = struct {

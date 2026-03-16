@@ -1451,7 +1451,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 //  size includes alignment!
 //  VERY SLOW, BECAUSE IT RECALCULATES ALIGNMENT EACH TIME.
 //  BUG: works for Ints only accidentally, since i64 and ptr have the same size. FIXIT!
-const Sizes = struct { size: usize, alignment: usize };
+const Sizes = struct {
+    size: usize,
+    alignment: usize,
+};
 fn sizeOf(self: *Self, t: ast.Type) Sizes {
     switch (self.getType(t)) {
         .Anon => |fields| {

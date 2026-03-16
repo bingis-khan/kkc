@@ -1,4 +1,9 @@
 #!/bin/env kkc
 
-a = 'a'
-Str.print-str('\(a)\(a) \(a) \(a) \(a)')
+Something
+	x Int
+	y Int
+
+m = (Something { x: 69, y: 420 })
+return m.y
+

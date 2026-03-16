@@ -58,8 +58,8 @@ pub fn singleElemSlice(T: type, x: *const T) []const T {
     return s;
 }
 
-pub fn byteSlice(p: *anyopaque, size: usize) []const u8 {
-    var s: []const u8 = undefined;
+pub fn byteSlice(p: anytype, size: usize) []u8 {
+    var s: []u8 = undefined;
     s.len = size;
     s.ptr = @ptrCast(p);
     return s;
