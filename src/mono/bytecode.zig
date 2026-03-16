@@ -7,44 +7,59 @@ const Self = mono.Mono(@This());
 // const TypeMap = @import("../TypeMap.zig").TypeMap;
 pub const Mono = Self;
 
+al: std.mem.Allocator,
+functions: std.ArrayList(Chunk),
 cur: Chunk,
 vars: Vars,
 
 const Vars = std.HashMap(ast.Var, u32, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 pub fn init(al: std.mem.Allocator) @This() {
     return .{
+        .al = al,
         .cur = Chunk.init(al),
         .vars = Vars.init(al),
+        .functions = std.ArrayList(Chunk).init(al),
     };
 }
 
 pub fn genFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) GenError!void { // TODO: params
-    const oldM = self.ctx.mapTypes;
-    self.ctx.mapTypes = m;
-    defer self.ctx.mapTypes = oldM;
+    _ = fun; // autofix
+    std.debug.print("FUNCTION\n", .{});
+    const oldM = self.match;
+    defer self.match = oldM;
+    self.match = m;
+
+    const al = self.backend.al;
+
+    const b = self.backend;
+    const outerChunk = b.cur;
+    defer self.backend.cur = outerChunk;
+    b.cur = Chunk.init(al);
 
     // TODO: define function
-
-    { // this is the same copypasta for every function, need to rethink the api...
-        self.ctx.indent += 1;
-        defer self.ctx.indent -= 1;
-
-        const oldUseScope = self.useScope;
-        defer self.useScope = oldUseScope;
-        var curUseScope = self.newUseScope();
-        self.useScope = &curUseScope;
-
-        try self.monoScope(fun.body);
-    }
-
-    // TODO: define env
     unreachable;
+
+    // { // this is the same copypasta for every function, need to rethink the api...
+    //     self.ctx.indent += 1;
+    //     defer self.ctx.indent -= 1;
+
+    //     const oldUseScope = self.useScope;
+    //     defer self.useScope = oldUseScope;
+    //     var curUseScope = self.newUseScope();
+    //     self.useScope = &curUseScope;
+
+    //     try self.monoScope(fun.body);
+    // }
+
+    // // TODO: define env
+    // unreachable;
 }
 
 // this is the "public api" part
-pub fn genStmt(self: *Self, stmt: *ast.Stmt) !void {
+pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
     const b = self.backend;
     const c = &b.cur;
+    try c.stmtLabels.append(.{ .op = @intCast(c.code.items.len), .stmt = stmt });
     switch (stmt.*) {
         // gets eliminated beforehand.
         .Function => unreachable,
@@ -56,21 +71,53 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) !void {
             const idx: u8 = @intCast(c.locals.items.len - 1);
             try b.vars.put(vd.varDef, idx);
 
-            if (StackValue.isOnStack(sz.size)) {
-                try genExpr(self, vd.varValue);
-                try c.appendOp(.StoreVar, .{idx});
-            } else {
-                try c.appendOp(.RefVar, .{idx});
-                try genExpr(self, vd.varValue);
-                try c.appendOp(.Copy, .{@intCast(sz.size)});
-            }
+            try storeVar(self, vd.varValue, idx, sz);
+        },
+        .VarMut => |mut| {
+            std.debug.assert(mut.accessors.len == 0); // TEMP
+
+            const idx = b.vars.get(mut.varRef).?;
+            const sz = self.sizeOf(mut.varValue.t);
+            try storeVar(self, mut.varValue, idx, sz);
         },
 
         .Return => |expr| {
-            try genExpr(self, expr);
+            _ = try genExpr(self, expr);
 
             try c.appendOp(.Ret, .{});
         },
+        .If => |ifelse| {
+            std.debug.assert((try genExpr(self, ifelse.cond)) == .Stack);
+            var skipCase = try c.jumpIfFalse();
+            try self.monoScope(ifelse.bTrue);
+
+            var endJumpPoints = std.ArrayList(Chunk.JumpPoint).init(b.al);
+            for (ifelse.bOthers) |elif| {
+                try endJumpPoints.append(try c.jump()); // end of true/all the elifs
+                c.finishJumpHere(skipCase);
+
+                std.debug.assert((try genExpr(self, elif.cond)) == .Stack);
+                skipCase = try c.jumpIfFalse();
+                try self.monoScope(elif.body);
+            }
+
+            if (ifelse.bElse) |stmts| {
+                try endJumpPoints.append(try c.jump()); // end of true/all the elifs
+                c.finishJumpHere(skipCase);
+
+                try self.monoScope(stmts);
+            } else {
+                c.finishJumpHere(skipCase);
+            }
+
+            for (endJumpPoints.items) |jp| {
+                c.finishJumpHere(jp);
+            }
+        },
+        .Pass => {
+            _ = c.stmtLabels.pop();
+        },
+
         // .Expr => |expr| {
         //     try self.genExpr(expr);
         //     self.ctx.print("\n");
@@ -82,7 +129,43 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) !void {
     }
 }
 
-fn genExpr(self: *Self, expr: *ast.Expr) !void {
+fn storeVar(self: *Self, e: *ast.Expr, localId: usize, sz: Self.Sizes) !void {
+    const b = self.backend;
+    const c = &b.cur;
+    const idx: u8 = @intCast(localId);
+
+    if (StackValue.isOnStack(sz.size)) {
+        std.debug.assert((try genExpr(self, e)) == .Stack);
+        try c.appendOp(.StoreVar, .{idx});
+    } else {
+        try c.appendOp(.RefVar, .{idx});
+        const ownership = try genExpr(self, e);
+        if (ownership == .Unowned) {
+            try c.appendOp(.Copy, .{@intCast(sz.size)});
+        } else if (ownership == .Owned) {
+            try c.appendOp(.Dupe, .{});
+            try c.appendOp(.SwapN, .{1});
+            try c.appendOp(.Swap, .{});
+            try c.appendOp(.Copy, .{@intCast(sz.size)});
+            try c.appendOp(.Drop, .{@intCast(sz.size)});
+        } else unreachable;
+    }
+}
+
+const Ownership = enum {
+    Owned,
+    Unowned,
+    Stack,
+};
+const Res = struct {
+    ownership: Ownership,
+    lvalueness: i32,
+
+    fn isLValue(self: *const @This()) bool {
+        return self.lvalueness <= 0;
+    }
+};
+fn genExpr(self: *Self, expr: *ast.Expr) !Ownership {
     const b = self.backend;
     const c = &b.cur;
     switch (expr.e) {
@@ -90,14 +173,18 @@ fn genExpr(self: *Self, expr: *ast.Expr) !void {
             try c.constants.append(.{ .I64 = i });
             const const_idx: u8 = @intCast(c.constants.items.len - 1);
             try c.appendOp(.Lit, .{const_idx});
+            return .Stack;
         },
         .Intrinsic => |intr| {
             for (intr.args) |arg| {
-                try genExpr(self, arg);
+                std.debug.assert((try genExpr(self, arg)) == .Stack);
             }
 
             switch (intr.intr.ty) {
-                .@"i64-add" => try c.appendOp(.AddI64, .{}),
+                .@"i64-add" => {
+                    try c.appendOp(.AddI64, .{});
+                    return .Stack;
+                },
                 else => unreachable,
             }
         },
@@ -107,47 +194,95 @@ fn genExpr(self: *Self, expr: *ast.Expr) !void {
                 @panic("struct too large (todo)");
             }
 
-            try c.appendOp(.Alloc, .{@intCast(size)});
+            const onStack = StackValue.isOnStack(size);
+
+            if (!onStack) {
+                try c.appendOp(.Alloc, .{@intCast(size)});
+            }
 
             var off: usize = 0;
             var maxAlignment: usize = 1;
             for (rec.fields) |field| {
-                // second arg - addr
-                try c.appendOp(.Dupe, .{});
-                if (off != 0) {
-                    try c.appendOp(.Offset, .{@intCast(off)});
-                }
-
-                // first arg - expr
-                try genExpr(self, field.value);
-
                 const sz = self.sizeOf(field.value.t);
-                if (sz.size > 255) {
-                    @panic("too large (todo)");
-                }
+                if (!onStack) {
+                    // second arg - addr
+                    try c.appendOp(.Dupe, .{});
+                    try c.offset(@intCast(off));
 
-                // if fits in unio
-                if (sz.size <= StackValue.Size) {
-                    try c.appendOp(.CopyFromStack, .{@intCast(sz.size)});
+                    // first arg - expr
+                    const ownership = try genExpr(self, field.value);
+                    if (sz.size > 255) {
+                        @panic("too large (todo)");
+                    }
+
+                    switch (ownership) {
+                        .Stack => try c.appendOp(.CopyFromStack, .{@intCast(sz.size)}),
+                        .Unowned => try c.appendOp(.Copy, .{@intCast(sz.size)}),
+                        .Owned => {
+                            try c.appendOp(.Dupe, .{});
+                            try c.appendOp(.SwapN, .{1}); // alloc maddr maddr  alloc
+                            try c.appendOp(.Swap, .{}); // alloc maddr alloc maddr
+                            try c.appendOp(.Copy, .{@intCast(sz.size)}); // alloc maddr
+                            try c.appendOp(.Drop, .{@intCast(sz.size)}); // alloc
+                        },
+                    }
                 } else {
-                    try c.appendOp(.Copy, .{@intCast(sz.size)});
+                    unreachable;
                 }
 
                 const padding = mono.calculatePadding(off, sz.alignment);
                 off += padding + sz.size;
                 maxAlignment = @max(maxAlignment, sz.alignment);
             }
+
+            return .Owned; // alloc
         },
         .UnOp => |uop| {
-            try genExpr(self, uop.e);
+            const ownership = try genExpr(self, uop.e);
             switch (uop.op) {
                 .Access => |fieldName| {
-                    const off = self.getFieldOffsetFromType(uop.e.t, fieldName);
-                    try c.appendOp(.Offset, .{@intCast(off)});
-                    const sz = self.sizeOf(expr.t).size;
-                    if (StackValue.isOnStack(sz)) {
-                        try c.appendOp(.CopyToStack, .{@intCast(sz)});
+                    // FUNNY
+                    // allocate a local, copy to it and free that previous memory
+                    if (ownership == .Stack) {
+                        unreachable; // TODO
                     }
+
+                    const off = self.getFieldOffsetFromType(uop.e.t, fieldName);
+                    const sz = self.sizeOf(expr.t).size;
+                    const ogsz = self.sizeOf(uop.e.t).size;
+
+                    if (ownership == .Owned) {
+                        if (StackValue.isOnStack(sz)) {
+                            try c.appendOp(.Dupe, .{});
+                            try c.offset(@intCast(off));
+                            try c.appendOp(.CopyToStack, .{@intCast(sz)});
+                            try c.appendOp(.Swap, .{}); // <val> addr
+                            try c.appendOp(.Drop, .{@intCast(ogsz)}); // <val>
+                            return .Stack;
+                        } else { // addr
+                            try c.appendOp(.Dupe, .{});
+                            try c.offset(@intCast(off));
+                            try c.appendOp(.Alloc, .{@intCast(sz)}); // addr off alloc
+                            try c.appendOp(.Dupe, .{}); // addr off alloc alloc
+                            try c.appendOp(.SwapN, .{1}); // addr alloc alloc off
+                            try c.appendOp(.Copy, .{@intCast(sz)}); // addr alloc
+                            try c.appendOp(.Swap, .{});
+                            try c.appendOp(.Drop, .{@intCast(ogsz)}); // alloc
+                            return .Owned;
+                        }
+                    } else if (ownership == .Unowned) {
+                        try c.offset(@intCast(off));
+                        if (StackValue.isOnStack(sz)) {
+                            try c.appendOp(.CopyToStack, .{@intCast(sz)});
+                            return .Stack;
+                        } else {
+                            return .Unowned;
+                        }
+                    } else {
+                        unreachable;
+                    }
+
+                    unreachable;
                 },
                 else => unreachable,
             }
@@ -157,9 +292,19 @@ fn genExpr(self: *Self, expr: *ast.Expr) !void {
             const sz = self.sizeOf(expr.t).size;
             if (StackValue.isOnStack(sz)) {
                 try c.appendOp(.LoadVar, .{@intCast(idx)});
+                return .Stack;
             } else {
                 try c.appendOp(.RefVar, .{@intCast(idx)});
+                return .Unowned;
             }
+        },
+        .Con => |con| {
+            std.debug.assert(con.tys.len == 0); // TEMP
+
+            try c.constants.append(.{ .I64 = con.tagValue });
+            const const_idx: u8 = @intCast(c.constants.items.len - 1);
+            try c.appendOp(.Lit, .{const_idx});
+            return .Stack;
         },
         else => unreachable,
     }
@@ -176,17 +321,20 @@ pub fn genEnvCompletion(self: *Self, incompleteEnv: ast.Function.FunApp, complet
 
 const Chunk = struct {
     code: std.ArrayList(u8),
+    stmtLabels: std.ArrayList(Label),
     constants: std.ArrayList(StackValue.Mem),
     numOps: u32,
 
     locals: std.ArrayList(u32),
 
+    const Label = struct { op: u32, stmt: *ast.Stmt };
     fn init(al: std.mem.Allocator) @This() {
         return .{
             .code = std.ArrayList(u8).init(al),
             .constants = std.ArrayList(StackValue.Mem).init(al),
             .numOps = 0,
             .locals = std.ArrayList(u32).init(al),
+            .stmtLabels = std.ArrayList(Label).init(al),
         };
     }
 
@@ -196,13 +344,46 @@ const Chunk = struct {
         self.numOps += 1;
     }
 
+    fn offset(self: *@This(), off: u8) !void {
+        if (off > 0) {
+            try self.appendOp(.Offset, .{off});
+        }
+    }
+
+    const JumpPoint = usize;
+    fn jumpIfFalse(self: *@This()) !JumpPoint {
+        try self.appendOp(.JmpIfFalse, .{0});
+        return self.code.items.len;
+    }
+
+    fn jump(self: *@This()) !JumpPoint {
+        try self.appendOp(.Jmp, .{0});
+        return self.code.items.len;
+    }
+
+    fn finishJumpHere(self: *const @This(), jp: JumpPoint) void {
+        const cur = self.code.items.len;
+        const diff: u8 = @intCast(cur - jp);
+        self.code.items[jp - 1] = diff;
+
+        // NOTE: we must make sure the are instructions left.
+    }
+
     pub fn exec(self: *const @This(), al: std.mem.Allocator) !i64 {
         const locals = try al.alloc(Local, self.locals.items.len);
+        defer {
+            for (locals) |loc| {
+                loc.deinit(al);
+            }
+            al.free(locals);
+        }
+
         for (self.locals.items, locals) |sz, *l| {
             l.* = .{ .ptr = null, .size = sz };
         }
 
         var stack = std.ArrayList(StackValue).init(al);
+        defer stack.deinit();
 
         var i: u32 = 0;
         while (i < self.code.items.len) {
@@ -233,16 +414,39 @@ const Chunk = struct {
                     try stack.append(.{ .Struct = lp.ptr });
                 },
                 .Ret => {
-                    return stack.pop().Mem.I64;
+                    const ret = stack.pop().Mem.I64;
+                    std.debug.assert(stack.items.len == 0);
+                    return ret;
                 },
                 .Alloc => {
                     const bs = Op.Alloc.bytes(args, &i);
                     const sz = bs[0];
-                    const ptr = try al.alignedAlloc(u8, @alignOf(StackValue.Mem), sz);
+                    const ptr: AlignedRef = try al.alignedAlloc(u8, @alignOf(StackValue.Mem), sz);
                     try stack.append(.{ .Struct = ptr.ptr });
+                },
+                .Drop => {
+                    const sz = Op.Drop.bytes(args, &i)[0];
+                    var p: AlignedRef = undefined;
+                    p.ptr = @alignCast(stack.pop().Struct);
+                    p.len = sz;
+                    al.free(p);
                 },
                 .Dupe => {
                     try stack.append(stack.getLast());
+                },
+                .Swap => {
+                    const lower = &stack.items[stack.items.len - 2];
+                    const lowerVal = lower.*;
+                    lower.* = stack.getLast();
+                    stack.items[stack.items.len - 1] = lowerVal;
+                },
+                .SwapN => {
+                    const n = Op.SwapN.bytes(args, &i)[0];
+                    const top = stack.pop();
+                    const inner = &stack.items[stack.items.len - 1 - n];
+                    const other = inner.*;
+                    inner.* = top;
+                    try stack.append(other);
                 },
                 .Offset => {
                     const off = Op.Offset.bytes(args, &i)[0];
@@ -268,6 +472,18 @@ const Chunk = struct {
                     try stack.append(v);
                 },
 
+                .Jmp => {
+                    const off = Op.JmpIfFalse.bytes(args, &i)[0];
+                    i += off;
+                },
+                .JmpIfFalse => {
+                    const off = Op.JmpIfFalse.bytes(args, &i)[0];
+                    const cond = stack.pop().Mem.Tag;
+                    if (cond == 0) {
+                        i += off;
+                    }
+                },
+
                 .AddI64 => {
                     try stack.append(StackValue.init(.{ .I64 = stack.pop().Mem.I64 + stack.pop().Mem.I64 }));
                 },
@@ -277,6 +493,7 @@ const Chunk = struct {
         }
 
         // assume return 0. should we generate code for this? (we should do it at the end of parsing tho OR initialModule)
+        std.debug.assert(stack.items.len == 0);
         return 0;
     }
 
@@ -298,13 +515,21 @@ const Chunk = struct {
             defer c.indent -= 1;
 
             var i: u32 = 0;
+            var li: u32 = 0;
             while (i < self.code.items.len) {
                 const op: Op = @enumFromInt(self.code.items[i]);
                 const args = self.code.items;
                 op.print(c, args, &i);
 
+                if (li < self.stmtLabels.items.len and i >= self.stmtLabels.items[li].op) {
+                    c.print("   ");
+                    self.stmtLabels.items[li].stmt.print(c);
+                    li += 1;
+                } else {
+                    c.print("\n");
+                }
+
                 i += 1;
-                c.print("\n");
             }
         }
 
@@ -320,6 +545,7 @@ const Chunk = struct {
     }
 };
 
+const AlignedRef = []align(@sizeOf(StackValue.Mem)) u8;
 const Local = struct {
     ptr: ?[*]align(@sizeOf(StackValue.Mem)) u8,
     size: u32,
@@ -342,10 +568,20 @@ const Local = struct {
         const p = try self.getPtr(al);
         return @ptrCast(p.ptr);
     }
+
     pub fn forceValue(self: *const @This()) StackValue.Mem {
         const p = self.ptr.?;
         const memptr: *StackValue.Mem = @ptrCast(p);
         return memptr.*;
+    }
+
+    fn deinit(self: *const @This(), al: std.mem.Allocator) void {
+        var p: []align(@sizeOf(StackValue.Mem)) u8 = undefined;
+        if (self.ptr) |ptr| {
+            p.ptr = ptr;
+            p.len = self.size;
+            al.free(p);
+        }
     }
 };
 // comptime {
@@ -359,6 +595,7 @@ const StackValue = union {
     const Mem = extern union {
         Ptr: *anyopaque,
         I64: i64,
+        Tag: u32,
         Mem: [Size]u8,
     };
     const Size = @max(@sizeOf(*anyopaque), @sizeOf(i64));
@@ -384,11 +621,18 @@ const Op = enum(u8) {
     RefVar,
 
     Alloc,
+    Drop,
+
     Dupe,
+    Swap,
+    SwapN,
     Offset,
     Copy,
     CopyFromStack,
     CopyToStack,
+
+    Jmp,
+    JmpIfFalse,
 
     // intrinsics
     //  (currently, each intrinsic will have a unique instruction - we'll see if it's enough)
@@ -421,11 +665,16 @@ const Op = enum(u8) {
             .StoreVar => "store-var",
             .RefVar => "ref-var",
             .Alloc => "alloc",
+            .Drop => "drop",
             .Dupe => "dupe",
+            .Swap => "swap",
+            .SwapN => "swap-n",
             .Offset => "offset",
             .Copy => "copy",
             .CopyFromStack => "copy-from-stack",
             .CopyToStack => "copy-to-stack",
+            .Jmp => "jmp",
+            .JmpIfFalse => "jmp-if-false",
             .AddI64 => "add-i64",
         };
     }
@@ -438,11 +687,16 @@ const Op = enum(u8) {
             .StoreVar => 1,
             .RefVar => 1,
             .Alloc => 1,
+            .Drop => 1,
             .Dupe => 0,
+            .Swap => 0,
+            .SwapN => 1,
             .Offset => 1,
             .Copy => 1,
             .CopyFromStack => 1,
             .CopyToStack => 1,
+            .Jmp => 1,
+            .JmpIfFalse => 1,
             .AddI64 => 0,
         };
     }

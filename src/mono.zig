@@ -20,7 +20,7 @@ pub fn Mono(Back: type) type {
 
         ctx: ast.Ctx,
         typeContext: *const TypeContext,
-        match: *ast.Match,
+        match: *const ast.Match,
         backend: *Backend,
         useScope: *InstUses,
         prelude: *const Prelude,
@@ -374,7 +374,7 @@ pub fn Mono(Back: type) type {
         }
 
         /// QUICK COPYPASTA FROM INTERPRETER
-        const Sizes = struct {
+        pub const Sizes = struct {
             size: usize,
             alignment: usize,
         };

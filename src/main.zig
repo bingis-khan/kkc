@@ -73,7 +73,7 @@ pub fn main() !void {
     var backend = Bytecode.Backend.init(aa);
     try Bytecode.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &backend, aa);
     backend.cur.print(fakeHackCtx);
-    const retVal = try backend.cur.exec(aa);
+    const retVal = try backend.cur.exec(al);
     std.debug.print("VM: {}\n", .{retVal});
 }
 
