@@ -14,6 +14,7 @@ const Module = @import("Module.zig");
 const mono = @import("mono.zig");
 const VM = @import("mono/bytecode.zig");
 const Bytecode = VM.Mono;
+const C = @import("mono/c.zig");
 
 pub fn main() !void {
     // SETUP
@@ -71,11 +72,58 @@ pub fn main() !void {
     // mono it
     if (modules.errors.items.len > 0) return;
 
-    var backend = Bytecode.Backend.init(aa, modules.typeContext);
-    try Bytecode.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &backend, aa);
-    backend.print(fakeHackCtx);
-    const retVal = try VM.exec(&backend.cur, al);
-    std.debug.print("VM: {}\n", .{retVal});
+    // var backend = Bytecode.Backend.init(aa, modules.typeContext);
+    var backend = C.init(aa, modules.typeContext);
+    try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &backend, aa);
+
+    const rawStdout = std.io.getStdOut().writer();
+    var stdoutbuf = std.io.bufferedWriter(rawStdout);
+    const stdout = stdoutbuf.writer();
+
+    if (opts.printAST or opts.printRootAST) {
+        try backend.writeTo(stdout);
+        try stdoutbuf.flush();
+    }
+
+    const file = try std.fs.cwd().createFile("test.c", .{});
+    defer file.close();
+
+    const writer = file.writer();
+    try backend.writeTo(writer);
+
+    {
+        const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{ "cc", "test.c", "-o", "testprog" } });
+        try stdout.writeAll(res.stdout);
+        try stdout.writeAll(res.stderr);
+        try stdoutbuf.flush();
+
+        switch (res.term) {
+            .Exited => |code| {
+                if (code != 0) {
+                    return;
+                }
+            },
+            else => return,
+        }
+    }
+
+    {
+        const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{"./testprog"} });
+        try stdout.writeAll(res.stdout);
+        try stdout.writeAll(res.stderr);
+        try stdoutbuf.flush();
+
+        switch (res.term) {
+            .Exited => |code| {
+                std.debug.print("program exited with code {}\n", .{code});
+            },
+            else => unreachable,
+        }
+    }
+
+    // backend.print(fakeHackCtx);
+    // const retVal = try VM.exec(&backend.cur, al);
+    // std.debug.print("VM: {}\n", .{retVal});
 }
 
 pub const CompilationStuff = struct {

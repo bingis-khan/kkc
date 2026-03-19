@@ -24,6 +24,16 @@ pub fn Set(comptime K: type, comptime Context: type) type {
             try self.hash.put(x, .{});
         }
 
+        pub fn tryInsert(self: *Self, x: K) !bool {
+            const gpr = try self.hash.getOrPut(x);
+            if (gpr.found_existing) {
+                return false;
+            }
+
+            gpr.value_ptr.* = .{};
+            return true;
+        }
+
         pub fn contains(self: *const Self, e: K) bool {
             return self.hash.contains(e);
         }
@@ -36,6 +46,10 @@ pub fn Set(comptime K: type, comptime Context: type) type {
         pub const Iterator = Hash.KeyIterator;
         pub fn iterator(self: *const Self) Iterator {
             return self.hash.keyIterator();
+        }
+
+        pub fn empty(self: *const Self) bool {
+            return self.hash.count() == 0;
         }
 
         pub fn difference(self: *Self, other: *const Self) void {

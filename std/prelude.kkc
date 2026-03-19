@@ -7,10 +7,10 @@ Unit
 
 #[ctype 'bool', cstdinclude 'stdbool.h']
 Bool
-	# #[clit 'false']
+	#[clit 'false']
 	False
 
-	# #[clit 'true']
+	#[clit 'true']
 	True
 
 #[ctype 'int']

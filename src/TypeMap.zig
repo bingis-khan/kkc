@@ -6,6 +6,12 @@ pub const TypeMap = struct {
     scheme: *const ast.Scheme,
     match: *const ast.Match,
 
+    pub const Empty = @This(){
+        .prev = null,
+        .scheme = &ast.Scheme.Empty,
+        .match = &ast.Match.Empty,
+    };
+
     pub fn getTVar(self: *const @This(), tv: ast.TVar) ?ast.Type {
         // SLOW
         for (self.scheme.tvars, self.match.tvars) |s, m| {
@@ -40,7 +46,7 @@ pub const TypeMap = struct {
     }
 
     pub fn getEnv(self: *const @This(), base: ast.EnvRef, tc: *const TypeContext) ?struct {
-        env: ast.Env,
+        env: TypeContext.Env,
         base: ast.EnvRef,
     } {
         const be = tc.getEnv(base);

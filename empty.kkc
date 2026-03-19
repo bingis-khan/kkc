@@ -1,29 +1,11 @@
 #!/bin/env kkc
-use Cnile
-	I32
 
-R
-	a Char
-	b Char
-	c Char
-	d Char
+fn id(x): x
 
-JJ
-	JJ Int
-	JN
-JI
-	JI JJ
-	N
+y = 69
 
-y = JI(JJ(2))
-case y
-	JI(JJ(1))
-		return 1
-	JI(JJ(2))
-		return 2
-	_
-		return 3
-	# _
-	# 	return 2
+fn what(x): y
 
-# return 3
+stuff = id
+xxx = stuff(id)
+return xxx(5)

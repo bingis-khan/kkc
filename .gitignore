@@ -1,2 +1,5 @@
 zig-out/
 .zig-cache/
+test.c
+testprog
+a.out

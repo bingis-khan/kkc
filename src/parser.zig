@@ -216,6 +216,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         var ftvs = TypeContext.FTVs.init(self.arena); // TODO: this is slow. We should add a pointer to an arraylist to the Type(..) constructor. FTV also does deduplication which is not needed here.
         var outerTVarSet = Set(AST.TVarOrNum, AST.TVarOrNum.comparator()).init(self.arena);
         while (!self.check(.DEDENT)) {
+            const conAnnotations = try self.parseAnnotation();
             if (self.consume(.IDENTIFIER)) |recname| {
                 // record
                 const t = try Type.init(self, tyconstr).sepTyo();
@@ -247,6 +248,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                     .tys = tys.items,
                     .data = data,
                     .tagValue = tag,
+                    .anns = conAnnotations,
                 });
 
                 tag += 1;
@@ -801,7 +803,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 const vv = try self.instantiateVar(&.{}, v);
                 const e = try self.finishExpression(try self.allocExpr(.{
                     .t = vv.t,
-                    .e = .{ .Var = .{ .v = vv.v, .match = vv.m } },
+                    .e = .{ .Var = .{
+                        .v = vv.v,
+                        .match = vv.m,
+                        .locality = vv.l,
+                    } },
                     .l = self.loc(v),
                 }));
                 try self.finishFold(pm);
@@ -2166,7 +2172,11 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         const dv = try self.instantiateVar(&.{}, v);
         return self.allocExpr(.{
             .t = dv.t,
-            .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+            .e = .{ .Var = .{
+                .v = dv.v,
+                .match = dv.m,
+                .locality = dv.l,
+            } },
             .l = self.loc(v),
         });
     } // var
@@ -2380,6 +2390,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .ref = ifn.ref,
                     } },
                     .match = ifn.m,
+                    .locality = self.locality(cfun.class.level),
                 },
             },
             .t = funTy,
@@ -2479,7 +2490,11 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
         const dv = try self.instantiateVar(&.{}, first);
         return self.allocExpr(.{
             .t = dv.t,
-            .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+            .e = .{ .Var = .{
+                .v = dv.v,
+                .match = dv.m,
+                .locality = dv.l,
+            } },
             .l = self.loc(first),
         });
     } // single identifier
@@ -2513,7 +2528,11 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
             const dv = try self.instantiateVar(modpath.items, v);
             return self.allocExpr(.{
                 .t = dv.t,
-                .e = .{ .Var = .{ .v = dv.v, .match = dv.m } },
+                .e = .{ .Var = .{
+                    .v = dv.v,
+                    .match = dv.m,
+                    .locality = dv.l,
+                } },
                 .l = l,
             });
         } else {
@@ -2608,7 +2627,11 @@ fn someRecordDefinition(self: *Self) !struct { fields: []AST.Expr.Field, rightLo
             const varInst = try self.instantiateVar(&.{}, fieldTok); // { x } => { x: x }  TODO: maybe disallow anything except simple var definitions. Even more, maybe allow only current scope / env?
             break :b try self.allocExpr(.{
                 .t = varInst.t,
-                .e = .{ .Var = .{ .v = varInst.v, .match = varInst.m } },
+                .e = .{ .Var = .{
+                    .v = varInst.v,
+                    .match = varInst.m,
+                    .locality = varInst.l,
+                } },
                 .l = self.loc(fieldTok),
             });
         };
@@ -2769,6 +2792,7 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                         .e = .{ .Var = .{
                             .v = v.v,
                             .match = v.m,
+                            .locality = v.l,
                         } },
                         .t = v.t,
                         .l = .{
@@ -2935,6 +2959,7 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
                         .ref = ifn.ref,
                     } },
                     .match = ifn.m,
+                    .locality = self.locality(cfun.class.level),
                 },
             },
             .t = funTy,
@@ -2950,6 +2975,10 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
             .l = l,
         });
     }
+}
+
+fn locality(self: *const Self, compLevel: usize) AST.Locality {
+    return if (self.level() == compLevel) .Local else .External;
 }
 
 fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
@@ -3489,20 +3518,24 @@ const VarInst = struct {
     v: AST.Expr.VarType,
     t: AST.Type,
     m: *AST.Match,
+    l: AST.Locality,
 };
 fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst {
     const vorfAndScope = try self.lookupVar(modpath, varTok);
     const vorf = vorfAndScope.vorf;
+    const l: AST.Locality = self.locality(vorfAndScope.level);
     const varInst: VarInst = switch (vorf) {
         .TNum => |tnum| .{
             .v = .{ .TNum = tnum },
             .t = try self.definedType(.Int),
             .m = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
+            .l = l,
         },
         .Var => |vt| .{
             .v = .{ .Var = vt.v },
             .t = vt.t,
             .m = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
+            .l = l,
         },
         .Fun => |fun| b: {
             const funTyAndMatch = try self.instantiateFunction(fun, null, self.loc(varTok));
@@ -3522,6 +3555,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
                 .v = .{ .Fun = fun },
                 .t = funTyAndMatch.t,
                 .m = funTyAndMatch.m,
+                .l = l,
             };
         },
 
@@ -3537,6 +3571,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
                 },
                 .t = ifn.t,
                 .m = ifn.m,
+                .l = l,
             };
 
             // NOTE: "use" is added in the instantiateClassFunction
@@ -3568,6 +3603,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
                 },
                 .t = funTy,
                 .m = match,
+                .l = l,
             };
         },
     };
@@ -4299,6 +4335,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
                 .tys = &.{},
                 .data = data,
                 .tagValue = 0,
+                .anns = &.{},
             };
             data.scheme = AST.Scheme.empty();
             try self.reportError(.{

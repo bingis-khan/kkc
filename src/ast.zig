@@ -706,7 +706,7 @@ pub const Expr = struct {
         BinOp: struct { l: Rec, op: BinOp, r: Rec },
         UnOp: struct { e: Rec, op: UnOp },
         Call: struct { callee: Rec, args: []Rec },
-        Var: struct { v: VarType, match: *Match }, // NOTE: Match is owned here!
+        Var: struct { v: VarType, match: *Match, locality: Locality }, // NOTE: Match is owned here!
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: i64, // obv temporary.
@@ -947,6 +947,8 @@ pub const Expr = struct {
         c.s(")");
     }
 };
+
+pub const Locality = enum { Local, External };
 
 pub const UnOp = union(enum) {
     Ref,
@@ -1311,6 +1313,8 @@ pub const Scheme = struct {
         };
     }
 
+    pub const Empty = empty();
+
     pub fn print(self: @This(), c: Ctx) void {
         c.s("{");
         c.sepBy(self.tvars, ", ");
@@ -1517,6 +1521,7 @@ pub const Match = struct {
         }
     }
 
+    pub const Empty = empty(Scheme.Empty);
     pub fn empty(scheme: Scheme) @This() {
         // sanity check. right now only used for placeholders in case of errors.
         if (scheme.tvars.len > 0) {
@@ -1530,7 +1535,7 @@ pub const Match = struct {
         };
     }
 
-    const Comparator = struct {
+    pub const Comparator = struct {
         typeContext: *const TypeContext,
 
         pub fn eql(ctx: @This(), a: *const Match, b: *const Match) bool {
@@ -1622,7 +1627,9 @@ pub const Con = struct {
     name: Str,
     tys: []Type,
     data: *Data,
+
     tagValue: u32,
+    anns: []Annotation,
 
     fn print(self: *const @This(), c: Ctx) void {
         c.s(self.name);
