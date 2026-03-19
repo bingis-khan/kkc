@@ -12,7 +12,8 @@ const Str = common.Str;
 const Args = @import("Args.zig");
 const Module = @import("Module.zig");
 const mono = @import("mono.zig");
-const Bytecode = @import("mono/bytecode.zig").Mono;
+const VM = @import("mono/bytecode.zig");
+const Bytecode = VM.Mono;
 
 pub fn main() !void {
     // SETUP
@@ -70,10 +71,10 @@ pub fn main() !void {
     // mono it
     if (modules.errors.items.len > 0) return;
 
-    var backend = Bytecode.Backend.init(aa);
+    var backend = Bytecode.Backend.init(aa, modules.typeContext);
     try Bytecode.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &backend, aa);
-    backend.cur.print(fakeHackCtx);
-    const retVal = try backend.cur.exec(al);
+    backend.print(fakeHackCtx);
+    const retVal = try VM.exec(&backend.cur, al);
     std.debug.print("VM: {}\n", .{retVal});
 }
 

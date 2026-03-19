@@ -8,6 +8,8 @@ const Set = @import("Set.zig").Set;
 const Module = @import("Module.zig");
 const TypeMap = @import("TypeMap.zig").TypeMap;
 const Gen = @import("UniqueGen.zig");
+const sizer = @import("sizer.zig");
+const TypeSize = sizer.TypeSize;
 
 pub const GenError = error{OutOfMemory};
 pub fn Mono(Back: type) type {
@@ -373,186 +375,23 @@ pub fn Mono(Back: type) type {
             return InstUses.init(self.useScope.uses.allocator, self.typeContext, self.useScope);
         }
 
-        /// QUICK COPYPASTA FROM INTERPRETER
-        pub const Sizes = struct {
-            size: usize,
-            alignment: usize,
-        };
-        const Tag = u32;
-        pub fn sizeOf(self: *@This(), t: ast.Type) Sizes {
-            switch (self.typeContext.getType(t)) {
-                .Anon => |fields| {
-                    return self.sizeOfRecord(fields, 0);
-                },
-                .Con => |c| {
-                    // before all that check for 'bytes' annotation.
-                    if (ast.Annotation.find(c.type.annotations, "bytes")) |ann| {
-                        const sz = std.fmt.parseInt(usize, ann.params[0], 10) catch unreachable; // TODO: USER ERROR
-                        return .{
-                            .size = sz,
-                            .alignment = sz,
-                        };
-                    }
-
-                    // check if ptr
-                    if (c.type.eq(self.prelude.defined(.Ptr))) {
-                        return .{ .size = @sizeOf(*anyopaque), .alignment = @alignOf(*anyopaque) };
-                    }
-
-                    // check if array
-                    if (c.type.eq(self.prelude.defined(.Array))) {
-                        // TODO: refactor
-                        const count: usize = b: {
-                            const numref = c.application.tvars[0].Num;
-                            while (true) {
-                                switch (self.typeContext.getNum(numref)) {
-                                    .TNum => unreachable, //numref = self.tymap.getTNum(tnum) orelse unreachable,
-                                    .Literal => |lit| break :b @intCast(lit),
-                                    .Unknown => unreachable,
-                                }
-                            }
-                        };
-                        const ty = c.application.tvars[1].Type;
-                        const sz = self.sizeOf(ty);
-
-                        // NOTE: padding
-                        // Then I compile a ThreeChar struct in C, a 5 element 3 char array has 15 bytes, which means no padding between elements.
-                        // Based on this, the algorithm seems correct.
-
-                        return .{ .size = sz.size * count, .alignment = sz.alignment };
-                    }
-                    switch (c.type.structureType()) {
-                        // NOTE: not sure if it's correct, but assume pointer size, because that's what opaque types mostly are. I guess I should also use some annotations to check size.
-                        //  I wonder if I should make sizes in annotations OR will the compiler just *know* about inbuilt types?
-                        .Opaque => return .{
-                            .size = @sizeOf(*anyopaque),
-                            .alignment = @alignOf(*anyopaque),
-                        },
-                        // ERROR: this is not correct for ints, so watch out.
-                        //  I should be able to specify expected datatype size.
-                        .EnumLike => {
-                            return .{
-                                .size = @sizeOf(Tag),
-                                .alignment = @alignOf(Tag),
-                            };
-                        },
-                        .RecordLike => {
-                            return switch (c.type.stuff) {
-                                .cons => |cons| self.sizeOfCon(&cons[0], 0),
-                                .recs => |recs| self.sizeOfRecord(recs, 0),
-                            };
-                        },
-                        .ADT => {
-                            var max: ?Sizes = null;
-                            for (c.type.stuff.cons) |*con| {
-                                const sz = self.sizeOfCon(con, @sizeOf(Tag));
-                                if (max) |*m| {
-                                    if (sz.size > m.size) {
-                                        m.size = sz.size;
-                                    }
-
-                                    // with unions, both are split. imagine union of 13 chars and one long.
-                                    // it'll be aligned to 8, so size 16
-                                    // (i tested it, it works like that)
-                                    if (sz.alignment > m.alignment) {
-                                        m.alignment = sz.alignment;
-                                    }
-                                } else {
-                                    max = sz;
-                                }
-                            }
-
-                            var m = max orelse unreachable;
-                            m.size += @sizeOf(Tag); // don't forget to add a tag. we don't need to change alignment tho, because we took care of it beforehand.
-                            m.size += calculatePadding(m.size, m.alignment);
-                            return m;
-                        },
-                    }
-                },
-                .TVar => unreachable, // |tv| return self.sizeOf(self.tymap.getTVar(tv)),
-
-                .Fun => return .{
-                    .size = @sizeOf(Tag),
-                    .alignment = @alignOf(Tag),
-                },
-                .TyVar => unreachable, // actual error. should not happen!
-            }
-        }
-
-        fn sizeOfCon(self: *Self, con: *const ast.Con, beginOff: usize) Sizes {
-            var off = beginOff;
-            // SMELL: duplicate logic with initRecord
-            var maxAlignment: usize = 1;
-            for (con.tys) |ty| {
-                const sz = self.sizeOf(ty);
-                const padding = calculatePadding(off, sz.alignment);
-                off += padding + sz.size;
-                maxAlignment = @max(maxAlignment, sz.alignment);
-            }
-
-            off += calculatePadding(off, maxAlignment);
+        // TEMP until I figure out how to handle tymaps in the new sizer.
+        fn ts(self: *const Self) TypeSize {
             return .{
-                .size = off,
-                .alignment = maxAlignment,
+                .tyc = self.typeContext,
+                .match = self.match,
+                .prelude = self.prelude,
             };
         }
 
-        // stupid copy
-        fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usize) Sizes {
-            var off = beginOff;
-            // SMELL: duplicate logic with initRecord
-            var maxAlignment: usize = 1;
-            for (fields) |field| {
-                const ty = field.t;
-                const sz = self.sizeOf(ty);
-                const padding = calculatePadding(off, sz.alignment);
-                off += padding + sz.size;
-                maxAlignment = @max(maxAlignment, sz.alignment);
-            }
-
-            off += calculatePadding(off, maxAlignment);
-            return .{
-                .size = off,
-                .alignment = maxAlignment,
-            };
+        pub fn sizeOf(self: *const Self, t: ast.Type) sizer.Size {
+            var tsz = self.ts();
+            return tsz.sizeOf(t);
         }
 
-        const RawValueRef = [*]u8;
         pub fn getFieldOffsetFromType(self: *Self, t: ast.Type, mem: Str) usize {
-            switch (self.typeContext.getType(t)) {
-                .Anon => |fields| {
-                    return self.getFieldOffsetFromFields(fields, mem);
-                },
-                .Con => |con| {
-                    switch (con.type.stuff) {
-                        .recs => |recs| return self.getFieldOffsetFromFields(recs, mem),
-                        .cons => unreachable,
-                    }
-                },
-
-                else => unreachable,
-            }
-        }
-
-        pub fn getFieldOffsetFromFields(self: *Self, fields: []ast.Record, mem: Str) usize {
-            var size: usize = 0;
-            for (fields) |field| {
-                const sz = self.sizeOf(field.t);
-                size += calculatePadding(size, sz.alignment);
-                if (common.streq(field.field, mem)) {
-                    return size;
-                }
-
-                size += sz.size;
-            } else {
-                unreachable;
-            }
+            var tsz = self.ts();
+            return tsz.getFieldOffsetFromType(t, mem);
         }
     };
-}
-
-pub fn calculatePadding(cur: usize, alignment: usize) usize {
-    const padding = alignment - (cur % alignment);
-    if (padding == alignment) return 0;
-    return padding;
 }

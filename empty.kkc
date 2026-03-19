@@ -1,3 +1,29 @@
 #!/bin/env kkc
+use Cnile
+	I32
 
-x = Just(1)
+R
+	a Char
+	b Char
+	c Char
+	d Char
+
+JJ
+	JJ Int
+	JN
+JI
+	JI JJ
+	N
+
+y = JI(JJ(2))
+case y
+	JI(JJ(1))
+		return 1
+	JI(JJ(2))
+		return 2
+	_
+		return 3
+	# _
+	# 	return 2
+
+# return 3
