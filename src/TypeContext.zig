@@ -1026,6 +1026,7 @@ fn mapMatch_(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.
                         try assocs.append(.{ .InstFun = .{
                             .fun = ifun.fun,
                             .m = nuMatch,
+                            .locality = ifun.locality,
                         } });
                     } else {
                         try assocs.append(moldAssoc);

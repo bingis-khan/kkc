@@ -2390,7 +2390,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .ref = ifn.ref,
                     } },
                     .match = ifn.m,
-                    .locality = self.locality(cfun.class.level),
+                    .locality = locality(self.env, cfun.class.level),
                 },
             },
             .t = funTy,
@@ -2959,7 +2959,7 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
                         .ref = ifn.ref,
                     } },
                     .match = ifn.m,
-                    .locality = self.locality(cfun.class.level),
+                    .locality = locality(self.env, cfun.class.level),
                 },
             },
             .t = funTy,
@@ -2977,8 +2977,12 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
     }
 }
 
-fn locality(self: *const Self, compLevel: usize) AST.Locality {
-    return if (self.level() == compLevel) .Local else .External;
+fn locality(menv: ?AST.EnvFun, compLevel: usize) AST.Locality {
+    if (menv) |env| {
+        return if (compLevel >= env.env.level) .Local else .External;
+    } else {
+        return .Local;
+    }
 }
 
 fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
@@ -3523,7 +3527,7 @@ const VarInst = struct {
 fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst {
     const vorfAndScope = try self.lookupVar(modpath, varTok);
     const vorf = vorfAndScope.vorf;
-    const l: AST.Locality = self.locality(vorfAndScope.level);
+    const l: AST.Locality = locality(self.env, vorfAndScope.level);
     const varInst: VarInst = switch (vorf) {
         .TNum => |tnum| .{
             .v = .{ .TNum = tnum },
@@ -4025,7 +4029,11 @@ fn solveAvailableConstraints(self: *Self) !void {
 
                             try self.typeContext.unify(conc.to, funTy, if (assoc.loc) |l| &.{ .l = l } else null);
 
-                            conc.ref.* = .{ .InstFun = .{ .fun = fun, .m = funTyAndMatch.m } };
+                            conc.ref.* = .{ .InstFun = .{
+                                .fun = fun,
+                                .m = funTyAndMatch.m,
+                                .locality = locality(conc.env, fun.env.level),
+                            } };
 
                             const envInst = AST.EnvVar{
                                 .v = .{ .Fun = fun },

@@ -247,9 +247,9 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
         module.exports.print(ctx);
     }
 
-    ctx.print(.{ fullPath.path[fullPath.path.len - 1], ": " });
-    ctx.encloseSepBy(module.calls, ", ", "[", "]");
-    ctx.print("\n");
+    // ctx.print(.{ fullPath.path[fullPath.path.len - 1], ": " });
+    // ctx.encloseSepBy(module.calls, ", ", "[", "]");
+    // ctx.print("\n");
 
     return module;
 }

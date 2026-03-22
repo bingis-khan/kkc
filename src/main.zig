@@ -76,6 +76,7 @@ pub fn main() !void {
     var backend = C.init(aa, modules.typeContext);
     try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &backend, aa);
 
+    const cWritingCompilingStartTime = try std.time.Instant.now();
     const rawStdout = std.io.getStdOut().writer();
     var stdoutbuf = std.io.bufferedWriter(rawStdout);
     const stdout = stdoutbuf.writer();
@@ -106,6 +107,9 @@ pub fn main() !void {
             else => return,
         }
     }
+
+    const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
+    std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
 
     {
         const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{"./testprog"} });

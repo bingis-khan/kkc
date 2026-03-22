@@ -123,7 +123,7 @@ pub const Error = union(enum) {
     ClassDoesNotExportThing: struct {},
 
     CouldNotFindInstanceForType: struct {
-        data: *ast.Data,
+        data: *const ast.Data,
         class: *ast.Class,
         possibilities: ?*Module.DataInstance,
         loc: Loc,

@@ -52,22 +52,22 @@ Stat
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
 external
-	#[cfunname 'printf']
+	#[cfunname 'printf', cstdinclude 'stdio.h']
 	printf0(format ConstStr) -> Void
 
-	#[cfunname 'printf']
+	#[cfunname 'printf', cstdinclude 'stdio.h']
 	printf1(format ConstStr, x a) -> Void
 
-	#[cfunname 'printf']
+	#[cfunname 'printf', cstdinclude 'stdio.h']
 	printf2(format ConstStr, x a, y b) -> Void
 
-	#[cfunname 'printf']
+	#[cfunname 'printf', cstdinclude 'stdio.h']
 	printf3(format ConstStr, x a, y b, z c) -> Void
 
-	#[cfunname 'fprintf']
+	#[cfunname 'fprintf', cstdinclude 'stdio.h']
 	fprintf1 (file Ptr FILE, format ConstStr, x a) -> Int
 
-	#[cfunname 'snprintf']
+	#[cfunname 'snprintf', cstdinclude 'stdio.h']
 	snprintf1 (p Ptr Char, n Int, format ConstStr, x a) -> Int
 
 

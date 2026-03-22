@@ -20,7 +20,7 @@ pub const DataOrClass = union(enum) {
     Class: *ast.Class,
     Synonym: *ast.TypeSynonym,
 };
-pub const DataInstance = std.AutoArrayHashMap(*ast.Data, *ast.Instance);
+pub const DataInstance = std.AutoArrayHashMap(*const ast.Data, *ast.Instance);
 pub const ClassInstance = std.AutoHashMap(*ast.Class, DataInstance);
 
 pub const Exports = struct {

@@ -1025,12 +1025,28 @@ pub const TyRef = struct {
                 .TyVar => unreachable,
                 else => false,
             },
-            .Fun => unreachable,
+            .Fun => |f1| switch (tyc.getType(r)) {
+                .Fun => |f2| {
+                    if (!tyEq(f1.ret, f2.ret, tyc)) return false;
+                    if (!tyEqs(f1.args, f2.args, tyc)) return false;
+                    if (!EnvRef.envEq(f1.env, f2.env, tyc)) return false;
+                    return true;
+                },
+                else => false,
+            },
             .Anon => unreachable,
 
             .TVar => unreachable,
             .TyVar => unreachable,
         };
+    }
+
+    pub fn tyEqs(ls: []@This(), rs: []@This(), tyc: *const TypeContext) bool {
+        for (ls, rs) |l, r| {
+            if (!tyEq(l, r, tyc)) return false;
+        }
+
+        return true;
     }
 
     // fn mapTVar(self: @This(), tyc: *const TypeContext) @This() {
@@ -1053,6 +1069,10 @@ pub const EnvRef = struct {
         } else {
             c.s("[X]");
         }
+    }
+
+    pub fn envEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
+        return tyc.getEnv(l).base.id == tyc.getEnv(r).base.id;
     }
 };
 pub const NumRef = struct {
@@ -1141,11 +1161,7 @@ pub fn TypeF(comptime a: ?type) type {
             }
         };
 
-        Con: struct {
-            type: *Data,
-            application: *Match,
-            outerApplication: []TypeOrNum,
-        },
+        Con: TypeApplication,
         Fun: struct {
             args: []Rec,
             ret: Rec,
@@ -1209,6 +1225,37 @@ pub fn TypeF(comptime a: ?type) type {
         }
     };
 }
+pub const TypeApplication = struct {
+    type: *const Data,
+    application: *const Match,
+    outerApplication: []TypeOrNum,
+
+    pub const Comparator = struct {
+        typeContext: *const TypeContext,
+
+        pub fn eql(ctx: @This(), a: TypeApplication, b: TypeApplication) bool {
+            if (a.type.uid != b.type.uid) return false;
+            if (!Match.Comparator.eql(.{ .typeContext = ctx.typeContext }, a.application, b.application)) return false;
+
+            for (a.outerApplication, b.outerApplication) |l, r| {
+                _ = r;
+                switch (l) {
+                    .Num => unreachable,
+                    .Type => unreachable,
+                }
+            }
+
+            return true;
+        }
+
+        pub fn hash(ctx: @This(), k: TypeApplication) u64 {
+            _ = ctx;
+            _ = k;
+            // TEMP, because we want to test equality.
+            return 0;
+        }
+    };
+};
 
 pub const Var = struct {
     name: Str,
@@ -1261,12 +1308,13 @@ pub const Data = struct {
         c.sp("{s}@{}", .{ self.name, self.uid });
     }
 
-    pub fn structureType(self: *const @This()) enum {
+    pub const StructureType = enum {
         Opaque,
         EnumLike,
         RecordLike,
         ADT,
-    } {
+    };
+    pub fn structureType(self: *const @This()) StructureType {
         const cons = switch (self.stuff) {
             .cons => |cons| b: {
                 if (cons.len == 0) {
@@ -1432,7 +1480,7 @@ pub const Match = struct {
         Id: Association.ID, // this one means the assoc is contained in some Scheme.
 
         // I FUCKING HATE THESE NAMES
-        pub const InstPair = struct { fun: *Function, m: *Match };
+        pub const InstPair = struct { fun: *Function, m: *Match, locality: Locality };
     };
 
     pub fn print(self: @This(), c: Ctx) void {

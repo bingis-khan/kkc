@@ -21,7 +21,7 @@ pub fn Mono(Back: type) type {
         // genStatement: fn (*ast.Stmt) GenError!void,
 
         ctx: ast.Ctx,
-        typeContext: *const TypeContext,
+        typeContext: *TypeContext,
         match: *const ast.Match,
         backend: *Backend,
         useScope: *InstUses,

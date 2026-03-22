@@ -1,11 +1,11 @@
 #!/bin/env kkc
 
-fn id(x): x
+x = Just(420)
+y = Tuple2(None as Maybe Int, True)
+case y
+	Tuple2(Just(_), x)
+		Str.print-str(x)
+		Str.print-str('miau\n')
 
-y = 69
-
-fn what(x): y
-
-stuff = id
-xxx = stuff(id)
-return xxx(5)
+	_
+		Str.print-str('not miau\n')

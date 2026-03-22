@@ -21,18 +21,21 @@ pub const Mono = Self;
 tymap: *const TypeMap,
 imports: Set(Str, std.hash_map.StringContext),
 functionsGenerated: FunctionsGenerated,
+typesGenerated: TypesGenerated,
 parts: std.ArrayList(CW),
 cur: CW,
 al: std.mem.Allocator,
 tempgen: UniqueGen,
 
 const FunctionsGenerated = std.HashMap(EnvApp, Unique, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
+const TypesGenerated = std.HashMap(ast.TypeApplication, Unique, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
 pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
     var c = @This(){
         .cur = CW.init(al),
         .al = al,
         .imports = Set(Str, std.hash_map.StringContext).init(al),
         .functionsGenerated = FunctionsGenerated.initContext(al, .{ .typeContext = tc }),
+        .typesGenerated = TypesGenerated.initContext(al, .{ .typeContext = tc }),
         .parts = std.ArrayList(CW).init(al),
         .tymap = &TypeMap.Empty,
         .tempgen = UniqueGen.init(),
@@ -72,8 +75,8 @@ pub fn genFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) GenErro
     const nuId = self.backend.tempgen.newUnique();
 
     var env = fun.env.monoInsts;
-    const isEnvEmpty = env.empty();
-    if (!isEnvEmpty) {
+    const isFunEnvEmpty = isEnvEmpty(fun.env);
+    if (!isFunEnvEmpty) {
         // generate env
         {
             const oldCW = self.backend.cur;
@@ -113,6 +116,16 @@ pub fn genFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) GenErro
                         try i.j(.{ ".", v });
                         try i.p("=");
                         try i.j(.{v});
+                    },
+                    .Fun => |instfun| {
+                        if (isEnvEmpty(instfun.env)) {
+                            continue;
+                        } else {
+                            const funNuId = self.backend.functionsGenerated.get(.{ .env = instfun.env, .m = try self.typeContext.mapMatch(self.backend.tymap.match, inst.m) }).?;
+                            try i.j(.{ ".envinst", funNuId });
+                            try i.p(.{"="});
+                            try i.j(.{ "envinst", funNuId });
+                        }
                     },
                     else => unreachable,
                 }
@@ -191,7 +204,7 @@ pub fn genFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) GenErro
     };
     var params = std.ArrayList(Parameter).init(self.backend.al);
 
-    if (!isEnvEmpty) {
+    if (!isFunEnvEmpty) {
         try params.append(.{ .v = .{ .Env = nuId }, .t = undefined });
     }
 
@@ -226,6 +239,9 @@ pub fn genFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) GenErro
 
 pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
     switch (stmt.*) {
+        .Function => unreachable,
+        .Instance => unreachable,
+
         .VarDec => |vd| {
             var s = startLine(self);
 
@@ -271,7 +287,255 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
             try s.genExpr(expr);
             try s.finishStmt();
         },
+        .Pass => {},
+        .Switch => |sw| {
+            var s = startLine(self);
+            const cond = try s.tempExpr(sw.switchOn);
+
+            const tyApp = getType(self, sw.switchOn.t).Con;
+            switch (tyApp.type.structureType()) {
+                .Opaque => { // TODO: also Ints...
+                    var l = startLine(self);
+                    try l.beginBody();
+                    {
+                        // basically, handle case x/_ stuff.
+                        // itll always match the first case btw.
+                        const case = sw.cases[0];
+                        switch (case.decon.d) {
+                            .None => {
+                                try self.monoScope(case.body);
+                            },
+                            .Var => |v| {
+                                var vardef = startLine(self);
+
+                                try vardef.definition(case.decon.t, v);
+                                try vardef.p("=");
+                                try vardef.p(.{cond});
+
+                                try vardef.finishStmt();
+                                try self.monoScope(case.body);
+                            },
+                            else => unreachable, // actually unreachable?
+                        }
+                    }
+                    try endBodyAndFinish(self);
+
+                    unreachable;
+                },
+                .EnumLike => {
+                    var l = startLine(self);
+                    try l.p(.{ "switch", "(", cond, ")" });
+                    try l.beginBody();
+
+                    for (sw.cases) |case| {
+                        switch (case.decon.d) {
+                            .None => {
+                                var defcase = startLine(self);
+                                try defcase.p(.{"default:"});
+                                try defcase.beginBody();
+                                {
+                                    try self.monoScope(case.body);
+
+                                    var breakline = startLine(self);
+                                    try breakline.p("break");
+                                    try breakline.finishStmt();
+                                }
+                                try endBodyAndFinish(self);
+
+                                break;
+                            },
+                            .Var => |v| {
+                                var defcase = startLine(self);
+                                try defcase.p(.{"default:"});
+                                try defcase.beginBody();
+                                {
+                                    var vardefline = startLine(self);
+
+                                    try vardefline.definition(case.decon.t, v);
+                                    try vardefline.p("=");
+                                    try vardefline.p(.{cond});
+
+                                    try vardefline.finishStmt();
+                                    try self.monoScope(case.body);
+
+                                    var breakline = startLine(self);
+                                    try breakline.p("break");
+                                    try breakline.finishStmt();
+                                }
+                                try endBodyAndFinish(self);
+
+                                break;
+                            },
+                            .Con => |c| {
+                                var defcase = startLine(self);
+                                try defcase.p(.{"case"});
+                                try defcase.constructor(c.con, tyApp);
+                                try defcase.p(.{":"});
+                                try defcase.beginBody();
+                                {
+                                    try self.monoScope(case.body);
+
+                                    var breakline = startLine(self);
+                                    try breakline.p("break");
+                                    try breakline.finishStmt();
+                                }
+                                try endBodyAndFinish(self);
+                            },
+                            else => unreachable,
+                        }
+                    }
+
+                    try endBodyAndFinish(self);
+                },
+
+                .ADT, .RecordLike => {
+                    var ifc = startLine(self);
+                    try ifc.p(.{ "if", "(" });
+                    const firstCase = &sw.cases[0];
+                    const hadFirstCondition = try ifc.deconCondition(firstCase.decon, cond);
+                    try ifc.p(.{")"});
+                    try ifc.beginBody();
+                    {
+                        try deconAssignments(self, firstCase.decon, cond);
+                        try self.monoScope(firstCase.body);
+                    }
+                    try endBodyAndFinish(self);
+
+                    // this means the check will always succeed, so no need to compile other cases.
+                    if (hadFirstCondition) {
+                        for (sw.cases[1..]) |*case| {
+                            var eifc = startLine(self);
+                            try eifc.p(.{ "else", "if", "(" });
+                            const hadCondition = try eifc.deconCondition(case.decon, cond);
+                            try eifc.p(.{")"});
+                            try eifc.beginBody();
+                            {
+                                try deconAssignments(self, case.decon, cond);
+                                try self.monoScope(case.body);
+                            }
+                            try endBodyAndFinish(self);
+
+                            // means that this check will always succeed, so we can skip other bodies.
+                            if (!hadCondition) break;
+                        }
+                    }
+                },
+            }
+        },
         else => unreachable,
+    }
+}
+
+fn deconAssignments(self: *Self, decon: *const ast.Decon, caseVar: Temp) !void {
+    const rootDP = DeconPath{ .Tip = caseVar };
+    try deconAssignments_(self, decon, &rootDP);
+}
+
+const DeconPath = union(enum) {
+    Tip: Temp,
+    Concat: struct {
+        path: union(enum) {
+            Con: struct { con: *const ast.Con, field: usize, nuId: Unique },
+            Field: *const ast.Decon.Field,
+            // List: *const struct {},
+        },
+        next: *const DeconPath,
+    },
+
+    pub fn write(self: @This(), stmt: *Stmt) anyerror!void {
+        switch (self) {
+            .Tip => |t| try stmt.j(.{t}),
+            .Concat => |concat| {
+                try concat.next.write(stmt);
+                switch (concat.path) {
+                    .Con => |con| {
+                        const dataType = con.con.data.structureType();
+                        std.debug.assert(dataType != .Opaque);
+                        std.debug.assert(dataType != .EnumLike);
+
+                        switch (dataType) {
+                            .RecordLike => {
+                                try stmt.j(.{ ".", "field", con.field });
+                            },
+                            .ADT => {
+                                try stmt.j(.{".stuff"});
+                                try stmt.j(.{
+                                    ".",
+                                    sanitize(con.con.data.name),
+                                    "_",
+                                    con.nuId,
+                                    "_",
+                                    sanitize(con.con.name),
+                                    "_s",
+                                });
+                                try stmt.j(.{ ".field", con.field });
+                            },
+                            else => unreachable, // actually unreachable
+                        }
+                    },
+                    .Field => unreachable,
+                }
+            },
+        }
+    }
+};
+fn deconAssignments_(self: *Self, decon: *const ast.Decon, dp: *const DeconPath) !void {
+    switch (decon.d) {
+        .None => return,
+        .Var => |v| {
+            var l = startLine(self);
+            try l.definition(decon.t, v);
+            try l.p("=");
+            try l.p(.{dp});
+            try l.finishStmt();
+        },
+        .Num => unreachable,
+        .Con => |con| {
+            const tyApp = self.typeContext.getType(decon.t).Con;
+            const nuId = self.backend.typesGenerated.get(tyApp).?;
+            const dataType = con.con.data.structureType();
+
+            switch (dataType) {
+                .Opaque => unreachable,
+                .EnumLike => return,
+                .RecordLike => {
+                    for (con.decons, 0..) |cd, i| {
+                        const nextDP = DeconPath{
+                            .Concat = .{
+                                .path = .{
+                                    .Con = .{
+                                        .con = con.con,
+                                        .field = i,
+                                        .nuId = nuId,
+                                    },
+                                },
+                                .next = dp,
+                            },
+                        };
+                        try deconAssignments_(self, cd, &nextDP);
+                    }
+                },
+                .ADT => {
+                    for (con.decons, 0..) |cd, i| {
+                        const nextDP = DeconPath{
+                            .Concat = .{
+                                .path = .{
+                                    .Con = .{
+                                        .con = con.con,
+                                        .field = i,
+                                        .nuId = nuId,
+                                    },
+                                },
+                                .next = dp,
+                            },
+                        };
+                        try deconAssignments_(self, cd, &nextDP);
+                    }
+                },
+            }
+        },
+        .Record => unreachable,
+        .List => unreachable,
     }
 }
 
@@ -382,19 +646,17 @@ const Stmt = struct {
     }
 
     fn genExpr(stmt: *@This(), expr: *ast.Expr) GenError!void {
+        try stmt.p("(");
         switch (expr.e) {
             .Int => |x| try stmt.p(x),
             .Con => |c| {
                 if (c.tys.len == 0) {
                     const t = stmt.ctx.typeContext.getType(expr.t).Con;
-                    _ = try datatype(stmt.ctx, c.data, t.application);
-                    if (ast.Annotation.find(c.anns, "clit")) |ann| {
-                        try stmt.p(ann.params[0]);
-                    } else {
-                        unreachable;
-                    }
+                    _ = try stmt.constructor(c, t);
                 } else {
-                    unreachable;
+                    const dataTy = stmt.ctx.typeContext.getType(expr.t).Fun.ret;
+                    const app = stmt.ctx.typeContext.getType(dataTy).Con;
+                    _ = try stmt.constructor(c, app);
                 }
             },
             .Var => |v| switch (v.v) {
@@ -407,22 +669,21 @@ const Stmt = struct {
                     }
                 },
                 .Fun => |fun| {
-                    const nuId = stmt.ctx.backend.functionsGenerated.get(.{ .env = fun.env, .m = v.match }).?;
-
-                    if (fun.env.monoInsts.empty()) {
-                        try stmt.p(.{ast.Var{ .name = fun.name.name, .uid = nuId }});
+                    try stmt.function(fun, v.match, v.locality);
+                },
+                .ExternalFun => |efn| {
+                    if (ast.Annotation.find(efn.anns, "cfunname")) |ann| {
+                        try stmt.p(.{ann.params[0]});
                     } else {
-                        try stmt.p(.{"(struct"});
-                        try stmt.j(.{
-                            "funenv",
-                            nuId,
-                            "){ .fun = ",
-                            ast.Var{ .name = fun.name.name, .uid = nuId },
-                            ", .env = envinst",
-                            nuId,
-                            " }",
-                        });
+                        try stmt.p(.{efn.name});
                     }
+
+                    if (ast.Annotation.find(efn.anns, "cstdinclude")) |ann| {
+                        try stmt.ctx.backend.imports.insert(ann.params[0]);
+                    }
+                },
+                .ClassFun => |cfun| {
+                    try stmt.instFun(cfun.ref);
                 },
                 else => unreachable,
             },
@@ -430,7 +691,7 @@ const Stmt = struct {
                 const funTy = getType(stmt.ctx, call.callee.t).Fun;
                 const env = getEnv(stmt.ctx, funTy.env).env;
 
-                if (env.monoInsts.empty()) {
+                if (isEnvEmpty(env)) {
                     try genExpr(stmt, call.callee);
 
                     try stmt.p("(");
@@ -457,7 +718,125 @@ const Stmt = struct {
                     try stmt.p(")");
                 }
             },
+            .Str => |s| {
+                const writer = stmt.buf.writer();
+
+                if (stmt.spaced) {
+                    try writer.writeByte(' ');
+                }
+                try writer.writeByte('"');
+                try std.zig.stringEscape(s, "", .{}, stmt.buf.writer());
+                try writer.writeByte('"');
+            },
+            .Intrinsic => |intr| {
+                switch (intr.intr.ty) {
+                    .@"i64-add" => {
+                        try stmt.genExpr(intr.args[0]);
+                        try stmt.p("+");
+                        try stmt.genExpr(intr.args[1]);
+                    },
+                    else => unreachable,
+                }
+            },
+            .NamedRecord => |rec| {
+                const tyApp = getType(stmt.ctx, expr.t).Con;
+                std.debug.assert(tyApp.type.eq(rec.data));
+                const tyName = try datatype(stmt.ctx, tyApp);
+
+                try stmt.j(.{ "(", tyName, ")" });
+                try stmt.p("{");
+                for (rec.fields, 0..) |field, i| {
+                    if (i != 0) {
+                        try stmt.j(",");
+                    }
+                    try stmt.j(.{ ".", field.field });
+                    try stmt.p("=");
+                    try stmt.genExpr(field.value);
+                }
+                try stmt.p("}");
+            },
+            .UnOp => |unop| {
+                switch (unop.op) {
+                    .Access => |mem| {
+                        try stmt.genExpr(unop.e);
+                        try stmt.j(.{ ".", mem });
+                    },
+                    .As => {
+                        try stmt.genExpr(unop.e);
+                    },
+                    else => unreachable,
+                }
+            },
+            .BinOp => |binop| {
+                switch (binop.op) {
+                    .Plus => |inst| {
+                        try stmt.instFun(inst);
+                        try stmt.p(.{"("});
+                        try stmt.genExpr(binop.l);
+                        try stmt.p(.{","});
+                        try stmt.genExpr(binop.r);
+                        try stmt.p(.{")"});
+                    },
+                    else => unreachable,
+                }
+            },
             else => unreachable,
+        }
+        try stmt.p(")");
+    }
+
+    fn instFun(stmt: *@This(), inst: ast.InstFunInst) !void {
+        const aref = inst.*.?;
+        switch (aref) {
+            .InstFun => |ifun| {
+                try stmt.function(ifun.fun, ifun.m, ifun.locality);
+            },
+            .Id => unreachable,
+        }
+    }
+
+    fn function(stmt: *@This(), fun: *const ast.Function, m: *const ast.Match, locality: ast.Locality) !void {
+        const nuId = stmt.ctx.backend.functionsGenerated.get(.{ .env = fun.env, .m = try stmt.ctx.typeContext.mapMatch(stmt.ctx.backend.tymap.match, m) }).?;
+
+        if (isEnvEmpty(fun.env)) {
+            try stmt.p(.{ast.Var{ .name = fun.name.name, .uid = nuId }});
+        } else {
+            try stmt.p(.{"(struct"});
+            try stmt.j(.{
+                "funenv",
+                nuId,
+                "){ .fun = ",
+                ast.Var{ .name = fun.name.name, .uid = nuId },
+                ", .env = ",
+                if (locality == .Local) "" else "env.",
+                "envinst",
+                nuId,
+                " }",
+            });
+        }
+    }
+
+    fn constructor(stmt: *@This(), con: *ast.Con, tyApp: ast.TypeApplication) !void {
+        const tn = try datatype(stmt.ctx, tyApp);
+        if (ast.Annotation.find(con.anns, "clit")) |ann| {
+            try stmt.p(ann.params[0]);
+        } else {
+            const nuId = tn.Application.id;
+            if (con.tys.len == 0 and con.data.structureType() == .ADT) {
+                try stmt.j(.{ "(", "struct ", sanitize(con.data.name), "_", nuId, ")" });
+                try stmt.p(.{ "{", ".tag", "=" });
+                try stmt.j(.{
+                    sanitize(con.data.name),
+                    "_",
+                    nuId,
+                    "_",
+                    sanitize(con.name),
+                    "_t",
+                });
+                try stmt.p(.{"}"});
+            } else {
+                try stmt.j(.{ sanitize(con.data.name), "_", nuId, "_", sanitize(con.name) });
+            }
         }
     }
 
@@ -481,7 +860,7 @@ const Stmt = struct {
     fn definitionBegin(stmt: *@This(), t: ast.Type) GenError!void {
         switch (getType(stmt.ctx, t)) {
             .Con => |con| {
-                try stmt.p(.{try datatype(stmt.ctx, con.type, con.application)});
+                try stmt.p(.{try datatype(stmt.ctx, con)});
             },
             .Fun => |fun| {
                 const envm = getEnv(stmt.ctx, fun.env);
@@ -490,7 +869,7 @@ const Stmt = struct {
                     try stmt.definitionBegin(fun.ret);
                     try stmt.p(.{"(*"});
                 } else {
-                    const nuId = stmt.ctx.backend.functionsGenerated.get(.{ .env = env, .m = envm.match }).?;
+                    const nuId = stmt.ctx.backend.functionsGenerated.get(.{ .env = env, .m = try stmt.ctx.typeContext.mapMatch(stmt.ctx.backend.tymap.match, envm.match) }).?;
                     try stmt.p(.{"struct"});
                     try stmt.j(.{ "funenv", nuId });
                 }
@@ -513,6 +892,103 @@ const Stmt = struct {
             else => {},
         }
     }
+
+    fn deconCondition(self: *@This(), decon: *const ast.Decon, condVar: Temp) !bool {
+        var hadCondition = false;
+        const dp = DeconPath{ .Tip = condVar };
+        try self.deconCondition_(&hadCondition, decon, &dp);
+        if (!hadCondition) {
+            try self.ctx.backend.imports.insert("stdbool.h");
+            try self.p("true");
+        }
+        return hadCondition;
+    }
+
+    fn deconCondition_(self: *@This(), hadCondition: *bool, decon: *const ast.Decon, dp: *const DeconPath) !void {
+        switch (decon.d) {
+            .None => return,
+            .Var => return,
+            .Num => unreachable,
+            .Con => |con| {
+                const tyApp = self.ctx.typeContext.getType(decon.t).Con;
+                const nuId = self.ctx.backend.typesGenerated.get(tyApp).?;
+                const dataType = con.con.data.structureType();
+
+                switch (dataType) {
+                    .Opaque => unreachable,
+                    .EnumLike => {
+                        try self.deconConnect(hadCondition);
+                        try self.p(.{ dp, "==" });
+                        try self.j(.{
+                            sanitize(con.con.data.name),
+                            "_",
+                            nuId,
+                            "_",
+                            sanitize(con.con.name),
+                        });
+                    },
+                    .RecordLike => {
+                        for (con.decons, 0..) |cd, i| {
+                            const nextDP = DeconPath{
+                                .Concat = .{
+                                    .path = .{
+                                        .Con = .{
+                                            .con = con.con,
+                                            .field = i,
+                                            .nuId = nuId,
+                                        },
+                                    },
+                                    .next = dp,
+                                },
+                            };
+                            try self.deconCondition_(hadCondition, cd, &nextDP);
+                        }
+                    },
+                    .ADT => {
+                        try self.deconConnect(hadCondition);
+                        try self.j(.{ dp, ".tag" });
+                        try self.p("==");
+                        try self.j(.{
+                            sanitize(con.con.data.name),
+                            "_",
+                            nuId,
+                            "_",
+                            sanitize(con.con.name),
+                            "_t",
+                        });
+
+                        for (con.decons, 0..) |cd, i| {
+                            const nextDP = DeconPath{
+                                .Concat = .{
+                                    .path = .{
+                                        .Con = .{
+                                            .con = con.con,
+                                            .field = i,
+                                            .nuId = nuId,
+                                        },
+                                    },
+                                    .next = dp,
+                                },
+                            };
+                            try self.deconCondition_(hadCondition, cd, &nextDP);
+                        }
+                    },
+                }
+            },
+            .Record => unreachable,
+            .List => unreachable,
+        }
+    }
+
+    fn deconConnect(self: *@This(), hadCondition: *bool) !void {
+        if (hadCondition.*) {
+            try self.p("&&");
+        } else {
+            hadCondition.* = true;
+        }
+    }
+
+    /////////////////////
 
     // prints stuff and separates by space.
     fn generalPrint(self: *@This(), args: anytype, comptime fun: anytype) !void {
@@ -581,9 +1057,22 @@ const Stmt = struct {
             const t = (@as(ast.Type, arg));
             try self.definition(t, .{});
         } //
+        else if (argTy == TypeName) {
+            const tyname = (@as(TypeName, arg));
+            switch (tyname) {
+                .Defined => |def| try self.j(def),
+                .Application => |app| {
+                    switch (app.data.structureType()) {
+                        .EnumLike => try self.p("enum"),
+                        else => try self.p("struct"),
+                    }
+                    try self.j(.{ app.data.name, "_", app.id });
+                },
+            }
+        } //
         else if (argTy == @TypeOf(.{})) {
             return;
-        } //
+        } // used when generating the env struct.
         else if (argTy == ast.EnvVar) {
             const inst = (@as(ast.EnvVar, arg));
 
@@ -599,6 +1088,16 @@ const Stmt = struct {
 
             switch (inst.v) {
                 .Var => |v| try self.definition(inst.t, v),
+                .Fun => |fun| {
+                    if (isEnvEmpty(fun.env)) {
+                        return; // nutting.
+                    } else {
+                        const nuId = self.ctx.backend.functionsGenerated.get(.{ .env = fun.env, .m = try self.ctx.typeContext.mapMatch(self.ctx.backend.tymap.match, inst.m) }).?;
+                        try self.p(.{"struct"});
+                        try self.j(.{ "env", nuId });
+                        try self.j(.{ "envinst", nuId });
+                    }
+                },
                 else => unreachable,
             }
 
@@ -637,6 +1136,22 @@ fn getEnv(self: *const Self, ogenv: ast.EnvRef) TypeContext.Env {
     return self.backend.tymap.getEnv(ogenv, self.typeContext).?.env;
 }
 
+fn isEnvEmpty(self: *const ast.Env) bool {
+    var it = self.monoInsts.iterator();
+    while (it.next()) |inst| {
+        switch (inst.v) {
+            .Var => return false,
+            .Fun => |fun| {
+                if (!isEnvEmpty(fun.env)) return false;
+            },
+            else => unreachable,
+        }
+    }
+
+    return true;
+}
+
+///
 const Temp = struct {
     id: Unique,
 };
@@ -757,17 +1272,418 @@ fn PrependAll(sep: Str, args: anytype) struct {
     return .{ .sep = sep, .args = args };
 }
 
-fn datatype(self: *Self, data: *const ast.Data, application: *const ast.Match) !Str {
+const TypeName = union(enum) {
+    Defined: Str,
+    Application: struct { data: *const ast.Data, id: Unique },
+};
+fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
+    const data = tyApp.type;
     if (ast.Annotation.find(data.annotations, "cstdinclude")) |ann| {
         try self.backend.imports.insert(ann.params[0]);
     }
 
     if (ast.Annotation.find(data.annotations, "ctype")) |ann| {
-        return ann.params[0];
+        return .{ .Defined = ann.params[0] };
     }
 
-    _ = application;
-    unreachable;
+    switch (data.stuff) {
+        .cons => |cons| {
+            switch (data.structureType()) {
+                .Opaque => unreachable,
+                .EnumLike => {
+                    // TEMP: COPYPASTA
+                    const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
+                    if (gpr.found_existing) {
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                    }
+
+                    const oldTyMap = self.backend.tymap;
+                    const outerTVScheme = ast.Scheme{
+                        .tvars = data.outerTVars,
+                        .envVars = &.{},
+                        .associations = &.{},
+                        .env = null,
+                    };
+                    const outerTVMatch = ast.Match{
+                        .tvars = tyApp.outerApplication,
+                        .envVars = &.{},
+                        .assocs = &.{},
+                        .scheme = outerTVScheme,
+                    };
+                    const outerTVMap = TypeMap{
+                        .prev = oldTyMap,
+                        .scheme = &outerTVScheme,
+                        .match = &outerTVMatch,
+                    };
+
+                    var tymap = TypeMap{
+                        .prev = &outerTVMap,
+                        .scheme = &data.scheme,
+                        .match = tyApp.application,
+                    };
+                    self.backend.tymap = &tymap;
+                    defer self.backend.tymap = oldTyMap;
+
+                    const nuId = self.backend.temp().id;
+                    gpr.value_ptr.* = nuId;
+
+                    // generate dat data definition.
+                    {
+                        const oldCW = self.backend.cur;
+                        self.backend.cur = CW.init(self.backend.al);
+                        defer self.backend.cur = oldCW;
+
+                        // inst
+                        var e = startLine(self);
+                        try e.p(.{"enum"});
+                        try e.j(.{ data.name, "_", nuId });
+                        try e.beginBody();
+
+                        for (cons) |con| {
+                            var l = startLine(self);
+                            try l.j(.{ sanitize(data.name), "_", nuId, "_", sanitize(con.name), "," });
+                            try l.finish();
+                        }
+
+                        try endBodyAndFinishStmt(self);
+                        try self.backend.parts.append(self.backend.cur);
+                    }
+
+                    return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                },
+                .RecordLike => {
+                    const con = &cons[0];
+
+                    // TEMP: COPYPASTA
+                    const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
+                    if (gpr.found_existing) {
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                    }
+
+                    const oldTyMap = self.backend.tymap;
+                    const outerTVScheme = ast.Scheme{
+                        .tvars = data.outerTVars,
+                        .envVars = &.{},
+                        .associations = &.{},
+                        .env = null,
+                    };
+                    const outerTVMatch = ast.Match{
+                        .tvars = tyApp.outerApplication,
+                        .envVars = &.{},
+                        .assocs = &.{},
+                        .scheme = outerTVScheme,
+                    };
+                    const outerTVMap = TypeMap{
+                        .prev = oldTyMap,
+                        .scheme = &outerTVScheme,
+                        .match = &outerTVMatch,
+                    };
+
+                    var tymap = TypeMap{
+                        .prev = &outerTVMap,
+                        .scheme = &data.scheme,
+                        .match = tyApp.application,
+                    };
+                    self.backend.tymap = &tymap;
+                    defer self.backend.tymap = oldTyMap;
+
+                    const nuId = self.backend.temp().id;
+                    gpr.value_ptr.* = nuId;
+
+                    // generate dat data definition.
+                    {
+                        const oldCW = self.backend.cur;
+                        self.backend.cur = CW.init(self.backend.al);
+                        defer self.backend.cur = oldCW;
+
+                        try genRecordStruct(self, nuId, con, .RecordLike);
+                        try self.backend.parts.append(self.backend.cur);
+                    }
+
+                    // constructor
+                    {
+                        const oldCW = self.backend.cur;
+                        self.backend.cur = CW.init(self.backend.al);
+                        defer self.backend.cur = oldCW;
+
+                        try genRecordConstructor(self, nuId, con, .RecordLike);
+                        try self.backend.parts.append(self.backend.cur);
+                    }
+
+                    return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                },
+                .ADT => {
+                    // TEMP: COPYPASTA
+                    const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
+                    if (gpr.found_existing) {
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                    }
+
+                    const oldTyMap = self.backend.tymap;
+                    const outerTVScheme = ast.Scheme{
+                        .tvars = data.outerTVars,
+                        .envVars = &.{},
+                        .associations = &.{},
+                        .env = null,
+                    };
+                    const outerTVMatch = ast.Match{
+                        .tvars = tyApp.outerApplication,
+                        .envVars = &.{},
+                        .assocs = &.{},
+                        .scheme = outerTVScheme,
+                    };
+                    const outerTVMap = TypeMap{
+                        .prev = oldTyMap,
+                        .scheme = &outerTVScheme,
+                        .match = &outerTVMatch,
+                    };
+
+                    var tymap = TypeMap{
+                        .prev = &outerTVMap,
+                        .scheme = &data.scheme,
+                        .match = tyApp.application,
+                    };
+                    self.backend.tymap = &tymap;
+                    defer self.backend.tymap = oldTyMap;
+
+                    const nuId = self.backend.temp().id;
+                    gpr.value_ptr.* = nuId;
+
+                    // generate dat data definition.
+                    {
+                        const oldCW = self.backend.cur;
+                        self.backend.cur = CW.init(self.backend.al);
+                        defer self.backend.cur = oldCW;
+                        var e = startLine(self);
+                        try e.p(.{"struct"});
+                        try e.j(.{ data.name, "_", nuId });
+                        try e.beginBody();
+                        {
+
+                            // TAG
+                            {
+                                var tagline = startLine(self);
+                                try tagline.p("enum");
+                                try tagline.beginBody();
+                                for (cons) |*con| {
+                                    var thistagline = startLine(self);
+                                    try thistagline.j(.{
+                                        sanitize(data.name),
+                                        "_",
+                                        nuId,
+                                        "_",
+                                        sanitize(con.name),
+                                        "_t",
+                                        ",",
+                                    });
+                                    try thistagline.finish();
+                                }
+
+                                var endtag = try endBody(self);
+                                try endtag.p(.{"tag"});
+                                try endtag.finishStmt();
+                            }
+
+                            // UNION
+                            {
+                                var u = startLine(self);
+                                try u.p(.{"union"});
+                                try u.beginBody();
+                                {
+                                    for (cons) |*con| {
+                                        if (con.tys.len == 0) continue;
+                                        var thistagline = try genRecordStruct(self, nuId, con, .ADT);
+                                        try thistagline.j(.{
+                                            sanitize(data.name),
+                                            "_",
+                                            nuId,
+                                            "_",
+                                            sanitize(con.name),
+                                            "_s",
+                                        });
+                                        try thistagline.finishStmt();
+                                    }
+                                }
+                                var endu = try endBody(self);
+                                try endu.p(.{"stuff"});
+                                try endu.finishStmt();
+                            }
+                        }
+                        try endBodyAndFinishStmt(self);
+                        try self.backend.parts.append(self.backend.cur);
+                    }
+
+                    // make constructors
+                    {
+                        for (cons) |*con| {
+                            if (con.tys.len == 0) continue;
+                            const oldCW = self.backend.cur;
+                            self.backend.cur = CW.init(self.backend.al);
+                            defer self.backend.cur = oldCW;
+
+                            try genRecordConstructor(self, nuId, con, .ADT);
+                            try self.backend.parts.append(self.backend.cur);
+                        }
+                    }
+
+                    return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                },
+            }
+        },
+        .recs => |fields| {
+            const gpr = try self.backend.typesGenerated.getOrPut(.{ .type = data, .application = tyApp.application, .outerApplication = tyApp.outerApplication });
+            if (gpr.found_existing) {
+                return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+            }
+
+            const oldTyMap = self.backend.tymap;
+            const outerTVScheme = ast.Scheme{
+                .tvars = data.outerTVars,
+                .envVars = &.{},
+                .associations = &.{},
+                .env = null,
+            };
+            const outerTVMatch = ast.Match{
+                .tvars = tyApp.outerApplication,
+                .envVars = &.{},
+                .assocs = &.{},
+                .scheme = outerTVScheme,
+            };
+            const outerTVMap = TypeMap{
+                .prev = oldTyMap,
+                .scheme = &outerTVScheme,
+                .match = &outerTVMatch,
+            };
+
+            var tymap = TypeMap{
+                .prev = &outerTVMap,
+                .scheme = &data.scheme,
+                .match = tyApp.application,
+            };
+            self.backend.tymap = &tymap;
+            defer self.backend.tymap = oldTyMap;
+
+            const nuId = self.backend.temp().id;
+            gpr.value_ptr.* = nuId;
+
+            // generate dat data definition.
+            const oldCW = self.backend.cur;
+            self.backend.cur = CW.init(self.backend.al);
+            defer self.backend.cur = oldCW;
+
+            var e = startLine(self);
+            try e.p(.{"struct"});
+            try e.j(.{ data.name, "_", nuId });
+            try e.beginBody();
+
+            for (fields) |field| {
+                var i = startLine(self);
+                try i.definition(field.t, field.field);
+                try i.finishStmt();
+            }
+
+            try endBodyAndFinishStmt(self);
+            try self.backend.parts.append(self.backend.cur);
+
+            return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+        },
+    }
+}
+
+fn genRecordStruct(self: *Self, nuId: Unique, con: *const ast.Con, comptime dataType: ast.Data.StructureType) !(if (dataType == .ADT) Stmt else void) {
+    const data = con.data;
+
+    std.debug.assert(data.structureType() == dataType);
+    std.debug.assert(dataType != .Opaque and dataType != .EnumLike);
+
+    // inst
+    var e = startLine(self);
+    try e.p(.{"struct"});
+    if (dataType != .ADT) {
+        try e.j(.{ data.name, "_", nuId });
+    }
+    try e.beginBody();
+
+    for (con.tys, 0..) |t, i| {
+        var l = startLine(self);
+        try l.definition(t, Join(.{ "field", i }));
+        try l.finishStmt();
+    }
+
+    if (dataType != .ADT) {
+        try endBodyAndFinishStmt(self);
+        return;
+    } else {
+        return try endBody(self);
+    }
+}
+
+fn genRecordConstructor(self: *Self, nuId: Unique, con: *const ast.Con, comptime dataType: ast.Data.StructureType) !void {
+    const data = con.data;
+
+    std.debug.assert(data.structureType() == dataType);
+    std.debug.assert(dataType != .Opaque and dataType != .EnumLike);
+
+    // inst
+    var e = startLine(self);
+    try e.p(.{ "static", "struct" });
+    try e.j(.{ sanitize(data.name), "_", nuId });
+    try e.j(.{ sanitize(con.data.name), "_", nuId, "_", sanitize(con.name) });
+    try e.j("(");
+    for (con.tys, 0..) |t, i| {
+        if (i != 0) {
+            try e.p(",");
+        }
+        try e.definition(t, Join(.{ "field", i }));
+    }
+    try e.j(")");
+    try e.beginBody();
+
+    var l = startLine(self);
+    try l.p(.{ "return", "(" });
+    try l.p(.{"struct"});
+    try l.j(.{ sanitize(data.name), "_", nuId });
+    try l.p(.{")"});
+    if (dataType == .ADT) {
+        try l.p("{");
+        try l.p(.{
+            ".tag =",
+        });
+        try l.j(.{
+            sanitize(data.name),
+            "_",
+            nuId,
+            "_",
+            sanitize(con.name),
+            "_t",
+            ",",
+        });
+        try l.p(.{".stuff = {"});
+        try l.j(.{
+            ".",
+            sanitize(data.name),
+            "_",
+            nuId,
+            "_",
+            sanitize(con.name),
+            "_s",
+        });
+        try l.p(.{"="});
+    }
+    try l.p("{");
+    for (con.tys, 0..) |_, i| {
+        if (i != 0) {
+            try l.p(", ");
+        }
+        try l.j(.{ ".field", i, " = field", i });
+    }
+    try l.p(.{"}"});
+    if (dataType == .ADT) {
+        try l.p(.{ "}", "}" });
+    }
+
+    try l.finishStmt();
+    try endBodyAndFinishStmt(self);
 }
 
 pub const EnvApp = struct {
