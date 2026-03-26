@@ -11,6 +11,8 @@ const Gen = @import("UniqueGen.zig");
 const sizer = @import("sizer.zig");
 const TypeSize = sizer.TypeSize;
 
+pub const Debug = false;
+
 pub const GenError = anyerror;
 pub fn Mono(Back: type) type {
     return struct {
@@ -22,7 +24,7 @@ pub fn Mono(Back: type) type {
 
         ctx: ast.Ctx,
         typeContext: *TypeContext,
-        match: *const ast.Match,
+        tymap: *const TypeMap, // IS THIS NEEDED?
         backend: *Backend,
         useScope: *InstUses,
         prelude: *const Prelude,
@@ -58,11 +60,13 @@ pub fn Mono(Back: type) type {
                         }
                     }
 
-                    ast.Ctx.pp(self.uses.ctx.typeContext, .{
-                        fa.fun.name,
-                        " >> ",
-                        fa.m,
-                    });
+                    if (Debug) {
+                        ast.Ctx.pp(self.uses.ctx.typeContext, .{
+                            fa.fun.name,
+                            " >> ",
+                            fa.m,
+                        });
+                    }
                     unreachable;
                 }
             }
@@ -73,8 +77,12 @@ pub fn Mono(Back: type) type {
             const cgStartTime = try std.time.Instant.now();
 
             var hadNewline = false;
-            var emptyMatch = ast.Match.empty(ast.Scheme.empty());
             const monoStuff = try findFullFunctionEnvs(typeContext, al, roots);
+
+            if (Debug) {
+                modules[modules.len - 1].print(ast.Ctx.init(&hadNewline, typeContext));
+            }
+
             _ = monoStuff;
             var firstUseScope = InstUses.init(al, typeContext, null);
             const cgTime = std.time.Instant.since(try std.time.Instant.now(), cgStartTime) / std.time.ns_per_ms;
@@ -84,7 +92,7 @@ pub fn Mono(Back: type) type {
             var self = Self{
                 .ctx = ast.Ctx.init(&hadNewline, typeContext),
                 .typeContext = typeContext,
-                .match = &emptyMatch,
+                .tymap = &TypeMap.Empty,
                 .backend = backend,
                 .useScope = &firstUseScope,
                 .prelude = prelude,
@@ -105,9 +113,16 @@ pub fn Mono(Back: type) type {
                         while (it.next()) |kv| {
                             const m = kv.key_ptr.*;
                             const funapp = ast.Function.FunApp{ .fun = fun, .m = m };
+                            // self.ctx.print(.{ "fun: ", fun.name, " ", m, "\n" });
                             try self.useScope.uses.put(funapp, .{ .uses = kv.value_ptr.uses, .defined = true });
-                            try Backend.genFunction(self, fun, m);
-                            // try self.genEnv(&fun.env.monoInsts, m, null);
+                            {
+                                const oldM = self.tymap;
+                                defer self.tymap = oldM;
+                                self.tymap = &TypeMap.init(try self.typeContext.mapMatch(self.tymap, m), oldM);
+
+                                try Backend.genFunction(self, fun);
+                                // try self.genEnv(&fun.env.monoInsts, m, null);
+                            }
                         }
                     },
                     .Instance => |inst| {
@@ -136,8 +151,16 @@ pub fn Mono(Back: type) type {
                                 // mark that the env is going to be generated shortly
                                 self.useScope.uses.getPtr(funapp).?.defined = true;
 
-                                self.ctx.print(.{ funapp.fun.name, " => ", kv.value_ptr.uses, "\n" });
-                                try Backend.genFunction(self, instFun.fun, m);
+                                if (Debug) {
+                                    self.ctx.print(.{ funapp.fun.name, " => ", kv.value_ptr.uses, "\n" });
+                                }
+                                {
+                                    const oldM = self.tymap;
+                                    defer self.tymap = oldM;
+                                    self.tymap = &TypeMap.init(try self.typeContext.mapMatch(self.tymap, m), oldM);
+
+                                    try Backend.genFunction(self, instFun.fun);
+                                }
                                 // try self.genEnv(&instFun.fun.env.monoInsts, m, null);
 
                                 const use = try self.useScope.findUses(.{ .fun = instFun.fun, .m = m });
@@ -212,15 +235,15 @@ pub fn Mono(Back: type) type {
             fn init(tc: *TypeContext, al: std.mem.Allocator) !@This() {
                 return .{
                     .typeContext = tc,
-                    .match = try common.allocOne(al, ast.Match.empty(ast.Scheme.empty())),
+                    .tymap = TypeMap.init(&ast.Match.Empty, null),
                     .al = al,
                 };
             }
 
-            fn expandRoot(self: *@This(), root: ast.Function.Use) Error!void {
-                const ifn = self.usePair(root);
-                try self.expandFunction(ifn.fun, ifn.m);
-            }
+            // fn expandRoot(self: *@This(), root: ast.Function.Use) Error!void {
+            //     const ifn = self.usePair(root);
+            //     try self.expandFunction(ifn.fun, ifn.m);
+            // }
 
             fn usePair(self: *@This(), use: ast.Function.Use) struct {
                 fun: *ast.Function,
@@ -231,7 +254,7 @@ pub fn Mono(Back: type) type {
                         .InstFun => |ifn| .{ .fun = ifn.fun, .m = ifn.m },
                         .Id => |iid| {
                             // ast.Ctx.pp(self.typeContext, .{ cfun.cfun.name, ": ", self.match.* });
-                            const ifn = self.match.tryGetFunctionByID(iid).?;
+                            const ifn = self.tymap.tryGetFunctionByID(iid).?;
                             return .{ .fun = ifn.fun, .m = ifn.m };
                         },
                     },
@@ -240,68 +263,144 @@ pub fn Mono(Back: type) type {
             }
 
             fn expandFunction(self: *@This(), fun: *ast.Function, um: *const ast.Match) Error!void {
-                const oldMatch = self.match;
-                // TODO: i think storing a match only is gonna fail for nested functions which uses variables and assocs from outer function.
-                self.match = try self.typeContext.mapMatch(self.match, um); //try self.
-                defer self.match = oldMatch;
+                if (!fun.env.monoFinished) {
+                    defer fun.env.monoFinished = true;
 
-                // TODO: cut off early if Match matches. Problem is if matches of outer functions match. How to solve it?
-                const env = fun.env;
-                const envfun = ast.EnvFun{
-                    .fun = fun,
-                    .env = env,
-                };
-
-                // ast.Ctx.pp(self.typeContext, .{ "MIAU(", fun.name, "): ", self.match });
-                const vp = try fun.temp__mono.matches.getOrPut(self.match);
-                if (!vp.found_existing) {
+                    // add stuff from the environment here
+                    // NOTE(env-escaping): check for envs from the inside.
+                    var outerFTVs = TypeContext.FTVs.init(self.al);
+                    defer outerFTVs.deinit();
                     for (fun.env.insts.items) |inst| {
+                        // JUST IN CASE DON'T ADD INSTS HERE, BECAUSE MATCH CAN CHANGE.
+
+                        // LAZINESS - I'll just add all the envs.
                         switch (inst.v) {
-                            .TNum => {
-                                unreachable; // TODO
-                                // basically, should inner functions make that tnum their env parameter or scheme parameter?
-                                // right now it's env parameter, but I might/should change it.
-                            },
-
-                            // in current algorithm ignore, since we'll go through all Fun and ClassFuns. (we can actually add them here and don't bother doing it later, but whatever.)
                             .Fun => {
-                                try self.addToEnv(envfun, inst);
+                                try self.typeContext.ftvsFromMatch(&outerFTVs, inst.m);
                             },
-                            .ClassFun => |cfun| {
-                                const funn = self.usePair(.{ .ClassFun = .{ .cfun = cfun.cfun, .ref = cfun.ref } });
-                                try self.addToEnv(envfun, .{
-                                    .v = .{ .Fun = funn.fun },
-                                    .m = funn.m,
-                                    .t = inst.t,
-                                    .l = inst.l,
-                                });
+                            .ClassFun => {
+                                try self.typeContext.ftvsFromMatch(&outerFTVs, inst.m);
                             },
 
-                            .Var => {
-                                try self.addToEnv(envfun, inst);
-                            },
+                            else => {},
                         }
                     }
 
-                    std.debug.assert(!vp.found_existing);
-                    vp.value_ptr.* = .{
-                        .uses = 0,
-                        .completes = ast.Function.EnvCompletes.initContext(
-                            self.al,
-                            .{ .typeContext = self.typeContext },
-                        ),
-                    };
-
-                    for (fun.temp__mono.uses.items) |use| {
-                        try self.expandRoot(use);
+                    // now, remove the function envs from scheme.
+                    const outerEnvs = &outerFTVs.envs;
+                    for (fun.scheme.envVars) |ev| {
+                        // ev should be already "base"d, so no need to normalize it with getEnv().base
+                        outerEnvs.delete(ev);
                     }
 
+                    // NOTE(env-escaping) instead of looking for outer tvars/envs/assocs, we just extend the environment scheme with outer schemes, so it can be mapped.
+                    var outerEnvIt = outerEnvs.iterator();
+                    while (outerEnvIt.next()) |oe| {
+                        const ee = self.typeContext.getEnv(oe.*);
+                        if (ee.env.*) |e| {
+                            var mef = e.env.outer;
+                            var envmatch = e.match;
+                            while (mef) |ef| {
+                                defer mef = ef.env.outer;
+                                if (ef.fun) |outerfun| {
+                                    envmatch = try envmatch.joinScheme(&outerfun.scheme, self.typeContext, self.al);
+                                }
+                            }
+
+                            // SUSSY
+                            ee.env.*.?.match = envmatch;
+                        }
+                    }
+
+                    for (fun.env.insts.items) |inst| {
+                        try fun.env.monoInsts.insert(inst);
+                    }
+
+                    for (fun.temp__mono.uses.items) |use| {
+                        switch (use) {
+                            .Fun => |calledFun| {
+                                if (calledFun.fun.env.level > fun.env.level) {
+                                    try self.expandFunction(calledFun.fun, calledFun.m);
+                                }
+                            },
+                            .ClassFun => |cfun| {
+                                switch (cfun.ref.*.?) {
+                                    .Id => {}, // don't do anything, since it's a function from outside.
+                                    .InstFun => |calledFun| {
+                                        if (calledFun.fun.env.level > fun.env.level) {
+                                            try self.expandFunction(calledFun.fun, calledFun.m);
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    }
+                } // end of function shit
+
+                matchAlreadyRegistered: {
+                    {
+                        const gp = try fun.temp__mono.matches.getOrPut(um);
+                        if (gp.found_existing) break :matchAlreadyRegistered;
+                        gp.value_ptr.* = .{ .completes = ast.Function.EnvCompletes.initContext(self.al, .{ .typeContext = self.typeContext }), .uses = 0 };
+                    }
+
+                    // var hadNewline = false;
+                    // var c = ast.Ctx.init(&hadNewline, self.typeContext);
+                    // c.print(.{ "fun ", fun.name, " :: ", um, "\n" });
+
+                    //
                     // vp might have changed. find it again!!
-                    const avp = fun.temp__mono.matches.getPtr(self.match).?;
+
+                    // expand with current match
+                    var instIt = fun.env.monoInsts.iterator();
+                    while (instIt.next()) |inst| {
+                        var iinst = inst.*;
+                        iinst.m = try self.typeContext.mapMatch(um, inst.m);
+
+                        switch (inst.v) {
+                            .Fun => |ifn| {
+                                if (ifn.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
+                                    try self.expandFunction(ifn, iinst.m);
+                                } else {
+                                    try self.addToEnv(fun.env.outer, iinst);
+                                }
+                            },
+                            .ClassFun => |cfun| {
+                                switch (cfun.ref.*.?) {
+                                    .Id => |id| {
+                                        if (um.getFunctionOrIDByID(id)) |r| {
+                                            switch (r) {
+                                                .InstFun => |ipair| {
+                                                    const ifn = ipair.fun;
+                                                    if (ifn.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
+                                                        unreachable;
+                                                        // try self.expandFunction(ifn, iinst.m);
+                                                    } else {
+                                                        // try self.addToEnv(fun.env.outer, iinst);
+                                                        unreachable;
+                                                    }
+                                                },
+
+                                                .Id => unreachable,
+                                            }
+                                        } else {
+                                            try self.addToEnv(fun.env.outer, iinst);
+                                        }
+                                    },
+                                    .InstFun => unreachable,
+                                }
+                            },
+                            .Var => {
+                                // TODO: technically we can do it once for variables, since we don't have to remap variables.
+                                try self.addToEnv(fun.env.outer, iinst);
+                            },
+                            else => unreachable,
+                        }
+                    }
 
                     // now, we must check which parts of the environment need to be completed later.
                     // (only needed for insts thooo)
-                    for (self.match.assocs, 0..) |massoc, i| {
+                    for (um.assocs, 0..) |massoc, i| {
                         const afun = b: {
                             if (massoc) |assoc| {
                                 break :b assoc.InstFun;
@@ -314,58 +413,75 @@ pub fn Mono(Back: type) type {
                                 unreachable;
                             }
                         };
+
+                        if (afun.fun.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
+                            try self.expandFunction(afun.fun, afun.m);
+                        } else {
+                            // try self.addToEnv(fun.env.outer, iinst);
+                            unreachable; // TODO: what should be here???
+                        }
+
                         if (afun.fun.isDefinedAfterOrAt(fun)) {
-                            try afun.fun.temp__mono.matches.getPtr(afun.m).?.completes.insert(.{ .fun = fun, .m = self.match });
-                            avp.uses += 1;
+                            // {
+                            // var hadNewline = false;
+                            // var ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                            // ctx.print(.{ afun.m, "\n" });
+                            // var it = afun.fun.temp__mono.matches.iterator();
+                            // while (it.next()) |e| {
+                            //     ctx.print(.{ "\t", e.key_ptr.*, "\n" });
+                            // }
+                            // ctx.print("\n");
+                            // }
+                            try afun.fun.temp__mono.matches.getPtr(afun.m).?.completes.insert(.{ .fun = fun, .m = um });
+                            fun.temp__mono.matches.getPtr(um).?.uses += 1;
                         }
                     }
-                } else {
-                    //     var envIt = fun.env.monoInsts.iterator();
-                    //     while (envIt.next()) |inst| {
-                    //         switch (inst.v) {
-                    //             .ClassFun => |cfun| {
-                    //                 try self.expandRoot(.{
-                    //                     .ClassFun = .{
-                    //                         .cfun = cfun.cfun,
-                    //                         .ref = cfun.ref,
-                    //                     },
-                    //                 });
-                    //             },
-                    //             .Fun => |ifun| {
-                    //                 try self.expandRoot(.{
-                    //                     .Fun = .{
-                    //                         .fun = ifun,
-                    //                         .m = inst.m,
-                    //                     },
-                    //                 });
-                    //             },
-                    //             .Var => try self.addToEnv(env.outer, inst.*),
-                    //             .TNum => unreachable,
-                    //         }
-                    //     }
                 }
+
+                // if there was already a match, no need to expand.
             }
 
             fn addToEnv(self: *@This(), startEnv: ?ast.EnvFun, umInst: ast.EnvVar) !void {
-                var inst = umInst;
-                inst.m = try self.typeContext.mapMatch(self.match, umInst.m);
+                _ = self;
+                // var inst = umInst;
+                // inst.m = try self.typeContext.mapMatch(self.tymap, umInst.m);
 
                 var curenv: ?ast.EnvFun = startEnv;
-                while (curenv) |env| {
-                    if (env.env.level >= inst.l) {
-                        try env.env.monoInsts.insert(inst);
-                    } else {
-                        break;
+                while (curenv) |envfun| {
+                    const env = envfun.env;
+                    if (env.level <= umInst.l) {
+                        return;
                     }
-                    curenv = env.env.outer;
+
+                    try envfun.env.monoInsts.insert(umInst);
+
+                    if (envfun.fun) |_| {
+                        return;
+                    }
+
+                    curenv = envfun.env.outer;
                 }
             }
         };
 
         fn findFullFunctionEnvs(tc: *TypeContext, al: std.mem.Allocator, roots: []ast.Function.Use) !MonoStuff {
-            var monoStuff = try MonoStuff.init(tc, al);
+            var monoStuff = MonoStuff{
+                .al = al,
+                .match = &ast.Match.Empty,
+                .typeContext = tc,
+            };
             for (roots) |root| {
-                try monoStuff.expandRoot(root);
+                switch (root) {
+                    .ClassFun => |cfun| {
+                        switch (cfun.ref.*.?) {
+                            .InstFun => |fun| {
+                                try monoStuff.expandFunction(fun.fun, fun.m);
+                            },
+                            .Id => unreachable, // actually unreachable cuz these are top level.
+                        }
+                    },
+                    .Fun => |fun| try monoStuff.expandFunction(fun.fun, fun.m),
+                }
             }
 
             return monoStuff;
@@ -379,7 +495,7 @@ pub fn Mono(Back: type) type {
         fn ts(self: *const Self) TypeSize {
             return .{
                 .tyc = self.typeContext,
-                .match = self.match,
+                .match = self.tymap.match,
                 .prelude = self.prelude,
             };
         }

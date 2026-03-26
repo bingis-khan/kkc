@@ -88,7 +88,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             const exprVal = try self.expr(vm.varValue);
             const sz = self.sizeOf(vm.varValue.t);
 
-            const v = self.getVar(vm.varRef);
+            const v = self.getVar(vm.varRef.v);
             if (vm.accessors.len == 0) {
                 @memcpy(v.ref.slice(sz.size), exprVal.ref.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
             } else {
@@ -173,7 +173,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
 
                 const justValue = valFromRef(@ptrCast(&nextVal.ref.adt.data));
 
-                if (try self.tryDeconstruct(forl.decon, justValue.ref)) {
+                if (try self.tryDeconstruct(forl.decon.d, justValue.ref)) {
                     self.stmts(forl.body) catch |err| switch (err) {
                         error.Break => {
                             break :loop;
@@ -181,7 +181,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                         else => return err,
                     };
                 } else {
-                    const l = forl.decon.l;
+                    const l = forl.decon.d.l;
 
                     var hadNewline = false;
                     const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
@@ -231,8 +231,8 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapsho
                 };
             },
             .Var => |v| .{ .Snap = .{
-                .v = v,
-                .vv = try self.copyValue(self.getVar(v).ref, ei.t),
+                .v = v.v,
+                .vv = try self.copyValue(self.getVar(v.v).ref, ei.t),
             } },
             .Fun => |envfun| .{ .Snap = .{
                 .v = envfun.name,
@@ -431,7 +431,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             // var lit = valArrayIterator(lslice.ptr, elemSize);
             for (listDecon.l, 0..) |ldecon, i| {
                 const lval = valArrayGet(lptrptr.ref.ptr.ptr, elemSize, i); // maybe we should just use val.offset()?
-                if (!try self.tryDeconstruct(ldecon, lval)) {
+                if (!try self.tryDeconstruct(ldecon.d, lval)) {
                     return false;
                 }
             }
@@ -439,7 +439,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             if (rsize > 0) {
                 for (listDecon.r.?.r, 0..) |rdecon, i| {
                     const rval = valArrayGet(rptrptr.ref.ptr.ptr, elemSize, i);
-                    if (!try self.tryDeconstruct(rdecon, rval)) {
+                    if (!try self.tryDeconstruct(rdecon.d, rval)) {
                         return false;
                     }
                 }
@@ -551,6 +551,30 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         else => unreachable,
                     });
                 },
+
+                .@"i64-cmp" => {
+                    const l = (try self.expr(intr.args[0])).ref.int;
+                    const r = (try self.expr(intr.args[1])).ref.int;
+                    if (l < r) {
+                        return try self.intValue(0);
+                    } else if (l == r) {
+                        return try self.intValue(1);
+                    } else {
+                        return try self.intValue(2);
+                    }
+                },
+                .@"f64-cmp" => {
+                    const l = (try self.expr(intr.args[0])).ref.float;
+                    const r = (try self.expr(intr.args[1])).ref.float;
+
+                    if (l < r) {
+                        return try self.intValue(0);
+                    } else if (l == r) {
+                        return try self.intValue(1);
+                    } else {
+                        return try self.intValue(2);
+                    }
+                },
             }
         },
         .Char => |c| {
@@ -636,7 +660,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     return self.getVar(tnum.asVar());
                 },
                 .Var => |vv| {
-                    return self.getVar(vv);
+                    return self.getVar(vv.v);
                 },
 
                 .Fun => |fun| {
@@ -774,7 +798,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
 
                     const args = try self.exprs(c.args);
                     for (lam.params, args) |decon, a| {
-                        if (!try self.tryDeconstruct(decon, a.ref)) {
+                        if (!try self.tryDeconstruct(decon.d, a.ref)) {
                             return error.CaseNotMatched;
                         }
                     }
@@ -998,7 +1022,7 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
                     .Type => |appt| {
                         outerApplication[i] = .{
                             .Type = switch (self.typeContext.getType(appt)) {
-                                .TVar => |tv| oldTyMap.getTVar(tv) orelse appt, // very bad!! xddd
+                                .TVar => |tv| oldTyMap.mapTVar(tv) orelse appt, // very bad!! xddd
                                 else => appt,
                             },
                         };
@@ -1006,7 +1030,7 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
                     .Num => |appnum| {
                         outerApplication[i] = .{
                             .Num = switch (self.typeContext.getNum(appnum)) {
-                                .TNum => |tnum| oldTyMap.getTNum(tnum) orelse appnum,
+                                .TNum => |tnum| oldTyMap.mapTNum(tnum) orelse appnum,
                                 else => appnum,
                             },
                         };
@@ -1079,7 +1103,7 @@ fn getAndUnboxInstFunRef(self: *Self, assocRef: ast.InstFunInst) !*align(1) cons
     return instFun;
 }
 
-fn initFunction(self: *Self, fun: *ast.Function, m: *ast.Match) !ValueMeta {
+fn initFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) !ValueMeta {
     return try self.val(.{
         .fun = nanbox(try common.allocOne(self.arena, RawValue.Fun{
             .fun = fun,
@@ -1138,8 +1162,8 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
     }
 
     for (fun.params, args) |decon, a| {
-        const av = try self.copyValue(a.ref, decon.t); // we can pass in a "ref", so make sure to copy the actual value.
-        if (!try self.tryDeconstruct(decon, av)) {
+        const av = try self.copyValue(a.ref, decon.d.t); // we can pass in a "ref", so make sure to copy the actual value.
+        if (!try self.tryDeconstruct(decon.d, av)) {
             return error.CaseNotMatched;
         }
     }
@@ -1219,7 +1243,7 @@ const RawValue = extern union {
     const Fun = struct {
         fun: *ast.Function,
         env: EnvSnapshot,
-        match: *ast.Match,
+        match: *const ast.Match,
     };
 
     fn offset(self: *align(1) @This(), off: usize) RawValueRef {
@@ -1480,7 +1504,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     .Type => |appt| {
                         outerApplication[i] = .{
                             .Type = switch (self.typeContext.getType(appt)) {
-                                .TVar => |tv| oldTyMap.getTVar(tv) orelse appt, // very bad!! xddd
+                                .TVar => |tv| oldTyMap.mapTVar(tv) orelse appt, // very bad!! xddd
                                 else => appt,
                             },
                         };
@@ -1488,7 +1512,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     .Num => |appnum| {
                         outerApplication[i] = .{
                             .Num = switch (self.typeContext.getNum(appnum)) {
-                                .TNum => |tnum| oldTyMap.getTNum(tnum) orelse appnum,
+                                .TNum => |tnum| oldTyMap.mapTNum(tnum) orelse appnum,
                                 else => appnum,
                             },
                         };
@@ -1532,7 +1556,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                     var numref = c.application.tvars[0].Num;
                     while (true) {
                         switch (self.typeContext.getNum(numref)) {
-                            .TNum => |tnum| numref = self.tymap.getTNum(tnum) orelse unreachable,
+                            .TNum => |tnum| numref = self.tymap.mapTNum(tnum) orelse unreachable,
                             .Literal => |lit| break :b @intCast(lit),
                             .Unknown => unreachable,
                         }
@@ -1646,7 +1670,7 @@ fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usiz
 
 fn getType(self: *const Self, ogt: ast.Type) ast.TypeF(ast.Type) {
     return switch (self.typeContext.getType(ogt)) {
-        .TVar => |tv| self.getType(self.tymap.getTVar(tv) orelse unreachable),
+        .TVar => |tv| self.getType(self.tymap.mapTVar(tv) orelse unreachable),
         else => |t| t,
     };
 }

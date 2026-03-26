@@ -24,12 +24,82 @@ const EnvRef = ast.EnvRef;
 pub const Env = struct {
     env: *ast.Env,
     match: *const ast.Match,
+    level: usize,
+    fun: ?*ast.Function, // probably not needed
 
     pub fn empty(id: Unique, al: std.mem.Allocator) !@This() {
         return .{
             .env = try common.allocOne(al, ast.Env.empty(id)),
             .match = try common.allocOne(al, ast.Match.empty(ast.Scheme.empty())),
+            .fun = null,
+            .level = 0,
         };
+    }
+};
+pub const MatchLink = struct {
+    match: *const ast.Match,
+    next: ?*const MatchLink,
+
+    pub fn init(al: std.mem.Allocator, match: *const ast.Match) !*const @This() {
+        return try common.allocOne(al, MatchLink{
+            .match = match,
+            .next = null,
+        });
+    }
+
+    pub fn empty(al: std.mem.Allocator) !*const @This() {
+        return try MatchLink.init(al, try common.allocOne(al, ast.Match.empty(ast.Scheme.empty())));
+    }
+
+    pub fn link(al: std.mem.Allocator, match: *const ast.Match, next: ?*const MatchLink) !*const @This() {
+        return try common.allocOne(al, MatchLink{
+            .match = match,
+            .next = next,
+        });
+    }
+
+    fn length(self: *const @This()) u32 {
+        var l: u32 = 1;
+        var nml = self.next;
+        while (nml) |ml| {
+            l += 1;
+            nml = ml.next;
+        }
+
+        return l;
+    }
+
+    pub fn zip(left: *const MatchLink, right: *const MatchLink) Iterator {
+        const ll = left.length();
+        const rl = right.length();
+
+        if (ll == rl) {
+            return MatchLink.Iterator{ .l = left, .r = right };
+        } else {
+            unreachable;
+        }
+    }
+
+    const Iterator = struct {
+        l: ?*const MatchLink,
+        r: ?*const MatchLink,
+
+        pub fn next(self: *@This()) ?struct { l: *const ast.Match, r: *const ast.Match } {
+            if (self.l) |ll| {
+                const rr = self.r.?;
+                self.l = ll.next;
+                self.r = rr.next;
+
+                return .{ .l = ll.match, .r = rr.match };
+            } else return null;
+        }
+    };
+
+    pub fn print(self: @This(), c: ast.Ctx) void {
+        c.print(.{self.match});
+        if (self.next) |nml| {
+            c.print(.{ "|| ", nml });
+        }
     }
 };
 const EnvStore = std.ArrayList(union(enum) {
@@ -346,19 +416,19 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
     }
 }
 
-fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs, full: Full) !void {
+pub fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs, full: Full) !void {
     _ = full; // use later
     // SLOW AND BAD! Structurally check if environments are the same (but it's BAD, because we are not deduplicating them!!)
     // Later (after we implement classes) we will probably have an id associated with it.
     // Then I can decide if I want structural equality.
     if (lenvref.id == renvref.id) return;
-    const llenv = self.getEnv(lenvref).env orelse {
+    const llenv = self.getEnv(lenvref).env.* orelse {
         // self.envContext.items[lenvref.id] = self.envContext.items[renvref.id];
         self.setEnvRef(lenvref, renvref);
         return;
     };
     const lenv = llenv.env;
-    const rrenv = self.getEnv(renvref).env orelse {
+    const rrenv = self.getEnv(renvref).env.* orelse {
         // self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
         self.setEnvRef(renvref, lenvref);
         return;
@@ -383,13 +453,13 @@ fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs, full: Ful
 }
 
 pub fn getEnv(self: *const Self, envref: EnvRef) struct {
-    env: ?Env,
+    env: *?Env,
     base: EnvRef,
 } {
     var curref = envref;
     while (true) {
         switch (self.envContext.items[curref.id]) {
-            .Env => |env| return .{
+            .Env => |*env| return .{
                 .base = curref,
                 .env = env,
             },
@@ -662,7 +732,7 @@ fn occursCheck(self: *const Self, tyv: ast.TyVar, ty: TyRef) bool {
             return self.occursCheckMatch(tyv, con.application);
         },
         .Fun => |fun| {
-            if (self.getEnv(fun.env).env) |env| {
+            if (self.getEnv(fun.env).env.*) |env| {
                 if (self.occursCheckMatch(tyv, env.match)) return true;
             }
 
@@ -681,6 +751,16 @@ fn occursCheck(self: *const Self, tyv: ast.TyVar, ty: TyRef) bool {
             return false;
         },
     }
+}
+
+fn occursCheckMatchLink(self: *const Self, tyv: ast.TyVar, match: *const MatchLink) bool {
+    var m: ?*const MatchLink = match;
+    while (m) |ml| {
+        if (self.occursCheckMatch(tyv, ml.match)) return true;
+        m = ml.next;
+    }
+
+    return false;
 }
 
 fn occursCheckMatch(self: *const Self, tyv: ast.TyVar, match: *const ast.Match) bool {
@@ -740,7 +820,7 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
 
             for (con.application.envVars) |envVar| {
                 const env = self.getEnv(envVar);
-                if (env.env == null) { // NOTE: same thing as the case for .Fun. NOTE: technically, we also check for nulls when turning FTVs -> Scheme in mkSchemeForFunction, but it's due to some bug, where some envs are not null for some reason.
+                if (env.env.* == null) { // NOTE: same thing as the case for .Fun. NOTE: technically, we also check for nulls when turning FTVs -> Scheme in mkSchemeForFunction, but it's due to some bug, where some envs are not null for some reason.
                     try store.envs.insert(env.base);
                 }
             }
@@ -751,9 +831,10 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
             }
 
             const env = self.getEnv(fun.env);
-            if (env.env == null) { // Q: @grok is this correct? A: if we add unions, we should remove this check.
-                try store.envs.insert(env.base);
-            }
+            // if (env.env == null) { // Q: @grok is this correct? A: if we add unions, we should remove this check.
+            // NOTE: check removed. what I'm doing is going to ADD a match of the instantiating function to provide context to the function.
+            try store.envs.insert(env.base);
+            // }
 
             try self.ftvs(store, fun.ret);
         },
@@ -761,7 +842,63 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
     }
 }
 
-pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *Set(ast.TVarOrNum, ast.TVarOrNum.comparator()), tref: ast.Type) !void {
+pub fn ftvsFromMatch(self: *Self, store: *FTVs, m: *const ast.Match) !void {
+    for (m.tvars) |tvn| {
+        switch (tvn) {
+            .Type => |t| {
+                try self.ftvs(store, t);
+            },
+            .Num => {},
+        }
+    }
+
+    for (m.envVars) |ev| {
+        const env = self.getEnv(ev);
+        try store.envs.insert(env.base);
+    }
+
+    for (m.assocs) |massoc| {
+        if (massoc) |assoc| {
+            switch (assoc) {
+                .Id => {},
+                .InstFun => |ifun| {
+                    try self.ftvsFromMatch(store, ifun.m);
+                },
+            }
+        }
+    }
+}
+
+pub fn ftvsFromEnv(self: *Self, envftvs: *FTVs, env: *ast.Env) !void {
+    for (env.insts.items) |inst| {
+        // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
+        // NOTE: but that's what I'm doing now??
+        switch (inst.v) {
+            .TNum => {},
+            .Var => try self.ftvs(envftvs, inst.t),
+            .Fun => |fun| {
+                for (fun.params) |p| {
+                    try self.ftvs(envftvs, p.d.t);
+                }
+
+                try self.ftvs(envftvs, fun.ret);
+            },
+
+            .ClassFun => |vv| {
+                const cfun = vv.cfun;
+                for (cfun.params) |p| {
+                    try self.ftvs(envftvs, p.t);
+                }
+
+                try self.ftvs(envftvs, cfun.ret);
+            },
+        }
+    }
+}
+
+// TODO(26.03.26): maybe we should do it the same way as envs?
+pub const TVarStore = Set(ast.TVarOrNum, ast.TVarOrNum.comparator());
+pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref: ast.Type) !void {
     const t = self.getType(tref);
     switch (t) {
         .Anon => |fields| {
@@ -808,6 +945,78 @@ pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *Set(ast.TVarOrN
         .TVar => |tv| {
             // only add tvars NOT from the datatype.
             if (!std.meta.eql(tv.binding, binding)) {
+                try store.insert(.{ .TVar = tv });
+            }
+        },
+    }
+}
+
+pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *TVarStore, env: *ast.Env) !void {
+    for (env.insts.items) |inst| {
+        // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
+        // NOTE: but that's what I'm doing now??
+        switch (inst.v) {
+            .TNum => {},
+            .Var => try self.getTVars(binding, store, inst.t),
+            .Fun => |fun| {
+                for (fun.params) |p| {
+                    try self.getTVars(binding, store, p.d.t);
+                }
+
+                try self.getTVars(binding, store, fun.ret);
+            },
+
+            .ClassFun => |vv| {
+                const cfun = vv.cfun;
+                for (cfun.params) |p| {
+                    try self.getTVars(binding, store, p.t);
+                }
+
+                try self.getTVars(binding, store, cfun.ret);
+            },
+        }
+    }
+}
+
+pub fn getTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref: ast.Type) !void {
+    const t = self.getType(tref);
+    switch (t) {
+        .Anon => |fields| {
+            for (fields) |field_| {
+                try self.getTVars(binding, store, field_.t);
+            }
+        },
+        .TyVar => |tyv| {
+            if (self.getFieldsForTVar(tyv)) |fields| {
+                for (fields) |field_| {
+                    try self.getTVars(binding, store, field_.t);
+                }
+            }
+        },
+        .Con => |con| {
+            for (con.application.tvars) |mtOrNum| {
+                switch (mtOrNum) {
+                    .Type => |mt| try self.getTVars(binding, store, mt),
+                    .Num => |num| {
+                        switch (self.getNum(num)) {
+                            .TNum => |tnum| if (std.meta.eql(tnum.binding, binding)) {
+                                try store.insert(.{ .TNum = tnum });
+                            },
+                            else => {},
+                        }
+                    },
+                }
+            }
+        },
+        .Fun => |fun| {
+            for (fun.args) |arg| {
+                try self.getTVars(binding, store, arg);
+            }
+
+            try self.getTVars(binding, store, fun.ret);
+        },
+        .TVar => |tv| {
+            if (std.meta.eql(tv.binding, binding)) {
                 try store.insert(.{ .TVar = tv });
             }
         },
@@ -876,11 +1085,16 @@ pub const FTVs = struct {
         self.tyvars.deinit();
         self.envs.deinit();
     }
+
+    pub fn mkScheme(self: *const @This()) !ast.Scheme {
+        _ = self;
+        unreachable;
+    }
 };
 
 pub const FTV = struct { tyv: ast.TyVar, t: ast.Type };
 
-pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMemory}!ast.Type {
+pub fn mapType(self: *Self, match: anytype, ty: ast.Type) error{OutOfMemory}!ast.Type {
     const bt = self.getTypeAndBase(ty);
     const t = bt.t;
 
@@ -979,12 +1193,38 @@ pub fn mapType(self: *Self, match: *const ast.Match, ty: ast.Type) error{OutOfMe
     };
 }
 
-pub fn mapMatch(self: *Self, match: *const ast.Match, mm: *const ast.Match) !*const ast.Match {
+pub fn mapMatchLink(self: *Self, match: *const ast.Match, ml: *const MatchLink) !*const MatchLink {
+    return (try self.mapMatchLink_(match, ml)) orelse ml;
+}
+
+pub fn mapMatchLink_(self: *Self, match: *const ast.Match, ml: *const MatchLink) !?*const MatchLink {
+    if (ml.next) |nml| {
+        const mnnml = try self.mapMatchLink_(match, nml);
+        if (mnnml) |nnml| {
+            // here, linked matches were changed, so we must reevaluate the thing anyway.
+            const m = try self.mapMatch(match, nml.match);
+            return try MatchLink.link(self.arena, m, nnml);
+        } else {
+            const mm = try self.mapMatch_(match, nml.match);
+            if (mm) |m| {
+                return try MatchLink.link(self.arena, m, ml.next);
+            } else {
+                // no changes here tho.
+                return null;
+            }
+        }
+    } else {
+        return null;
+    }
+    unreachable;
+}
+
+pub fn mapMatch(self: *Self, match: anytype, mm: *const ast.Match) !*const ast.Match {
     return (try self.mapMatch_(match, mm)) orelse mm;
 }
 
 // null when match did not change (so we can keep the same data structure)
-fn mapMatch_(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.Match {
+fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
     var changed = false;
 
     var tvars = std.ArrayList(ast.TypeOrNum).init(self.arena);
@@ -1015,9 +1255,17 @@ fn mapMatch_(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.
         if (moldAssoc) |oldAssoc| {
             switch (oldAssoc) {
                 .Id => |id| {
+                    // if (@TypeOf(match) == *const ast.Match) {
+                    //     var hadNewline = false;
+                    //     var c = ast.Ctx.init(&hadNewline, self);
+                    //     c.print(.{ id, " :: ", match, "\n" });
+                    // }
                     if (match.tryGetFunctionByID(id)) |nuId| {
                         try assocs.append(.{ .InstFun = nuId });
                         changed = true;
+                        continue;
+                    } else {
+                        try assocs.append(.{ .Id = id });
                         continue;
                     }
                 },
@@ -1035,6 +1283,7 @@ fn mapMatch_(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.
                 },
             }
 
+            // NOTE: this was a way to catch match errors! not needed now ig?
             unreachable;
         }
         try assocs.append(moldAssoc);
@@ -1055,48 +1304,39 @@ fn mapMatch_(self: *Self, match: *const ast.Match, mm: *const ast.Match) !?*ast.
     });
 }
 
-fn mapNum(self: *Self, match: *const ast.Match, numref: ast.NumRef) ?ast.NumRef {
+fn mapNum(self: *Self, match: anytype, numref: ast.NumRef) ?ast.NumRef {
     switch (self.getNum(numref)) {
-        .TNum => |tnum| {
-            for (match.scheme.tvars, match.tvars) |tvOrNum, tyOrNum| {
-                switch (tvOrNum) {
-                    .TNum => |tnum2| {
-                        if (tnum2.uid == tnum.uid) {
-                            return tyOrNum.Num;
-                        }
-                    },
-                    .TVar => {},
-                }
-            }
-        },
+        .TNum => |tnum| return match.mapTNum(tnum),
         else => return numref,
     }
 
     return null;
 }
 
-fn mapEnv(self: *Self, match: *const ast.Match, envref: ast.EnvRef) error{OutOfMemory}!ast.EnvRef {
+fn mapEnv(self: *Self, match: anytype, envref: ast.EnvRef) error{OutOfMemory}!ast.EnvRef {
     const envAndBase = self.getEnv(envref);
-    return if (envAndBase.env) |*env| bb: {
-        const menvMatch = try self.mapMatch_(match, env.match);
-        break :bb if (menvMatch) |envMatch| b: {
-            break :b try self.newEnv(.{
-                .env = env.env,
-                .match = envMatch,
-            });
-        } else b: {
-            break :b envref;
+    if (match.mapEnv(envAndBase.base)) |nue| {
+        return nue;
+    } else {
+        return if (envAndBase.env.*) |*env| bb: {
+            const menvMatch = try self.mapMatch_(match, env.match);
+            break :bb if (menvMatch) |envMatch| b: {
+                break :b try self.newEnv(.{
+                    .env = env.env,
+                    .match = envMatch,
+                    .fun = env.fun,
+                    .level = env.level,
+                });
+            } else b: {
+                break :b envref;
+            };
+        } else bb: {
+            // i guess we just return the normal one? random choice.
+            break :bb envref;
+
+            // try self.newEnv(null); // IMPORTANT: must instantiate new env..
         };
-    } else bb: {
-        if (match.mapEnv(envAndBase.base)) |nue| {
-            break :bb nue;
-        }
-
-        // i guess we just return the normal one? random choice.
-        break :bb envref;
-
-        // try self.newEnv(null); // IMPORTANT: must instantiate new env..
-    };
+    }
 }
 
 fn reportError(self: *const Self, locs: Locs, ierr: Error) !void {

@@ -48,12 +48,9 @@ pub fn init(al: std.mem.Allocator, tyc: *const TypeContext) @This() {
     };
 }
 
-pub fn genFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) GenError!void { // TODO: params
+pub fn genFunction(self: *Self, fun: *ast.Function) GenError!void { // TODO: params
     _ = fun; // autofix
     std.debug.print("FUNCTION\n", .{});
-    const oldM = self.match;
-    defer self.match = oldM;
-    self.match = m;
 
     const al = self.backend.al;
 

@@ -99,7 +99,7 @@ fn count-digits (self Int) -> Int
 
 inst Str Int
 	print-str (self Int) -> Unit
-		Cnile.printf1('%ld', self)
+		Cnile.printf1('%d', self)
 
 	chars (self Int):
 		IntStrIter { int: self, len: self count-digits() }

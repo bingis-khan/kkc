@@ -198,12 +198,7 @@ inst Eq Ptr
 
 inst Ord Int
 	cmp (l, r)
-		if l < r
-			return LT
-		elif l > r
-			return GT
-		else
-			return EQ
+		return @i64-cmp(l, r)
 
 # ops
 

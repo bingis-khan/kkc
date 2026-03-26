@@ -6,7 +6,7 @@ const Self = @This();
 const common = @import("common.zig");
 const TypeContext = @import("TypeContext.zig");
 
-pub const VarAndType = struct { v: ast.Var, t: ast.Type };
+pub const VarAndType = struct { v: ast.DeconVar, t: ast.Type };
 pub const VarOrFun = union(enum) { // the name gegegggg
     Var: VarAndType,
     Fun: *ast.Function,

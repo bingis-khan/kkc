@@ -360,11 +360,12 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     // already begin env
     const env = try self.beginEnv(fun);
 
-    var params = std.ArrayList(*AST.Decon).init(self.arena);
+    var params = std.ArrayList(AST.DeconBase).init(self.arena);
     const tyconstr = Type.Constrain{ .Function = .{ .uid = fun.name.uid } };
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
-            const decon = try self.deconstruction();
+            const refvar = self.deconRefVar();
+            const decon = try self.deconstruction(refvar);
             const nextTok = self.peek().type;
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
                 const pt = try Type.init(
@@ -373,7 +374,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
                 ).sepTyo();
                 try self.typeContext.unify(decon.t, pt.e, &.{ .l = decon.l, .r = pt.l });
             }
-            try params.append(decon);
+            try params.append(.{ .d = decon, .refvar = refvar });
 
             if (!self.check(.COMMA)) break;
         }
@@ -384,7 +385,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     // prepare params for a function type.
     const paramTs = try self.arena.alloc(AST.Type, params.items.len);
     for (params.items, 0..) |et, i| {
-        paramTs[i] = et.t;
+        paramTs[i] = et.d.t;
     }
 
     // -> ty
@@ -712,13 +713,13 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             if (self.check(.EQUALS)) {
                 const pm = self.foldFromHere();
                 const expr = try self.expression();
-                const vt = try self.newVar(v);
+                const vt = try self.newVar(v, null);
                 try self.typeContext.unify(vt.t, expr.t, &.{ .l = self.loc(v), .r = expr.l });
 
                 try self.finishFold(pm);
 
                 break :b .{ .VarDec = .{
-                    .varDef = vt.v,
+                    .varDef = vt.v.v,
                     .varValue = expr,
                 } };
             } else if (self.check(.LTEQ)) { // basic mutation (different token.)
@@ -732,7 +733,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     .Var => |vt| vt,
                     else => bb: {
                         try self.reportError(.{ .TryingToMutateNonVar = .{} });
-                        break :bb try self.newVar(v);
+                        break :bb try self.newVar(v, null);
                     },
                 };
 
@@ -748,7 +749,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     .Var => |vt| vt,
                     else => bb: {
                         try self.reportError(.{ .TryingToMutateNonVar = .{} });
-                        break :bb try self.newVar(v);
+                        break :bb try self.newVar(v, null);
                     },
                 };
 
@@ -923,7 +924,11 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             } };
         } // while
         else if (self.check(.FOR)) {
-            const decon = try self.deconstruction();
+            const refvar = self.deconRefVar();
+            const decon = .{
+                .d = try self.deconstruction(refvar),
+                .refvar = refvar,
+            };
             try self.devour(.IN);
             const itexpr = try self.expression();
 
@@ -944,9 +949,9 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             const nextFun = iterClass.classFuns[0];
             const nextFunInst = try self.instantiateClassFunction(nextFun, itexpr.l);
 
-            const elemType = decon.t;
+            const elemType = decon.d.t;
             const maybeElem = (try self.defined(.Maybe)).dataInst;
-            try self.typeContext.unify(maybeElem.tyArgs[0].Type, elemType, &.{ .l = itexpr.l, .r = decon.l });
+            try self.typeContext.unify(maybeElem.tyArgs[0].Type, elemType, &.{ .l = itexpr.l, .r = decon.d.l });
 
             const ptrType = (try self.defined(.Ptr)).dataInst;
             try self.typeContext.unify(ptrType.tyArgs[0].Type, iterType, &.{ .l = itexpr.l });
@@ -954,7 +959,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             try self.typeContext.unify(nextFunInst.t, try self.makeType(.{ .Fun = .{
                 .args = [_]AST.Type{ptrType.t},
                 .ret = maybeElem.t,
-            } }), &.{ .l = itexpr.l, .r = decon.l });
+            } }), &.{ .l = itexpr.l, .r = decon.d.l });
 
             const bod = try self.body();
             self.returned = bod.returnStatus;
@@ -968,13 +973,14 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
         } // for
         else if (self.check(.CASE)) {
             const switchOn = try self.expression();
+            const refvar = self.deconRefVar();
 
             var returnStatus = ReturnStatus.Returned; // mempty-like
             var cases = std.ArrayList(AST.Case).init(self.arena);
             try self.devour(.INDENT);
             self.beginScope();
             while (!self.check(.DEDENT)) {
-                const decon = try self.deconstruction();
+                const decon = try self.deconstruction(refvar);
                 try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
                 const bod = try self.body();
                 try cases.append(.{ .decon = decon, .body = bod.stmts.items });
@@ -989,6 +995,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             break :b .{
                 .Switch = .{
                     .switchOn = switchOn,
+                    .refvar = refvar,
                     .cases = cases.items,
                 },
             };
@@ -1161,9 +1168,9 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
             const pname = try self.expect(.IDENTIFIER);
-            const v = try self.newVar(pname); // pointless fresh.
+            const v = try self.newVar(pname, null); // pointless fresh.
             const t = try Type.init(self, tyconstr).sepTyo();
-            try params.append(.{ .pn = v.v, .pt = t.e });
+            try params.append(.{ .pn = v.v.v, .pt = t.e });
 
             if (self.check(.RIGHT_PAREN)) {
                 break;
@@ -1396,13 +1403,31 @@ fn addConstraintsToAssocs(self: *Self, assocs: *std.ArrayList(AST.Association), 
     }
 }
 
-fn deconstruction(self: *Self) !*AST.Decon {
+fn deconRefVar(self: *Self) AST.Var {
+    return .{ .name = "dref", .uid = self.gen.vars.newUnique() };
+}
+
+fn deconstruction(self: *Self, refvar: AST.Var) !*AST.Decon {
+    const ty = try self.typeContext.fresh();
+    const dpBase = try AST.Decon.Path.init(self.arena, .{ .Tip = .{
+        .v = refvar,
+        .t = ty,
+    } });
+    const decon = try deconstruction_(self, dpBase);
+    try self.typeContext.unify(ty, decon.t, null);
+    return decon;
+}
+
+fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Decon {
     const decon: AST.Decon = if (self.consume(.IDENTIFIER)) |vn| b: {
-        const v = try self.newVar(vn);
+        const v = try self.newVar(vn, switch (dp.*) {
+            .Tip => null,
+            .Concat => .{ .dp = dp },
+        });
         break :b .{
             .t = v.t,
             .l = self.loc(vn),
-            .d = .{ .Var = v.v },
+            .d = .{ .Var = v.v.v },
         };
     } // var
     else if (self.consume(.UNDERSCORE)) |ut| b: {
@@ -1452,7 +1477,11 @@ fn deconstruction(self: *Self) !*AST.Decon {
             var tys = std.ArrayList(AST.Type).init(self.arena);
 
             while (true) { // while1
-                const d = try self.deconstruction();
+                const d = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, if (con.con.data.isPointer()) .Ptr else .{ .Con = .{
+                    .con = con.con,
+                    .field = ds.items.len,
+                    .t = con.t,
+                } }));
                 try ds.append(d);
                 try tys.append(d.t);
                 tysLoc = if (tysLoc) |l| l.between(d.l) else d.l;
@@ -1495,20 +1524,24 @@ fn deconstruction(self: *Self) !*AST.Decon {
             const fieldTy = try self.typeContext.field(t, fieldName, null);
 
             if (self.check(.COLON)) {
-                const decon = try self.deconstruction();
+                const decon = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, .{
+                    .Field = fieldName,
+                }));
                 try self.typeContext.unify(fieldTy, decon.t, null);
                 try fields.append(.{
                     .field = fieldName,
                     .decon = decon,
                 });
             } else {
-                const vnt = try self.newVar(fieldTok);
+                const vnt = try self.newVar(fieldTok, .{ .dp = try AST.Decon.Path.concat(self.arena, dp, .{
+                    .Field = fieldName,
+                }) });
                 try self.typeContext.unify(fieldTy, vnt.t, null);
                 try fields.append(.{
                     .field = fieldName,
                     .decon = try Common.allocOne(self.arena, AST.Decon{
                         .t = fieldTy,
-                        .d = .{ .Var = vnt.v },
+                        .d = .{ .Var = vnt.v.v },
                         .l = self.loc(fieldTok),
                     }),
                 });
@@ -1527,8 +1560,8 @@ fn deconstruction(self: *Self) !*AST.Decon {
         };
     } // record deccon
     else if (self.consume(.LEFT_SQBR)) |ltok| b: {
-        var left = std.ArrayList(*AST.Decon).init(self.arena);
-        var right = std.ArrayList(*AST.Decon).init(self.arena);
+        var left = std.ArrayList(AST.DeconBase).init(self.arena);
+        var right = std.ArrayList(AST.DeconBase).init(self.arena);
         const listTy = try self.typeContext.fresh();
         const elemTy = try self.typeContext.fresh();
         const spreadTy = try self.typeContext.fresh();
@@ -1548,17 +1581,18 @@ fn deconstruction(self: *Self) !*AST.Decon {
                     try self.devour(.DOT);
 
                     if (self.consume(.IDENTIFIER)) |svtok| {
-                        const sv = try self.newVar(svtok);
+                        const sv = try self.newVar(svtok, null);
                         try self.typeContext.unify(sv.t, spreadInnerTy, &.{ .l = self.loc(svtok) });
-                        spreadVar = sv.v;
+                        spreadVar = sv.v.v;
                     }
 
                     hadSpread = true;
                     decons = &right;
                 } else {
-                    const decon = try self.deconstruction();
+                    const refvar = self.deconRefVar();
+                    const decon = try self.deconstruction(refvar);
                     try self.typeContext.unify(decon.t, elemTy, &.{ .l = decon.l });
-                    try decons.append(decon);
+                    try decons.append(.{ .d = decon, .refvar = refvar });
                 }
 
                 if (self.consume(.RIGHT_SQBR)) |rtok| {
@@ -1883,14 +1917,21 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             .LessThan,
             .GreaterEqualThan,
             .LessEqualThan,
-            => b: {
-                const intTy = try self.definedType(.Int);
-                try self.typeContext.unify(left.t, intTy, &.{
-                    .l = left.l,
-                });
-                try self.typeContext.unify(right.t, intTy, &.{
-                    .l = right.l,
-                });
+            => |*ref| b: {
+                const class = try self.definedClass(.Ord);
+                const cfun = class.classFuns[0];
+                const l = left.l.between(right.l);
+                const ifn = try self.instantiateClassFunction(cfun, l);
+                const retTy = try self.typeContext.fresh();
+                const funTy = try self.makeType(.{ .Fun = .{
+                    .args = [_]AST.Type{ left.t, right.t },
+                    .ret = retTy,
+                } });
+                try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
+                ref.* = ifn.ref;
+
+                // NOTE: not generating any AST. the to constructors will happend in the backend.
+
                 const boolTy = try self.definedType(.Bool);
                 break :b boolTy;
             },
@@ -1987,7 +2028,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
     if (self.consume(.FN)) |tokfun| { // smol hack to allow quick empty lambdas.
-        var params = std.ArrayList(*AST.Decon).init(self.arena);
+        var params = std.ArrayList(AST.DeconBase).init(self.arena);
 
         const env = try self.beginEnv(null);
 
@@ -2000,8 +2041,9 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 l = l.between(self.loc(rparen));
             } else {
                 while (true) {
-                    const decon = try self.deconstruction();
-                    try params.append(decon);
+                    const refvar = self.deconRefVar();
+                    const decon = try self.deconstruction(refvar);
+                    try params.append(.{ .d = decon, .refvar = refvar });
 
                     if (self.consume(.RIGHT_PAREN)) |rparen| {
                         l = l.between(self.loc(rparen));
@@ -2021,15 +2063,16 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             _ = colonTok;
         } else {
             // single param
-            const decon = try self.deconstruction();
-            try params.append(decon);
+            const refvar = self.deconRefVar();
+            const decon = try self.deconstruction(refvar);
+            try params.append(.{ .d = decon, .refvar = refvar });
             try self.devour(.COLON);
         }
 
         // do the types for function type.
         const argTys = try self.arena.alloc(AST.Type, params.items.len);
         for (params.items, 0..) |p, i| {
-            argTys[i] = p.t;
+            argTys[i] = p.d.t;
         }
 
         if (needsBody) {
@@ -2088,7 +2131,9 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .args = argTys,
                         .env = try self.typeContext.newEnv(.{
                             .env = env,
-                            .match = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
+                            .match = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.Empty)),
+                            .fun = null,
+                            .level = env.level,
                         }),
                         .ret = expr.t,
                     },
@@ -2145,6 +2190,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             .t = try self.typeContext.fresh(),
             .e = .{ .CaseExpr = .{
                 .switchOn = switchOn,
+                .refvar = self.deconRefVar(),
                 .cases = &.{},
             } },
             .l = l,
@@ -2248,12 +2294,28 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
                     break :b intTy;
                 },
+                .@"i64-cmp" => b: {
+                    const intTy = try self.definedType(.Int);
+                    const ordTy = try self.definedType(.Ordering);
+                    try self.typeContext.unify(args.items[0].t, intTy, &.{ .l = args.items[0].l });
+                    try self.typeContext.unify(args.items[1].t, intTy, &.{ .l = args.items[1].l });
+
+                    break :b ordTy;
+                },
                 .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => b: {
                     const floatTy = try self.definedType(.Float);
                     try self.typeContext.unify(args.items[0].t, floatTy, &.{ .l = args.items[0].l });
                     try self.typeContext.unify(args.items[1].t, floatTy, &.{ .l = args.items[1].l });
 
                     break :b floatTy;
+                },
+                .@"f64-cmp" => b: {
+                    const floatTy = try self.definedType(.Float);
+                    const ordTy = try self.definedType(.Ordering);
+                    try self.typeContext.unify(args.items[0].t, floatTy, &.{ .l = args.items[0].l });
+                    try self.typeContext.unify(args.items[1].t, floatTy, &.{ .l = args.items[1].l });
+
+                    break :b ordTy;
                 },
             };
 
@@ -2451,13 +2513,14 @@ fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc:
     // COPYPASTA
     self.mode = .{ .Simple = .Normal };
     const switchOn = caseexpr.e.CaseExpr.switchOn;
+    const refvar = caseexpr.e.CaseExpr.refvar;
     const exprRetTy = caseexpr.t;
     // var returnStatus = ReturnStatus.Returned; // mempty-like
     var cases = std.ArrayList(AST.Expr.ExprCase).init(self.arena);
     try self.devour(.INDENT);
     self.beginScope();
     while (!self.check(.DEDENT)) {
-        const decon = try self.deconstruction();
+        const decon = try self.deconstruction(refvar);
         try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
 
         if (self.check(.COLON)) {
@@ -3006,6 +3069,8 @@ fn strConcat(self: *Self, l: *AST.Expr, r: *AST.Expr) !*AST.Expr {
                     .env = try self.typeContext.newEnv(.{
                         .env = try Common.allocOne(self.arena, AST.Env.empty(self.gen.envs.newUnique())),
                         .match = sci.match,
+                        .fun = null,
+                        .level = 0,
                     }),
                 } }),
                 .e = .{ .Con = &sc.data.stuff.cons[0] },
@@ -3034,10 +3099,10 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .EQEQ => .{ .Equals = undefined },
         .NOTEQ => .{ .NotEquals = undefined },
 
-        .LT => .LessThan,
-        .LTEQ => .LessEqualThan,
-        .GT => .GreaterThan,
-        .GTEQ => .GreaterEqualThan,
+        .LT => .{ .LessThan = undefined },
+        .LTEQ => .{ .LessEqualThan = undefined },
+        .GT => .{ .GreaterThan = undefined },
+        .GTEQ => .{ .GreaterEqualThan = undefined },
         .OR => .Or,
         .AND => .And,
 
@@ -3225,12 +3290,10 @@ const Type = struct {
                         .Fun = .{
                             .args = args,
                             .ret = ret.e,
-                            .env = if (this.binding() != null)
-                                // in general case
-                                try self.typeContext.newEnv(null)
-                            else
-                                // in external functions, assume no environment.
-                                try self.typeContext.newEnv(try TypeContext.Env.empty(self.gen.envs.newUnique(), self.arena)),
+                            .env = if (this.constrain) |constr| (switch (constr) {
+                                .ExternalFunction => try self.typeContext.newEnv(try TypeContext.Env.empty(self.gen.envs.newUnique(), self.arena)),
+                                else => try self.typeContext.newEnv(null),
+                            }) else try self.typeContext.newEnv(null),
                         },
                     }),
                     .l = l.between(ret.l),
@@ -3435,15 +3498,21 @@ fn addAllInstances(self: *Self, exports: *const Module.Exports) !void {
 }
 
 // VARS
-fn newVar(self: *@This(), varTok: Token) !Module.VarAndType {
+fn newVar(self: *@This(), varTok: Token, deconUse: ?AST.DeconUse) !Module.VarAndType {
     const varName = varTok.literal(self.lexer.source);
     const t = try self.typeContext.fresh();
     const thisVar = AST.Var{
         .name = varName,
         .uid = self.gen.vars.newUnique(),
     };
-    try self.scope.currentScope().vars.put(varName, .{ .Var = .{ .v = thisVar, .t = t } });
-    return .{ .v = thisVar, .t = t };
+    try self.scope.currentScope().vars.put(varName, .{ .Var = .{
+        .v = .{ .v = thisVar, .dc = deconUse },
+        .t = t,
+    } });
+    return .{
+        .v = .{ .v = thisVar, .dc = deconUse },
+        .t = t,
+    };
 }
 
 fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
@@ -3512,7 +3581,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
     // return placeholder var after an error.
     return .{
         .vorf = .{
-            .Var = .{ .v = placeholderVar, .t = t },
+            .Var = .{ .v = .{ .v = placeholderVar, .dc = null }, .t = t },
         },
         .level = 0,
     };
@@ -3642,18 +3711,18 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
     return varInst;
 }
 
-fn addToEnvUpUntilALevel(self: *Self, firstEnv: ?*AST.Env, inst: AST.EnvVar, lvl: usize) !void {
-    _ = self;
-    var menv: ?*AST.Env = firstEnv;
-    while (menv) |env| {
-        if (env.level <= lvl) {
-            //
-        } else {
-            try env.insts.append(inst);
-        }
-        menv = AST.EnvFun.getEnv(env.outer);
-    }
-}
+// fn addToEnvUpUntilALevel(self: *Self, firstEnv: ?*AST.Env, inst: AST.EnvVar, lvl: usize) !void {
+//     _ = self;
+//     var menv: ?*AST.Env = firstEnv;
+//     while (menv) |env| {
+//         if (env.level <= lvl) {
+//             //
+//         } else {
+//             try env.insts.append(inst);
+//         }
+//         menv = AST.EnvFun.getEnv(env.outer);
+//     }
+// }
 
 // TODO: probably merge with addToEnvIfPossible or something.
 fn expandFunctionEnvIntoCurrentEnv(self: *Self, mcurrentEnv: ?*AST.Env, env: *AST.Env, m: *AST.Match) !void {
@@ -3702,26 +3771,25 @@ fn expandFunctionEnvIntoCurrentEnv(self: *Self, mcurrentEnv: ?*AST.Env, env: *AS
     }
 }
 
-// TODO: add to envs up until a function.
+// add to envs up until a function.
 fn addToEnvIfPossible(self: *Self, menv: ?AST.EnvFun, inst: AST.EnvVar, temp__solvingConstraints: bool) !void {
     // if (!temp__solvingConstraints) {
     _ = temp__solvingConstraints;
     if (!false) {
-        if (menv) |envfun| {
-            const env = envfun.env;
-            if (env.level > inst.l) {
-                try env.insts.append(inst);
-                // std.debug.print("Adding {s} to env ({?}), var: {}\n", .{ inst.getVar().name, menv, inst.l });
-            } else {
-                switch (inst.v) {
-                    .Fun => |fun| {
-                        // _ = self;
-                        _ = fun;
-                        // try self.expandFunctionEnvIntoCurrentEnv(env, fun.env, inst.m);
-                    },
-                    else => {},
-                }
+        var envfun = menv;
+        while (envfun) |ef| {
+            const env = ef.env;
+            if (env.level <= inst.l) {
+                return;
             }
+
+            try env.insts.append(inst);
+
+            if (ef.fun) |_| {
+                return;
+            }
+
+            envfun = ef.env.outer;
         } else {
             // _ = self;
         }
@@ -3895,7 +3963,7 @@ fn instantiateFunction(self: *Self, fun: *AST.Function, instances: ?Module.Class
     // mk normal, uninstantiated type.
     var params = std.ArrayList(AST.Type).init(self.arena);
     for (fun.params) |p| {
-        try params.append(p.t);
+        try params.append(p.d.t);
     }
 
     const funTy = try self.typeContext.newType(.{
@@ -3905,6 +3973,8 @@ fn instantiateFunction(self: *Self, fun: *AST.Function, instances: ?Module.Class
             .env = try self.typeContext.newEnv(.{
                 .env = fun.env,
                 .match = match,
+                .fun = fun,
+                .level = fun.env.level,
             }), // this is sussy. maybe we should also keep the "newEnv" still. NOTE(02.10.25): ????
         },
     });
@@ -4389,6 +4459,8 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
 
 // SCHEMES
 fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassInstance, l: ?Loc) !*AST.Match {
+    const tvarMatch = try self.arena.create(AST.Match);
+
     const tvars = try self.arena.alloc(AST.TypeOrNum, scheme.tvars.len);
     for (scheme.tvars, 0..) |tvOrNum, i| {
         tvars[i] = switch (tvOrNum) {
@@ -4399,6 +4471,17 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
 
     const envVars = try self.arena.alloc(AST.EnvRef, scheme.envVars.len);
     for (scheme.envVars, 0..) |_, i| {
+        // NOTE: we don't care for now - at the end we're gonna unify these environments.
+        // const envb = self.typeContext.getEnv(er);
+        // if (envb.env) |e| {
+        //     envVars[i] = try self.typeContext.newEnv(.{
+        //         .env = e.env,
+        //         .fun = e.fun,
+        //         .match = if (self.level() < e.env.level) try Common.allocOne(self.arena, TypeContext.MatchLink{
+        //             .match = tvarMatch,
+        //             .next = e.match,
+        //         }) else e.match,
+        //     });
         envVars[i] = try self.typeContext.newEnv(null);
     }
 
@@ -4407,7 +4490,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
         a.* = null; // default VALUE YO
     }
 
-    const tvarMatch = AST.Match{
+    tvarMatch.* = AST.Match{
         .tvars = tvars,
         .envVars = envVars,
         .assocs = assocs,
@@ -4422,7 +4505,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
         // should prolly add assocs to "Match", but we don't need em yet.
         for (scheme.associations, assocs) |assoc, *ref| {
             try self.addAssociation(.{
-                .from = try self.typeContext.mapType(&tvarMatch, try self.typeContext.newType(
+                .from = try self.typeContext.mapType(tvarMatch, try self.typeContext.newType(
                     .{ .TVar = assoc.depends },
                 )),
                 .instances = instances,
@@ -4430,14 +4513,14 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
                 .class = assoc.class,
 
                 .concrete = if (assoc.concrete) |conc| .{
-                    .to = try self.typeContext.mapType(&tvarMatch, conc.to),
+                    .to = try self.typeContext.mapType(tvarMatch, conc.to),
 
                     .classFun = conc.classFun,
                     .ref = ref,
                     .env = conc.env,
                     .envType = .AssociatedInstantiation,
 
-                    .match = try self.typeContext.mapMatch(&tvarMatch, conc.match),
+                    .match = try self.typeContext.mapMatch(tvarMatch, conc.match),
                 } else null,
             });
         }
@@ -4449,7 +4532,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
             .TVar => |tv| {
                 for (tv.fields) |field| {
                     const fieldTy = try self.typeContext.field(tyv.Type, field.field, null);
-                    try self.typeContext.unify(fieldTy, try self.typeContext.mapType(&tvarMatch, field.t), null);
+                    try self.typeContext.unify(fieldTy, try self.typeContext.mapType(tvarMatch, field.t), null);
                 }
             },
 
@@ -4459,10 +4542,23 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
         }
     }
 
-    return try Common.allocOne(self.arena, tvarMatch);
+    // now environment shit
+    for (scheme.envVars, envVars) |sse, me| {
+        const se = self.typeContext.getEnv(sse).env;
+        if (se.*) |*env| {
+            try self.typeContext.unifyEnv(me, try self.typeContext.newEnv(.{
+                .env = env.env,
+                .fun = env.fun,
+                .match = try self.typeContext.mapMatch(tvarMatch, env.match),
+                .level = env.level,
+            }), null, undefined);
+        }
+    }
+
+    return tvarMatch;
 }
 
-fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVarOrNum), params: []*AST.Decon, ret: AST.Type, env: *AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
+fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMap(AST.TVarOrNum), params: []AST.DeconBase, ret: AST.Type, env: *AST.Env, functionId: Unique, constraints_: *const Constraints) !AST.Scheme {
     const expectedBinding = AST.Binding{
         .Function = functionId,
     };
@@ -4471,34 +4567,12 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     var funftvs = TypeContext.FTVs.init(self.arena);
     try self.typeContext.ftvs(&funftvs, ret);
     for (params) |p| {
-        try self.typeContext.ftvs(&funftvs, p.t);
+        try self.typeContext.ftvs(&funftvs, p.d.t);
     }
 
     // environment stuff.
     var envftvs = TypeContext.FTVs.init(self.arena);
-    for (env.insts.items) |inst| {
-        // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
-        switch (inst.v) {
-            .TNum => {},
-            .Var => try self.typeContext.ftvs(&envftvs, inst.t),
-            .Fun => |fun| {
-                for (fun.params) |p| {
-                    try self.typeContext.ftvs(&envftvs, p.t);
-                }
-
-                try self.typeContext.ftvs(&envftvs, fun.ret);
-            },
-
-            .ClassFun => |vv| {
-                const cfun = vv.cfun;
-                for (cfun.params) |p| {
-                    try self.typeContext.ftvs(&envftvs, p.t);
-                }
-
-                try self.typeContext.ftvs(&envftvs, cfun.ret);
-            },
-        }
-    }
+    try self.typeContext.ftvsFromEnv(&envftvs, env);
 
     // TEMP: detect free type variables and apply defaults in case they are not from outside.
     // NOTE(invalidate-entries): we can invalidate entries.
@@ -4559,11 +4633,6 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     var envs = std.ArrayList(AST.EnvRef).init(self.arena);
     var envIt = funftvs.envs.iterator();
     while (envIt.next()) |e| {
-
-        // NOTE(invalidate-entries): filter in case it was invalidated.
-        if (self.typeContext.getEnv(e.*).env != null) {
-            continue;
-        }
         try envs.append(e.*);
     }
 
@@ -4645,7 +4714,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             },
                         });
 
-                        try self.addToEnvUpUntilALevel(AST.EnvFun.getEnv(conc.env), .{
+                        try self.addToEnvIfPossible(conc.env, .{
                             .v = .{
                                 .ClassFun = .{
                                     .cfun = conc.classFun,
@@ -4655,7 +4724,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .t = conc.to,
                             .m = conc.match,
                             .l = env.level,
-                        }, env.level);
+                        }, false);
 
                         // NOTE: I think this adds pointless constraints (breaks 1_t25 test)
                         // I'm thinking if this is not actually needed, because those things are THE SAME as the match's assocs.
@@ -4693,6 +4762,53 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 
     // also add defined constraints! (but it's all bad thoooo)
     try self.addConstraintsToAssocs(&assocs, constraints_);
+
+    // NOTE(env-escaping)
+    // at the end, fill the environments, yah.
+    //   when you return an inner environment, this maps any tvars n shii.
+    //   TODO: when you call an external function with an inner environment, it should also be mapped.
+    //        where will these additional environments appear? in the environment's Matches - both in the Env and the Type.
+    for (envs.items) |se| {
+        const ref = self.typeContext.getEnv(se).env;
+        if (ref.*) |ftvenv| {
+            if (env.level < ftvenv.env.level) {
+                // TODO: do it later after expanding assocs.
+                var paramenvftvs = TypeContext.FTVs.init(self.arena);
+                try self.typeContext.ftvsFromEnv(&paramenvftvs, ftvenv.env);
+
+                // get those tvars.
+                var tvarStore = TypeContext.TVarStore.init(self.arena);
+                try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env);
+                // NOTE/TODO: we're gonna ignore tyvars here, because they already became tvars.
+                // should we do env intersection to?
+                paramenvftvs.difference(&envftvs);
+                // paramenvftvs.intersection(&funftvs);  // ????
+
+                // TODO: also, do we add assocs here??
+
+                // now we have scheme variables for this env here in paramenvftvs.
+                var stvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
+                var stvarIt = tvarStore.iterator();
+                while (stvarIt.next()) |tv| {
+                    try stvars.append(tv.*);
+                }
+
+                // ENV => TODO
+
+                const scheme = AST.Scheme{
+                    .tvars = stvars.items,
+                    .envVars = &.{},
+                    .associations = &.{},
+                    .env = null,
+                };
+
+                const newMatch = try ftvenv.match.joinScheme(&scheme, self.typeContext, self.arena); // joins a scheme to match with uninstantiated stuff from that scheme in the match.
+
+                ref.*.?.match = newMatch;
+                ref.*.?.level = env.level;
+            }
+        }
+    }
 
     return .{
         .tvars = tvars.items,

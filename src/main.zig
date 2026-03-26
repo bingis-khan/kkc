@@ -58,70 +58,76 @@ pub fn main() !void {
 
     const moduleAST = modules.getAST();
 
-    // go and interpret
-    const interp = false;
-    if (interp and modules.errors.items.len == 0 and !opts.dontRun) {
-        const interpretStartTime = try std.time.Instant.now();
-        const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa);
-        const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
-
-        std.debug.print("=== return value: {} ===\n", .{ret});
-        std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
-    }
-
-    // mono it
     if (modules.errors.items.len > 0) return;
 
-    // var backend = Bytecode.Backend.init(aa, modules.typeContext);
-    var backend = C.init(aa, modules.typeContext);
-    try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &backend, aa);
+    // go and interpret
+    if (opts.backend) |backend| {
+        switch (backend) {
+            .c => {
+                // mono it
+                // var backend = Bytecode.Backend.init(aa, modules.typeContext);
+                var cbackend = C.init(aa, modules.typeContext);
+                try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, aa);
 
-    const cWritingCompilingStartTime = try std.time.Instant.now();
-    const rawStdout = std.io.getStdOut().writer();
-    var stdoutbuf = std.io.bufferedWriter(rawStdout);
-    const stdout = stdoutbuf.writer();
+                const cWritingCompilingStartTime = try std.time.Instant.now();
+                const rawStdout = std.io.getStdOut().writer();
+                var stdoutbuf = std.io.bufferedWriter(rawStdout);
+                const stdout = stdoutbuf.writer();
 
-    if (opts.printAST or opts.printRootAST) {
-        try backend.writeTo(stdout);
-        try stdoutbuf.flush();
-    }
+                if (opts.printAST or opts.printRootAST) {
+                    try cbackend.writeTo(stdout);
+                    try stdoutbuf.flush();
+                }
 
-    const file = try std.fs.cwd().createFile("test.c", .{});
-    defer file.close();
+                const file = try std.fs.cwd().createFile("test.c", .{});
+                defer file.close();
 
-    const writer = file.writer();
-    try backend.writeTo(writer);
+                const writer = file.writer();
+                try cbackend.writeTo(writer);
 
-    {
-        const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{ "cc", "test.c", "-o", "testprog" } });
-        try stdout.writeAll(res.stdout);
-        try stdout.writeAll(res.stderr);
-        try stdoutbuf.flush();
+                {
+                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{ "cc", "test.c", "-o", "testprog" } });
+                    try stdout.writeAll(res.stdout);
+                    try stdout.writeAll(res.stderr);
+                    try stdoutbuf.flush();
 
-        switch (res.term) {
-            .Exited => |code| {
-                if (code != 0) {
-                    return;
+                    switch (res.term) {
+                        .Exited => |code| {
+                            if (code != 0) {
+                                return;
+                            }
+                        },
+                        else => return,
+                    }
+                }
+
+                const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
+                std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
+
+                {
+                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{"./testprog"} });
+                    try stdout.writeAll(res.stdout);
+                    try stdout.writeAll(res.stderr);
+                    try stdoutbuf.flush();
+
+                    switch (res.term) {
+                        .Exited => |code| {
+                            std.debug.print("program exited with code {}\n", .{code});
+                        },
+                        else => unreachable,
+                    }
                 }
             },
-            else => return,
         }
-    }
+    } else {
+        if (!opts.dontRun) {
+            const interpretStartTime = try std.time.Instant.now();
+            const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa);
+            const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
 
-    const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
-    std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
-
-    {
-        const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{"./testprog"} });
-        try stdout.writeAll(res.stdout);
-        try stdout.writeAll(res.stderr);
-        try stdoutbuf.flush();
-
-        switch (res.term) {
-            .Exited => |code| {
-                std.debug.print("program exited with code {}\n", .{code});
-            },
-            else => unreachable,
+            std.debug.print("=== return value: {} ===\n", .{ret});
+            std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
+            return;
         }
     }
 

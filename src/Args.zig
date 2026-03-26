@@ -14,6 +14,7 @@ noImplicitPrelude: bool = false,
 dontRun: bool = false,
 hideErrors: bool = false,
 programArgs: []Arg = &.{},
+backend: ?Backend = null,
 
 pub const Arg = [*:0]const u8;
 
@@ -58,6 +59,16 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
                 .noimplicit => opts.noImplicitPrelude = true,
                 .dontRun => opts.dontRun = true,
                 .@"hide-errors" => opts.hideErrors = true,
+                .backend => {
+                    if (argIt.next()) |barg| {
+                        const bopt = std.meta.stringToEnum(Backend, barg) orelse {
+                            unreachable; // report error
+                        };
+                        opts.backend = bopt;
+                    } else {
+                        unreachable; // report error
+                    }
+                },
             }
         } else {
             if (filename == null) {
@@ -89,4 +100,9 @@ const ProgramOption = enum {
     noimplicit,
     dontRun,
     @"hide-errors",
+    backend,
+};
+
+pub const Backend = enum {
+    c,
 };

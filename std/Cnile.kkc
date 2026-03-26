@@ -73,8 +73,10 @@ external
 
 	rand () -> Int
 
+	#[cstdinclude 'string.h']
 	memset (dest Ptr Void, byte Int, count Int) -> Ptr Void
 
+	#[cstdinclude 'stdlib.h']
 	exit (status Int) -> Void
 
 	malloc (bytes Int) -> Ptr Void
@@ -86,7 +88,10 @@ external
 
 
 	#### string.h #####
+	#[cstdinclude 'string.h']
 	strlen (s ConstStr) -> Int
+
+	#[cstdinclude 'string.h']
 	strcmp (l ConstStr, r ConstStr) -> Int
 
 
@@ -101,6 +106,7 @@ external
 	ftell (file Ptr FILE) -> Int
 	fread (buf Ptr a, size Int, count Int, stream Ptr FILE) -> Int
 
+	#[cstdinclude 'stdlib.h']
 	getenv (s ConstStr) -> ConstStr
 
 

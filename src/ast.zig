@@ -18,6 +18,7 @@ pub const Ctx = struct {
     hadNewline: *bool, // check newlines and automatically indent
     typeContext: *const TypeContext,
     mapTypes: ?*const Match,
+    lastMatch: ?*const Match, // HACK: because envs have circular dependencies to the match...
 
     pub fn pp(typeContext: *const TypeContext, x: anytype) void {
         var hadNewline = false;
@@ -34,6 +35,7 @@ pub const Ctx = struct {
             .hadNewline = hadNewline,
             .typeContext = typeContext,
             .mapTypes = null,
+            .lastMatch = null,
         };
     }
 
@@ -248,7 +250,7 @@ pub const Function = struct {
     pub const MonoMatches = std.HashMap(*const Match, MonoMatchStuff, Match.Comparator, std.hash_map.default_max_load_percentage);
     pub const EnvCompletes = Set(FunApp, FunApp.Comparator);
     pub const FunApp = struct {
-        fun: *Function,
+        fun: *const Function,
         m: *const Match,
 
         pub fn print(self: @This(), c: Ctx) void {
@@ -284,7 +286,7 @@ pub const Function = struct {
     };
 
     name: Var,
-    params: []*Decon,
+    params: []DeconBase,
     ret: Type,
     body: []*Stmt,
     scheme: Scheme,
@@ -313,7 +315,7 @@ pub const Function = struct {
         c.sepBy(self.params, ", ");
         c.s(")");
         self.env.print(c);
-        c.encloseSepBy(self.temp__calls.items, ", ", "[", "]");
+        // c.encloseSepBy(self.temp__calls.items, ", ", "[", "]");
         c.s(" -> ");
         self.ret.print(c);
         c.s(" ## ");
@@ -356,13 +358,38 @@ pub const Env = struct {
     insts: std.ArrayList(EnvVar),
     level: usize,
     monoInsts: Mono, // TEMP/TODO: for now we will reuse this env struct for mono insts. We might need to remake the structure??
+    monoFinished: bool = false,
 
     outer: ?EnvFun,
 
     pub const Mono = Set(EnvVar, EnvVar.Comparator);
 
+    // NOTE: that's due to a small thing where a polymorphic variable might use the same function as the one that's "prebaked".
+    // eg:
+    // fn f(x)
+    //   id(x)
+    //   id(1)
+    // f(1) <- it'll have two functions, so it's kinda cringe.
+    // So, we need to deduplicate them.
+    // this is gay, cuz it's slow.
+    pub fn deduplicatedEnvInsts(self: *const @This(), al: std.mem.Allocator, m: anytype, tc: *TypeContext) !Mono {
+        var dedupped = Mono.initContext(al, self.monoInsts.hash.ctx);
+        var oleIt = self.monoInsts.iterator();
+        while (oleIt.next()) |inst| {
+            var minst = inst.*;
+            minst.m = try tc.mapMatch(m, inst.m);
+            try dedupped.insert(minst);
+        }
+
+        return dedupped;
+    }
+
     pub fn print(self: *const @This(), c: Ctx) void {
-        c.encloseSepBy(self.insts.items, ", ", "[", "]");
+        if (self.monoFinished) {
+            c.print(.{ "{", Ctx.iter(self.monoInsts.iterator(), ", "), "}" });
+        } else {
+            c.encloseSepBy(self.insts.items, ", ", "[", "]");
+        }
         c.print(.{ "(", self.level, ")" });
     }
 
@@ -386,6 +413,19 @@ pub const Env = struct {
             },
         };
     }
+
+    pub fn nextFunction(self: *const @This()) ?*const Function {
+        var out = self.outer;
+        while (out) |envfun| {
+            if (envfun.fun) |fun| {
+                return fun;
+            }
+
+            out = envfun.env.outer;
+        }
+
+        return null;
+    }
 };
 
 pub const Level = usize;
@@ -393,7 +433,7 @@ pub const EnvVar = struct {
     v: union(enum) {
         Fun: *Function,
         ClassFun: struct { cfun: *ClassFun, ref: InstFunInst }, // used when a class function depends on a TVar from outer scope - then we MUST consider it a class function.
-        Var: Var,
+        Var: DeconVar,
         TNum: TNum,
     },
     m: *const Match,
@@ -401,6 +441,14 @@ pub const EnvVar = struct {
     l: Level,
 
     // when we get to equality, we'll ignore the type and level, because I think they are irrelevant except for displaying.
+
+    pub fn locality(self: *const @This(), funenv: *const Env) Locality { // funenv: env this envvar is in.
+        if (funenv.outer) |outer| {
+            return if (self.l < outer.env.level) .External else .Local;
+        } else {
+            return .Local;
+        }
+    }
 
     pub fn getVar(self: @This()) Var {
         return switch (self.v) {
@@ -437,6 +485,7 @@ pub const EnvVar = struct {
 
         c.print(.{ "(", self.l, ")" });
         c.s(" ");
+        self.m.print(c);
         self.t.print(c);
     }
 
@@ -455,7 +504,7 @@ pub const EnvVar = struct {
                 },
                 .ClassFun => unreachable,
                 .Var => |v1| switch (b.v) {
-                    .Var => |v2| Var.comparator().eql(.{}, v1, v2),
+                    .Var => |v2| Var.comparator().eql(.{}, v1.v, v2.v),
                     else => false,
                 },
                 .TNum => unreachable,
@@ -466,8 +515,8 @@ pub const EnvVar = struct {
             _ = ctx;
             return switch (k.v) {
                 .Fun => |fun| fun.name.uid * 557891,
-                .ClassFun => unreachable,
-                .Var => |v| v.uid * 1337,
+                .ClassFun => |cfun| cfun.cfun.name.uid * 14981,
+                .Var => |v| v.v.uid * 1337,
                 .TNum => unreachable,
             };
         }
@@ -487,7 +536,7 @@ fn printBody(stmts: []*Stmt, oldC: Ctx) void {
 
 pub const Stmt = union(enum) {
     VarDec: struct { varDef: Var, varValue: *Expr },
-    VarMut: struct { varRef: Var, accessors: []Accessor, varValue: *Expr },
+    VarMut: struct { varRef: DeconVar, accessors: []Accessor, varValue: *Expr },
     If: struct {
         cond: *Expr,
         bTrue: []Rec,
@@ -499,7 +548,7 @@ pub const Stmt = union(enum) {
         body: []Rec,
     },
     For: struct { // TODO: later, I should remove it and just generate some code. The only benefit is better type errors (which I can ensure, because we typecheck while parsing) and easier debuggability (only for compiler development, so whatever)
-        decon: *Decon,
+        decon: DeconBase,
         iter: *Expr,
         intoIterFun: InstFunInst,
         nextFun: InstFunInst,
@@ -507,6 +556,7 @@ pub const Stmt = union(enum) {
     },
     Switch: struct {
         switchOn: *Expr,
+        refvar: Var,
         cases: []Case,
     },
     Return: *Expr,
@@ -622,6 +672,23 @@ pub const Case = struct {
     }
 };
 
+pub const DeconVar = struct {
+    v: Var,
+    dc: ?DeconUse,
+
+    pub fn print(self: @This(), c: Ctx) void {
+        self.v.print(c);
+    }
+};
+pub const DeconUse = struct { dp: *const Decon.Path };
+pub const DeconBase = struct {
+    d: *Decon,
+    refvar: Var,
+
+    pub fn print(self: @This(), c: Ctx) void {
+        self.d.print(c);
+    }
+};
 pub const Decon = struct {
     t: Type,
     l: Loc,
@@ -636,10 +703,10 @@ pub const Decon = struct {
         Record: []Field,
 
         List: struct {
-            l: []*Decon,
+            l: []DeconBase,
             r: ?struct {
                 spreadVar: ?struct { v: Var, t: Type },
-                r: []*Decon,
+                r: []DeconBase,
             },
 
             elemTy: Type,
@@ -697,6 +764,43 @@ pub const Decon = struct {
 
         c.typed(self.t);
     }
+
+    pub const Path = PathF(.Poly);
+    pub const PathM = PathF(.Mono);
+    pub fn PathF(e: enum { Poly, Mono }) type {
+        return union(enum) {
+            Tip: struct { v: Var, t: TyRef },
+            Concat: struct {
+                path: PathF(e).Type,
+                next: *const PathF(e),
+            },
+
+            pub const Type = union(enum) {
+                Con: struct {
+                    con: *const Con,
+                    field: usize,
+                    t: if (e == .Poly) TyRef else Unique,
+                },
+                Field: Str,
+                Ptr,
+                // List: *const struct {},
+
+            };
+
+            pub fn init(al: std.mem.Allocator, self: @This()) !*@This() {
+                return try common.allocOne(al, self);
+            }
+
+            pub fn concat(al: std.mem.Allocator, next: *const Path, path: Path.Type) !*@This() {
+                return try common.allocOne(al, Path{
+                    .Concat = .{
+                        .path = path,
+                        .next = next,
+                    },
+                });
+            }
+        };
+    }
 };
 
 pub const Expr = struct {
@@ -719,6 +823,7 @@ pub const Expr = struct {
         },
         CaseExpr: struct {
             switchOn: Rec,
+            refvar: Var,
             cases: []ExprCase,
         },
         Str: Str,
@@ -764,7 +869,7 @@ pub const Expr = struct {
     };
 
     pub const Lam = struct {
-        params: []*Decon,
+        params: []DeconBase,
         env: *Env,
         body: union(enum) {
             Expr: Rec,
@@ -805,7 +910,7 @@ pub const Expr = struct {
             cfun: *ClassFun,
             ref: InstFunInst,
         }, // SMELL: this one I have to allocate, because I'm returning the whole struct from a function, so the address will change.
-        Var: Var,
+        Var: DeconVar,
         ExternalFun: *ExternalFunction,
         TNum: TNum,
 
@@ -948,7 +1053,10 @@ pub const Expr = struct {
     }
 };
 
-pub const Locality = enum { Local, External };
+pub const Locality = enum {
+    Local,
+    External,
+};
 
 pub const UnOp = union(enum) {
     Ref,
@@ -968,10 +1076,10 @@ pub const BinOp = union(enum) {
 
     Equals: InstFunInst,
     NotEquals: InstFunInst,
-    GreaterThan,
-    LessThan,
-    GreaterEqualThan,
-    LessEqualThan,
+    GreaterThan: InstFunInst,
+    LessThan: InstFunInst,
+    GreaterEqualThan: InstFunInst,
+    LessEqualThan: InstFunInst,
 
     Or,
     And,
@@ -1021,7 +1129,7 @@ pub const TyRef = struct {
                     if (!c1.type.eq(c2.type)) return false;
                     return Match.Comparator.eql(.{ .typeContext = tyc }, c1.application, c2.application);
                 },
-                .TVar => unreachable,
+                .TVar => return false,
                 .TyVar => unreachable,
                 else => false,
             },
@@ -1036,7 +1144,12 @@ pub const TyRef = struct {
             },
             .Anon => unreachable,
 
-            .TVar => unreachable,
+            .TVar => |ltv| {
+                switch (tyc.getType(r)) {
+                    .TVar => |rtv| return ltv.eq(rtv),
+                    else => return false,
+                }
+            },
             .TyVar => unreachable,
         };
     }
@@ -1063,7 +1176,7 @@ pub const EnvRef = struct {
     pub fn print(eid: @This(), c: Ctx) void {
         const eb = c.typeContext.getEnv(eid);
         // c.print(.{ "(", eb.env.id, ")" });
-        if (eb.env) |env| {
+        if (eb.env.*) |env| {
             c.print(.{ "(", env.env.id, ")", "(", env.match, ")" });
             env.env.print(c);
         } else {
@@ -1071,6 +1184,8 @@ pub const EnvRef = struct {
         }
     }
 
+    // BRUH, this only makes sense when using mono, if it's used in parser, then bruh.
+    // this is temporary, because I want to add unions at some point tho.
     pub fn envEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
         return tyc.getEnv(l).base.id == tyc.getEnv(r).base.id;
     }
@@ -1162,14 +1277,37 @@ pub fn TypeF(comptime a: ?type) type {
         };
 
         Con: TypeApplication,
-        Fun: struct {
-            args: []Rec,
-            ret: Rec,
-            env: EnvRef,
-        },
+        Fun: Fun,
         TVar: TVar,
         TyVar: TyVar,
         Anon: []Field,
+
+        pub const Fun = struct {
+            args: []Rec,
+            ret: Rec,
+            env: EnvRef,
+
+            pub const Comparator = struct {
+                typeContext: *const TypeContext,
+
+                pub fn eql(ctx: @This(), l: Fun, r: Fun) bool {
+                    if (!l.ret.tyEq(r.ret, ctx.typeContext)) return false;
+                    for (l.args, r.args) |ll, rr| {
+                        if (!ll.tyEq(rr, ctx.typeContext)) return false;
+                    }
+                    if (!EnvRef.envEq(l.env, r.env, ctx.typeContext)) return false;
+
+                    return true;
+                }
+
+                pub fn hash(ctx: @This(), k: Fun) u64 {
+                    _ = ctx;
+                    _ = k;
+                    // TEMP, because we want to test equality.
+                    return 0;
+                }
+            };
+        };
 
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
@@ -1200,7 +1338,7 @@ pub fn TypeF(comptime a: ?type) type {
 
                 .Fun => |fun| {
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    // fun.env.print(c); // TEMP
+                    fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                 },
@@ -1342,6 +1480,10 @@ pub const Data = struct {
             return .ADT;
         }
     }
+
+    pub fn isPointer(self: *const @This()) bool {
+        return Annotation.find(self.annotations, "actual-pointer-type") != null;
+    }
 };
 pub const Record = TypeF(Type).Field;
 
@@ -1349,9 +1491,22 @@ pub const Scheme = struct {
     tvars: []TVarOrNum,
     // tnums: []TNum, // TODO: tnubs :) I think it's better because we don't do weird casts.
     envVars: []EnvRef, // like unions. same environments can appear in different places, and they need to be the same thing.
+
     associations: []Association,
     env: ?*Env,
 
+    pub const SchemeEnv = struct {
+        ref: EnvRef,
+        numatch: ?*const Match,
+
+        pub fn print(self: @This(), c: Ctx) void {
+            self.ref.print(c);
+            if (self.numatch) |numatch| {
+                c.print(.{" :: "});
+                c.print(.{numatch});
+            }
+        }
+    };
     pub fn empty() @This() {
         return .{
             .tvars = &.{},
@@ -1473,7 +1628,8 @@ pub const Match = struct {
     scheme: Scheme,
     tvars: []TypeOrNum,
     envVars: []EnvRef,
-    assocs: []?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined"
+    assocs: []?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined".
+    // ALSO, a null is here when an assoc is not concrete!
 
     pub const AssocRef = union(enum) {
         InstFun: InstPair, // some top level association.
@@ -1483,8 +1639,70 @@ pub const Match = struct {
         pub const InstPair = struct { fun: *Function, m: *Match, locality: Locality };
     };
 
-    pub fn print(self: @This(), c: Ctx) void {
-        c.s("(");
+    pub fn joinScheme(self: *const @This(), scheme: *const Scheme, tc: *TypeContext, al: std.mem.Allocator) !*const @This() {
+        const s = Scheme{
+            .tvars = try std.mem.concat(al, TVarOrNum, &.{
+                self.scheme.tvars,
+                scheme.tvars,
+            }),
+            .envVars = try std.mem.concat(al, EnvRef, &.{
+                self.scheme.envVars,
+                scheme.envVars,
+            }),
+            .associations = try std.mem.concat(al, Association, &.{
+                self.scheme.associations,
+                scheme.associations,
+            }),
+            .env = if (scheme.env) |env| env else scheme.env,
+        };
+
+        var tvars = std.ArrayList(TypeOrNum).init(al);
+        try tvars.appendSlice(self.tvars);
+        for (scheme.tvars) |tom| {
+            switch (tom) {
+                .TVar => |tv| {
+                    try tvars.append(.{ .Type = try tc.newType(.{ .TVar = tv }) });
+                },
+                .TNum => |tnum| {
+                    try tvars.append(.{ .Num = try tc.newNum(.{ .TNum = tnum }) });
+                },
+            }
+        }
+
+        var envVars = std.ArrayList(EnvRef).init(al);
+        try envVars.appendSlice(self.envVars);
+        for (scheme.envVars) |ev| {
+            try envVars.append(ev);
+        }
+
+        var assocs = std.ArrayList(?AssocRef).init(al);
+        try assocs.appendSlice(self.assocs);
+        for (scheme.associations) |assoc| {
+            if (assoc.concrete != null) {
+                try assocs.append(.{ .Id = assoc.uid });
+            } else {
+                try assocs.append(null);
+            }
+        }
+
+        return try common.allocOne(al, @This(){
+            .scheme = s,
+            .tvars = tvars.items,
+            .envVars = envVars.items,
+            .assocs = assocs.items,
+        });
+    }
+
+    pub fn print(self: *const @This(), oc: Ctx) void {
+        if (self == oc.lastMatch) {
+            oc.s("(X)");
+            return;
+        }
+
+        var c = oc;
+        c.lastMatch = self;
+
+        c.s("<(");
         if (self.tvars.len > 0) {
             c.sepBy(self.tvars, " ");
         }
@@ -1495,11 +1713,10 @@ pub const Match = struct {
         if (self.assocs.len > 0) {
             c.s(" |> ");
             for (self.assocs, 0..) |maref, i| {
+                if (i >= 1) {
+                    c.print(" ");
+                }
                 if (maref) |aref| {
-                    if (i >= 1) {
-                        c.print(" ");
-                    }
-
                     switch (aref) {
                         .InstFun => |ifn| {
                             c.print(.{ "[", ifn.fun.name, " ", ifn.m, "]" });
@@ -1512,7 +1729,7 @@ pub const Match = struct {
             }
             // c.sepBy(self.assocs, " ");
         }
-        c.s(")");
+        c.s(")>");
     }
 
     pub fn fromOuterTVars(outerTVars: []TVarOrNum, outerApplication: []TypeOrNum) Match {
@@ -1546,6 +1763,22 @@ pub const Match = struct {
         return null;
     }
 
+    pub fn mapTNum(self: *const @This(), tnum: TNum) ?NumRef {
+        for (self.scheme.tvars, self.tvars) |s, m| {
+            switch (s) {
+                .TNum => |tn| {
+                    if (tn.uid == tnum.uid) {
+                        return m.Num;
+                    }
+                },
+
+                else => {},
+            }
+        }
+
+        return null;
+    }
+
     pub fn mapEnv(self: *const @This(), base: EnvRef) ?EnvRef {
         for (self.scheme.envVars, self.envVars) |s, m| {
             if (base.id == s.id) {
@@ -1563,6 +1796,16 @@ pub const Match = struct {
                     .Id => null,
                     .InstFun => |instfun| instfun,
                 };
+            }
+        } else {
+            return null;
+        }
+    }
+
+    pub fn getFunctionOrIDByID(self: *const @This(), uid: Association.ID) ?Match.AssocRef {
+        for (self.scheme.associations, self.assocs) |a, r| {
+            if (a.uid == uid) {
+                return r.?;
             }
         } else {
             return null;
@@ -1599,9 +1842,9 @@ pub const Match = struct {
                 const le = ctx.typeContext.getEnv(leRef);
                 const re = ctx.typeContext.getEnv(reRef);
                 // currently, we don't care about structural equality that much, especially if we're gonna implement unions.
-                if (le.env.?.env.id != re.env.?.env.id) return false;
+                if (le.env.*.?.env.id != re.env.*.?.env.id) return false;
                 // Ctx.pp(ctx.typeContext, a);
-                if (!ctx.eql(le.env.?.match, re.env.?.match)) return false;
+                return ctx.eql(le.env.*.?.match, re.env.*.?.match);
             }
 
             for (a.assocs, b.assocs) |mla, mra| {

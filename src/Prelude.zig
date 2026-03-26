@@ -21,6 +21,7 @@ pub const PremadeType = enum {
     Array,
     StrConcat,
     ListSpread,
+    Ordering,
     Maybe,
 };
 pub const NumPredefinedTypes = NumEnums(PremadeType);
@@ -35,7 +36,7 @@ pub const PremadeTypeName = TypeNameArray(PremadeType);
 
 pub const PremadeClass = enum {
     Eq,
-    // Ord,
+    Ord,
 
     Addition,
     Subtraction,

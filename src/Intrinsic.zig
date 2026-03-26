@@ -52,7 +52,7 @@ pub fn findByName(name: Str) ?Self {
 }
 
 const NumberTypes = [_][]const u8{ "i64", "f64" };
-const NumberOps = [_][]const u8{ "add", "sub", "mul", "div" };
+const NumberOps = [_][]const u8{ "add", "sub", "mul", "div", "cmp" };
 
 // https://kihlander.net/post/extending-an-enum-in-zig/
 fn addNumericEnums(t: type) type {

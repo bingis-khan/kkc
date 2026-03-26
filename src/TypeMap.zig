@@ -12,7 +12,15 @@ pub const TypeMap = struct {
         .match = &ast.Match.Empty,
     };
 
-    pub fn getTVar(self: *const @This(), tv: ast.TVar) ?ast.Type {
+    pub fn init(match: *const ast.Match, prev: ?*const @This()) @This() {
+        return .{
+            .prev = prev,
+            .scheme = &match.scheme,
+            .match = match,
+        };
+    }
+
+    pub fn mapTVar(self: *const @This(), tv: ast.TVar) ?ast.Type {
         // SLOW
         for (self.scheme.tvars, self.match.tvars) |s, m| {
             switch (s) {
@@ -25,47 +33,33 @@ pub const TypeMap = struct {
                 else => {},
             }
         } else {
-            return (self.prev orelse return null).getTVar(tv);
+            return (self.prev orelse return null).mapTVar(tv);
         }
     }
 
-    pub fn getTNum(self: *const @This(), tnum: ast.TNum) ?ast.NumRef {
-        for (self.scheme.tvars, self.match.tvars) |s, m| {
-            switch (s) {
-                .TNum => |tn| {
-                    if (tn.uid == tnum.uid) {
-                        return m.Num;
-                    }
-                },
-
-                else => {},
-            }
-        } else {
-            return (self.prev orelse return null).getTNum(tnum);
-        }
+    pub fn mapTNum(self: *const @This(), tnum: ast.TNum) ?ast.NumRef {
+        return self.match.mapTNum(tnum) orelse (self.prev orelse return null).mapTNum(tnum);
     }
 
-    pub fn getEnv(self: *const @This(), base: ast.EnvRef, tc: *const TypeContext) ?struct {
-        env: TypeContext.Env,
-        base: ast.EnvRef,
-    } {
-        const be = tc.getEnv(base);
-        if (be.env) |env| {
-            return .{ .base = be.base, .env = env };
-        } else {
-            var tymap: ?*const @This() = self;
-            while (tymap) |tm| {
-                for (tm.scheme.envVars, tm.match.envVars) |sb, mb| {
-                    if (sb.id == be.base.id) {
-                        return tm.getEnv(mb, tc);
-                    }
-                }
+    pub fn mapEnv(self: *const @This(), base: ast.EnvRef) ?ast.EnvRef {
+        return self.match.mapEnv(base) orelse (self.prev orelse return null).mapEnv(base);
+        // const be = tc.getEnv(base);
+        // if (be.env.*) |env| {
+        //     return .{ .base = be.base, .env = env };
+        // } else {
+        //     var tymap: ?*const @This() = self;
+        //     while (tymap) |tm| {
+        //         for (tm.scheme.envVars, tm.match.envVars) |sb, mb| {
+        //             if (sb.id == be.base.id) {
+        //                 return tm.mapEnv(mb, tc);
+        //             }
+        //         }
 
-                tymap = tm.prev;
-            }
+        //         tymap = tm.prev;
+        //     }
 
-            unreachable;
-        }
+        //     unreachable;
+        // }
     }
 
     pub fn tryGetFunctionByID(self: *const @This(), uid: ast.Association.ID) ?ast.Match.AssocRef.InstPair {
