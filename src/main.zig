@@ -79,14 +79,18 @@ pub fn main() !void {
                     try stdoutbuf.flush();
                 }
 
-                const file = try std.fs.cwd().createFile("test.c", .{});
+                const filename = std.fs.path.stem(opts.filename);
+                const outname = opts.exeName orelse filename;
+                const c_filename = try std.mem.concat(aa, u8, &.{ outname, ".c" });
+
+                const file = try std.fs.cwd().createFile(c_filename, .{});
                 defer file.close();
 
                 const writer = file.writer();
                 try cbackend.writeTo(writer);
 
                 {
-                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{ "cc", "test.c", "-o", "testprog" } });
+                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{ "cc", c_filename, "-o", outname } });
                     try stdout.writeAll(res.stdout);
                     try stdout.writeAll(res.stderr);
                     try stdoutbuf.flush();
@@ -104,8 +108,9 @@ pub fn main() !void {
                 const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
                 std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
 
-                {
-                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{"./testprog"} });
+                if (!opts.dontRun) {
+                    const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });
+                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{exe_name} });
                     try stdout.writeAll(res.stdout);
                     try stdout.writeAll(res.stderr);
                     try stdoutbuf.flush();

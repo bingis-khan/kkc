@@ -15,6 +15,7 @@ dontRun: bool = false,
 hideErrors: bool = false,
 programArgs: []Arg = &.{},
 backend: ?Backend = null,
+exeName: ?Str = null,
 
 pub const Arg = [*:0]const u8;
 
@@ -70,6 +71,19 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
                     }
                 },
             }
+        } else if (std.mem.eql(u8, arg[0..1], "-")) {
+            const option = std.meta.stringToEnum(ShortOption, arg[1..]) orelse {
+                // if option does not exist, pass it to the proogram
+                // TODO: add trailing '/' if not present
+                try progArgs.append(try al.dupeZ(u8, arg)); // NOTE: copy just in case, I'm not sure if its needed tho.
+                continue;
+            };
+
+            switch (option) {
+                .o => {
+                    opts.exeName = argIt.next().?;
+                },
+            }
         } else {
             if (filename == null) {
                 filename = arg;
@@ -101,6 +115,10 @@ const ProgramOption = enum {
     dontRun,
     @"hide-errors",
     backend,
+};
+
+const ShortOption = enum {
+    o,
 };
 
 pub const Backend = enum {
