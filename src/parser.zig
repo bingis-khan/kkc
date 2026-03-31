@@ -740,6 +740,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 try self.typeContext.unify(vv.t, e.t, &.{ .l = self.loc(v), .r = e.l });
                 break :b .{ .VarMut = .{
                     .varRef = vv.v,
+                    .locality = locality(self.env, vtsc.level),
                     .accessors = &.{},
                     .varValue = e,
                 } };
@@ -794,6 +795,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 try self.finishFold(pm);
                 break :b .{ .VarMut = .{
                     .varRef = vv.v,
+                    .locality = locality(self.env, vtsc.level),
                     .accessors = accessors.items,
                     .varValue = e,
                 } };

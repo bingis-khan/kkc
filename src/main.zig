@@ -163,7 +163,8 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
     const typeContext = try common.allocOne(aa, try TypeContext.init(aa, errors));
     var modules = Modules.init(aa, errors, typeContext, "", stdRoot, opts);
 
-    _ = try modules.loadPrelude();
+    const prelude = try modules.loadPrelude();
+    typeContext.prelude = prelude;
     _ = try modules.loadConverged();
 
     return modules;

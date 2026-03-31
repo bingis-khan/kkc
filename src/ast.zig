@@ -536,7 +536,7 @@ fn printBody(stmts: []*Stmt, oldC: Ctx) void {
 
 pub const Stmt = union(enum) {
     VarDec: struct { varDef: Var, varValue: *Expr },
-    VarMut: struct { varRef: DeconVar, accessors: []Accessor, varValue: *Expr },
+    VarMut: struct { varRef: DeconVar, locality: Locality, accessors: []Accessor, varValue: *Expr },
     If: struct {
         cond: *Expr,
         bTrue: []Rec,
@@ -1150,7 +1150,23 @@ pub const TyRef = struct {
                     else => return false,
                 }
             },
-            .TyVar => unreachable,
+            .TyVar => |tyv| {
+                if (tyc.getFieldsForTVar(tyv) != null) unreachable; // if has any fields, should not happen yo.
+
+                // assume Unit if a simple tyvar
+                switch (tyc.getType(r)) {
+                    .Con => |con| {
+                        const unitData = tyc.prelude.?.defined(.Unit);
+                        return con.type == unitData;
+                    },
+                    .TyVar => |tyv2| {
+                        if (tyc.getFieldsForTVar(tyv2) != null) unreachable; // if has any fields, should not happen yo.
+
+                        return true;
+                    },
+                    else => unreachable,
+                }
+            },
         };
     }
 
@@ -1273,6 +1289,36 @@ pub fn TypeF(comptime a: ?type) type {
 
             pub fn print(self: @This(), c: Ctx) void {
                 c.print(.{ self.field, ": ", self.t });
+            }
+
+            pub fn anonEq(ls: []Field, rs: []Field, tc: *const TypeContext) bool {
+                if (ls.len != rs.len) return false;
+
+                for (rs) |f2| {
+                    // assume deduplicated.
+                    for (ls) |f1| {
+                        if (common.streq(f2.field, f1.field)) {
+                            if (!Type.tyEq(f1.t, f2.t, tc)) return false;
+                            break;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+
+                for (ls) |f1| {
+                    // assume deduplicated.
+                    for (rs) |f2| {
+                        if (common.streq(f2.field, f1.field)) {
+                            if (!Type.tyEq(f1.t, f2.t, tc)) return false;
+                            break;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+
+                return true;
             }
         };
 

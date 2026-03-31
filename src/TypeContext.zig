@@ -10,6 +10,7 @@ const Str = common.Str;
 const Set = @import("Set.zig").Set;
 const Loc = common.Location;
 const TypeMap = @import("TypeMap.zig").TypeMap;
+const Prelude = @import("Prelude.zig");
 
 // Personal Note: bruh, I mean, an allocator for this would basically be the same.
 // I guess this is more local.
@@ -121,6 +122,7 @@ const TyVarFields = std.HashMap(
     std.hash_map.default_max_load_percentage,
 );
 
+prelude: ?Prelude = null,
 context: TyStore,
 envContext: EnvStore,
 numContext: NumStore,

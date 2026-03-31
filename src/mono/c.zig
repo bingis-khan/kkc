@@ -26,6 +26,7 @@ functionsGenerated: FunctionsGenerated,
 envsGenerated: EnvsGenerated,
 envInstsGenerated: EnvInstsGenerated,
 typesGenerated: TypesGenerated,
+anonsGenerated: AnonsGenerated,
 parts: std.ArrayList(CW),
 cur: CW,
 al: std.mem.Allocator,
@@ -38,6 +39,19 @@ const FunctionsGenerated = std.HashMap(EnvApp, ?Unique, EnvApp.Comparator, std.h
 const EnvsGenerated = std.HashMap(EnvApp, ?Unique, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
 const EnvInstsGenerated = Set(Unique, std.hash_map.AutoContext(Unique)); // Env's Unique => ()
 const TypesGenerated = std.HashMap(ast.TypeApplication, Unique, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
+const AnonsGenerated = std.HashMap([]Field, Unique, struct {
+    typeContext: *const TypeContext,
+
+    pub fn eql(ctx: @This(), ls: []Field, rs: []Field) bool {
+        return Field.anonEq(ls, rs, ctx.typeContext);
+    }
+
+    pub fn hash(ctx: @This(), k: []Field) u64 {
+        _ = ctx;
+        _ = k;
+        return 0; // TESTIN EQUALITY
+    }
+}, std.hash_map.default_max_load_percentage);
 pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
     var c = @This(){
         .cur = CW.init(al),
@@ -47,6 +61,7 @@ pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
         .envsGenerated = EnvsGenerated.initContext(al, .{ .typeContext = tc }),
         .envInstsGenerated = EnvInstsGenerated.init(al),
         .typesGenerated = TypesGenerated.initContext(al, .{ .typeContext = tc }),
+        .anonsGenerated = AnonsGenerated.initContext(al, .{ .typeContext = tc }),
         .parts = std.ArrayList(CW).init(al),
         .tempgen = UniqueGen.init(),
         .aux = .{},
@@ -408,11 +423,15 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
                     .Access => {},
                 }
             }
-            try s.localVarThatCouldPossiblyBeDeconed(vm.varRef);
+            switch (vm.locality) {
+                .Local => try s.localVarThatCouldPossiblyBeDeconed(vm.varRef),
+                .External => try s.j(.{ "env.", vm.varRef.v }),
+            }
+
             for (vm.accessors) |acc| {
                 switch (acc.acc) {
                     .Deref => try s.p(")"),
-                    .Access => |field| try s.j(.{ ".", sanitize(field) }),
+                    .Access => |field| try s.j(.{ ".", "f_", sanitize(field) }),
                 }
             }
             try s.p("=");
@@ -1106,7 +1125,7 @@ const Stmt = struct {
                     if (i != 0) {
                         try stmt.j(",");
                     }
-                    try stmt.j(.{ ".", sanitize(field.field) });
+                    try stmt.j(.{ ".", "f_", sanitize(field.field) });
                     try stmt.p("=");
                     try stmt.genExpr(field.value);
                 }
@@ -1116,7 +1135,7 @@ const Stmt = struct {
                 switch (unop.op) {
                     .Access => |mem| {
                         try stmt.genExpr(unop.e);
-                        try stmt.j(.{ ".", sanitize(mem) });
+                        try stmt.j(.{ ".", "f_", sanitize(mem) });
                     },
                     .As => {
                         try stmt.genExpr(unop.e);
@@ -1222,6 +1241,42 @@ const Stmt = struct {
                     });
                 }
             },
+            .AnonymousRecord => |rec| {
+                switch (try getTypeMapped(stmt.ctx, expr.t)) {
+                    .Con => |tyApp| {
+                        const tyName = try datatype(stmt.ctx, tyApp);
+                        try stmt.j(.{ "(", tyName, ")" });
+                        try stmt.p("{");
+                        for (rec, 0..) |field, i| {
+                            if (i != 0) {
+                                try stmt.j(",");
+                            }
+                            try stmt.j(.{ ".", sanitize(field.field) });
+                            try stmt.p("=");
+                            try stmt.genExpr(field.value);
+                        }
+                        try stmt.p("}");
+                    },
+
+                    .Anon => |fields| {
+                        const nuId = try anonRecord(stmt.ctx, fields);
+                        try stmt.j(.{ "(", "struct anon_", nuId, ")" });
+                        try stmt.p("{");
+                        for (rec, 0..) |field, i| {
+                            if (i != 0) {
+                                try stmt.j(",");
+                            }
+                            try stmt.j(.{ ".", sanitize(field.field) });
+                            try stmt.p("=");
+                            try stmt.genExpr(field.value);
+                        }
+                        try stmt.p("}");
+                    },
+
+                    else => unreachable,
+                }
+            },
+            .StaticArray => unreachable,
             else => unreachable,
         }
         try stmt.p(")");
@@ -1351,8 +1406,21 @@ const Stmt = struct {
                     try stmt.p(.{"(*"});
                 }
             },
+            .Anon => |anon| {
+                const nuId = try anonRecord(stmt.ctx, anon);
+                try stmt.p(.{"struct"});
+                try stmt.j(.{ "anon_", nuId });
+            },
             .TVar => unreachable,
-            else => unreachable,
+            .TyVar => |tyv| {
+                if (stmt.ctx.typeContext.getFieldsForTVar(tyv) != null) unreachable;
+
+                try stmt.p(.{try datatype(stmt.ctx, .{
+                    .type = stmt.ctx.typeContext.prelude.?.defined(.Unit),
+                    .application = &ast.Match.Empty,
+                    .outerApplication = &.{},
+                })});
+            },
         }
     }
 
@@ -1848,6 +1916,70 @@ fn PrependAll(sep: Str, args: anytype) struct {
     return .{ .sep = sep, .args = args };
 }
 
+// fn anonRecord(self: *Self, anons: []ast.Expr.Field) !Unique {
+//     {
+//         const nuId = self.backend.temp();
+
+//         const oldCW = self.backend.cur;
+//         self.backend.cur = CW.init(self.backend.al);
+//         defer self.backend.cur = oldCW;
+
+//         var e = startLine(self);
+//         try e.p(.{"struct"});
+//         try e.j(.{ "anon", "_", nuId });
+//         try e.beginBody();
+
+//         for (anons) |field| {
+//             var l = startLine(self);
+//             try l.j(.{ sanitize(field.name), "_", nuId, "_", sanitize(field.name), "," });
+//             try l.finish();
+//         }
+
+//         try endBodyAndFinishStmt(self);
+//         try self.backend.parts.append(self.backend.cur);
+//     }
+//     unreachable;
+// }
+const Field = ast.TypeF(ast.Type).Field;
+fn anonRecord(self: *Self, fields: []Field) !Unique {
+    std.mem.sort(Field, fields, .{}, struct {
+        fn ltf(ctx: @TypeOf(.{}), l: Field, r: Field) bool {
+            _ = ctx;
+            return std.mem.order(u8, l.field, r.field) == .lt;
+        }
+    }.ltf);
+
+    const nuId: Unique = b: {
+        const gp = try self.backend.anonsGenerated.getOrPut(fields);
+        if (gp.found_existing) return gp.value_ptr.*;
+        const nuId = self.backend.temp();
+        gp.value_ptr.* = nuId.id;
+        break :b nuId.id;
+    };
+
+    {
+        const oldCW = self.backend.cur;
+        self.backend.cur = CW.init(self.backend.al);
+        defer self.backend.cur = oldCW;
+
+        var e = startLine(self);
+        try e.p(.{"struct"});
+        try e.j(.{ "anon", "_", nuId });
+        try e.beginBody();
+
+        for (fields) |field| {
+            var i = startLine(self);
+            try i.definition(field.t, sanitize(field.field));
+            try i.finishStmt();
+        }
+
+        try endBodyAndFinishStmt(self);
+        try self.backend.parts.append(self.backend.cur);
+    }
+
+    return nuId;
+}
+
 const TypeName = union(enum) {
     Defined: Str,
     Ptr: ast.Type,
@@ -2157,7 +2289,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
 
             for (fields) |field| {
                 var i = startLine(self);
-                try i.definition(field.t, sanitize(field.field));
+                try i.definition(field.t, Join(.{ "f_", sanitize(field.field) }));
                 try i.finishStmt();
             }
 
