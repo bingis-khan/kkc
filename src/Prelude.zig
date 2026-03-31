@@ -31,6 +31,16 @@ pub fn defined(self: *const Self, premade: PremadeType) *ast.Data {
     return self.predefinedTypes[@intFromEnum(premade)];
 }
 
+pub fn fromData(self: *const Self, data: *const ast.Data) ?PremadeType {
+    for (self.predefinedTypes, 0..) |pd, i| {
+        if (pd == data) {
+            return @as(PremadeType, @enumFromInt(i));
+        }
+    }
+
+    return null;
+}
+
 // I don't know how to easily extract field names from an enum value.
 pub const PremadeTypeName = TypeNameArray(PremadeType);
 

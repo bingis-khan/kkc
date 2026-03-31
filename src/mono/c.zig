@@ -1276,7 +1276,20 @@ const Stmt = struct {
                     else => unreachable,
                 }
             },
-            .StaticArray => unreachable,
+            .StaticArray => |arr| {
+                const tyApp = (try getTypeMapped(stmt.ctx, expr.t)).Con;
+                const tyname = (try datatype(stmt.ctx, tyApp));
+                try stmt.j(.{ "(", tyname, ")" });
+                try stmt.p(.{ "{", "._arr", "=", "{" });
+                for (arr, 0..) |ae, i| {
+                    if (i != 0) {
+                        try stmt.p(",");
+                    }
+
+                    try stmt.genExpr(ae);
+                }
+                try stmt.p(.{ "}", "}" });
+            },
             else => unreachable,
         }
         try stmt.p(")");
@@ -1615,6 +1628,11 @@ const Stmt = struct {
         else if (argTy == ast.Type) {
             const t = (@as(ast.Type, arg));
             try self.definition(t, .{});
+        } //
+        else if (argTy == ast.NumRef) {
+            const numref = @as(ast.NumRef, arg);
+            const num = self.ctx.typeContext.getNum(numref).Literal;
+            try self.j(.{num});
         } //
         else if (argTy == TypeName) {
             const tyname = (@as(TypeName, arg));
@@ -1987,6 +2005,7 @@ const TypeName = union(enum) {
 };
 fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
     const data = tyApp.type;
+
     if (ast.Annotation.find(data.annotations, "cstdinclude")) |ann| {
         try self.backend.imports.insert(ann.params[0]);
     }
@@ -1995,8 +2014,54 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
         return .{ .Defined = ann.params[0] };
     }
 
-    if (data.isPointer()) {
-        return .{ .Ptr = tyApp.application.tvars[0].Type };
+    if (self.prelude.fromData(data)) |pt| {
+        switch (pt) {
+            .Unit => {},
+            .Bool => {},
+            .ConstStr => {},
+            .Int => {},
+            .Float => {},
+            .Ordering => {},
+            .Maybe => {},
+            .StrConcat => {},
+
+            .Ptr => return .{ .Ptr = tyApp.application.tvars[0].Type },
+            .Array => {
+                const nuId = b: {
+                    const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
+                    if (gpr.found_existing) {
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                    }
+                    const nuId = self.backend.temp().id;
+                    gpr.value_ptr.* = nuId;
+                    break :b nuId;
+                };
+
+                {
+                    const oldCW = self.backend.cur;
+                    self.backend.cur = CW.init(self.backend.al);
+                    defer self.backend.cur = oldCW;
+
+                    var s = startLine(self);
+                    try s.p(.{"struct"});
+                    try s.j(.{ data.name, "_", nuId });
+                    try s.beginBody();
+                    {
+                        var l = startLine(self);
+                        try l.definition(tyApp.application.tvars[1].Type, "_arr");
+                        try l.j(.{ "[", tyApp.application.tvars[0].Num, "]" });
+                        try l.finishStmt();
+                    }
+
+                    try endBodyAndFinishStmt(self);
+
+                    try self.backend.parts.append(self.backend.cur);
+                }
+
+                return .{ .Application = .{ .data = data, .id = nuId } };
+            },
+            else => unreachable,
+        }
     }
 
     switch (data.stuff) {

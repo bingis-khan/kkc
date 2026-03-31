@@ -1212,6 +1212,26 @@ pub const NumRef = struct {
     pub fn print(eid: @This(), c: Ctx) void {
         c.typeContext.getNum(eid).print(c);
     }
+
+    pub fn eq(l: NumRef, r: NumRef, tc: *const TypeContext) bool {
+        const lnum = tc.getNum(l);
+        const rnum = tc.getNum(r);
+        switch (lnum) {
+            .TNum => |ltnum| {
+                switch (rnum) {
+                    .TNum => |rtnum| return ltnum.uid == rtnum.uid,
+                    else => unreachable,
+                }
+            },
+            .Literal => |llit| {
+                switch (rnum) {
+                    .Literal => |rlit| return llit == rlit,
+                    else => unreachable,
+                }
+            },
+            .Unknown => unreachable,
+        }
+    }
 };
 pub const TyVar = struct {
     uid: Unique,
@@ -1879,7 +1899,7 @@ pub const Match = struct {
             for (a.tvars, b.tvars) |ltv, rtv| {
                 switch (ltv) {
                     .Type => |lt| if (!lt.tyEq(rtv.Type, ctx.typeContext)) return false,
-                    .Num => unreachable,
+                    .Num => |ln| if (!ln.eq(rtv.Num, ctx.typeContext)) return false,
                 }
             }
 

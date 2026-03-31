@@ -3,3 +3,4 @@ zig-out/
 test.c
 testprog
 a.out
+day4-test
