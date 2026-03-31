@@ -1102,9 +1102,19 @@ const Stmt = struct {
                     },
                     .errno => unreachable,
                     .@"offset-ptr" => {
-                        try stmt.genExpr(intr.args[0]);
-                        try stmt.p("+");
-                        try stmt.genExpr(intr.args[1]);
+                        try stmt.j(.{ "(", expr.t, ")" });
+                        try stmt.p("(");
+                        {
+                            try stmt.p("(");
+                            {
+                                try stmt.j(.{"(void*)"});
+                                try stmt.genExpr(intr.args[0]);
+                            }
+                            try stmt.p(")");
+                            try stmt.p("+");
+                            try stmt.genExpr(intr.args[1]);
+                        }
+                        try stmt.p(")");
                     },
                     .@"size-of" => {
                         try stmt.p("sizeof(");
