@@ -11,7 +11,7 @@ class A
 	aaa (self _)
 
 x = 2
-inst A Int
+inst A I32
 	aaa (self _)
 		println(self)
 		println(x)

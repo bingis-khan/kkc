@@ -2,21 +2,21 @@
 # 600
 
 class MyAsInt
-	to-int (self _) -> Int
+	to-int (self _) -> I32
 
 m = 69
-inst MyAsInt Int
-	to-int (self Int) -> Int
+inst MyAsInt I32
+	to-int (self I32) -> I32
 		return self + m
 
 inst MyAsInt Unit
-	to-int (self Unit) -> Int
+	to-int (self Unit) -> I32
 		return 420 + to-int(111)
 
 true-const = 1
 false-const = 0
 inst MyAsInt Bool
-	to-int (self Bool) -> Int
+	to-int (self Bool) -> I32
 		if self
 			return true-const
 		else

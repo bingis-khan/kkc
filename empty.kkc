@@ -1,12 +1,3 @@
 #!/bin/env kkc
-al = Alloc.idc()
 
-'./README.md'
-	File.read-contents(al)
-	lines()
-	drop(2)
-	head()
-	or-fail('empty??')
-	split()
-	count()
-	println()
+

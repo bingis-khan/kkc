@@ -25,5 +25,5 @@ inst IntoIter DynStr
 		self.contents into-iter()
 
 # i want to do substrings differently later.
-fn substr (s DynStr, from Int, to Int):
+fn substr (s DynStr, from Size, to Size):
 	DynStr { contents: s.contents subslice(from, to) }

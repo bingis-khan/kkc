@@ -7,8 +7,8 @@
 class Str
 	print-str (self _) -> Unit
 
-inst Str Int
-	print-str (self Int) -> Unit
+inst Str I32
+	print-str (self I32) -> Unit
 		println(69)
 		println(self)
 

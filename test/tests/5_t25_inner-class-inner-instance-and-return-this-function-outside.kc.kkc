@@ -1,13 +1,13 @@
 #$ Inner class inner instance, return this function outside!!
 # 489
 
-fn f () -> Int -> Int
+fn f () -> I32 -> I32
 	sumtin = 420
 	class Dupsko
-		dupsko (x _) -> Int
+		dupsko (x _) -> I32
 
-	inst Dupsko Int
-		dupsko (x Int) -> Int
+	inst Dupsko I32
+		dupsko (x I32) -> I32
 			return x + sumtin
 
 	return dupsko

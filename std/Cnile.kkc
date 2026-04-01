@@ -5,21 +5,8 @@ Void
 #[ctype 'FILE']
 FILE
 
-#!temp here
-#[ctype 'uint32_t', cstdinclude 'stdint.h', bytes '4']
-U32
 
-#[ctype 'uint64_t', cstdinclude 'stdint.h', bytes '8']
-U64
-
-#[ctype 'int32_t', cstdinclude 'stdint.h', bytes '4']
-I32
-
-#[ctype 'int64_t', cstdinclude 'stdint.h', bytes '8']
-I64
-
-#[ctype 'int', bytes '4']
-CInt
+CInt = I32
 
 
 #[ctype 'struct timespec']
@@ -72,34 +59,34 @@ external
 	printf3(format ConstStr, x a, y b, z c) -> Void
 
 	#[cfunname 'fprintf', cstdinclude 'stdio.h']
-	fprintf1 (file Ptr FILE, format ConstStr, x a) -> Int
+	fprintf1 (file Ptr FILE, format ConstStr, x a) -> CInt
 
 	#[cfunname 'snprintf', cstdinclude 'stdio.h']
-	snprintf1 (p Ptr Char, n Int, format ConstStr, x a) -> Int
+	snprintf1 (p Ptr Char, n CInt, format ConstStr, x a) -> CInt
 
 
-	rand () -> Int
+	rand () -> CInt
 
 	#[cstdinclude 'string.h']
-	memset (dest Ptr Void, byte Int, count Int) -> Ptr Void
+	memset (dest Ptr Void, byte CInt, count Size) -> Ptr Void
 
 	#[cstdinclude 'stdlib.h']
-	exit (status Int) -> Void
+	exit (status CInt) -> Void
 
-	malloc (bytes Int) -> Ptr Void
+	malloc (bytes Size) -> Ptr Void
 	free (x Ptr Void) -> Void
 
-	remove (s ConstStr) -> Int
+	remove (s ConstStr) -> CInt
 
-	time (p Ptr Void) -> Int
+	time (p Ptr Void) -> CInt
 
 
 	#### string.h #####
 	#[cstdinclude 'string.h']
-	strlen (s ConstStr) -> Int
+	strlen (s ConstStr) -> CInt
 
 	#[cstdinclude 'string.h']
-	strcmp (l ConstStr, r ConstStr) -> Int
+	strcmp (l ConstStr, r ConstStr) -> CInt
 
 
 	##### file ops #####
@@ -109,9 +96,9 @@ external
 	# in the near future maybe SEEK_END and stuff might be type-numbers instead of a hack datatypes.
 	# SEEK_END = 1 # for example.
 	# in case of `seek-end`, we might be able to modify constants which is bad. another thing might be functions, like `seek-end(): 1`
-	fseek (file Ptr FILE, offset Int, origin Int) -> Void
-	ftell (file Ptr FILE) -> Int
-	fread (buf Ptr a, size Int, count Int, stream Ptr FILE) -> Int
+	fseek (file Ptr FILE, offset CInt, origin CInt) -> Void
+	ftell (file Ptr FILE) -> CInt
+	fread (buf Ptr a, size CInt, count CInt, stream Ptr FILE) -> CInt
 
 	#[cstdinclude 'stdlib.h']
 	getenv (s ConstStr) -> ConstStr
@@ -119,7 +106,7 @@ external
 
 	##### sys/stat.h #####
 	stat (path ConstStr, stat Ptr Stat) -> Void
-	mkdir (path ConstStr, mode Int) -> Int
+	mkdir (path ConstStr, mode CInt) -> CInt
 
 	#### unistd.h ####
 	#[cstdinclude 'unistd.h']
@@ -127,18 +114,18 @@ external
 
 	#### ????
 	#[cstdinclude 'unistd.h']
-	fork () -> I32  # pid_t
+	fork () -> CInt  # pid_t
 
 	#[cstdinclude 'unistd.h']
 	execvp (name ConstStr, args ExecVpArgv) -> Void
 
 	#[cstdinclude 'sys/wait.h']
-	waitpid (pid I32, status Ptr CInt, options CInt) -> I32
+	waitpid (pid CInt, status Ptr CInt, options CInt) -> CInt
 	
 
 #[dylib 'libm.so.6']
 external
-	sqrt (f Float) -> Float
+	sqrt (f F64) -> F64
 
 
 
@@ -148,7 +135,7 @@ fn seek-cur(): 1
 fn seek-end(): 2
 
 
-fn wifexited (status Int):
+fn wifexited (status CInt):
 	status == 0
 
 fn errno-EEXIST(): @errno == 17

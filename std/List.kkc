@@ -17,21 +17,24 @@ use Str
 	Str
 	print-str
  
+
+Idx = Size
+
 List alloc a
 	al alloc
 	elements Slice a  # elements.count ~ capacity
-	count Int
+	count Idx
 
-fn get-ptr (list Ptr (List alloc a), i Int) -> Ptr a
+fn get-ptr (list Ptr (List alloc a), i Idx) -> Ptr a
 	if i < 0 or i >= list&.count
 		panic('Access to list at index \(i) (count: \(list&.count))')
 
 	return Slice.get-ptr(list&.elements, i)
 
-fn get (list Ptr (List alloc a), i Int) -> a:
+fn get (list Ptr (List alloc a), i Idx) -> a:
 	list get-ptr(i)&
 
-fn set (list Ptr (List alloc a), i Int, elem a) -> Unit
+fn set (list Ptr (List alloc a), i Idx, elem a) -> Unit
 	if i < 0 or i >= list&.count
 		panic('Tried setting a list element at index \(i) (count: \(list&.count))')
 
@@ -61,9 +64,9 @@ fn free (list Ptr (List alloc a)) -> Unit <= Allocator alloc
 
 
 
-starting-size = 8
-growth-factor = 2
-shrink-factor = 8
+starting-size = 8 as Size
+growth-factor = 2 as Size
+shrink-factor = 8 as Size
 
 fn grow-if-full (list Ptr (List alloc a)) -> Unit <= Allocator alloc
 	# check if the list is empty
@@ -77,7 +80,7 @@ fn grow-if-full (list Ptr (List alloc a)) -> Unit <= Allocator alloc
 		# NOTE: a lot of this stuff would be better with memmove/memcpy and realloc, but i want to minimize external dependencies as much as possible
 		# still, the external interface and usage needs some contemplation
 		# copy to old slice
-		list&.elements zip(from(0)) for-each(fn Tuple2(x, i): Slice.set(new-slice, i, x))
+		list&.elements zip(from(0)) for-each(fn Tuple2(x, i): Slice.set(new-slice, Mem.cast-on-zeroed(i), x))
 		list&.al Alloc.free(list&.elements)
 		list <&.elements= new-slice
 
@@ -86,7 +89,7 @@ fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
 	Slice.set(list&.elements, list&.count, elem)
 	list <&.count= list&.count + 1
 
-fn insert (list Ptr (List alloc a), i Int, elem a) -> Unit <= Allocator alloc
+fn insert (list Ptr (List alloc a), i Idx, elem a) -> Unit <= Allocator alloc
 	if i < 0 or i > list&.count
 		panic('Insertion at list index \(i) (count: \(list&.count))')
 
@@ -102,7 +105,7 @@ fn insert (list Ptr (List alloc a), i Int, elem a) -> Unit <= Allocator alloc
 	list <&.count= list&.count + 1
 
 
-fn remove (list Ptr (List alloc a), i Int) -> Unit <= Allocator alloc
+fn remove (list Ptr (List alloc a), i Idx) -> Unit <= Allocator alloc
 	if i < 0 or i >= list&.count
 		panic('Removal at list index \(i) (count: \(list&.count))')
 
@@ -110,7 +113,7 @@ fn remove (list Ptr (List alloc a), i Int) -> Unit <= Allocator alloc
 	list&
 		zip(from(0))
 		drop(i + 1)
-		for-each(fn Tuple2(elem, n): set(list, n - 1, elem))  # pointlessly complex to stress-test the compiler.
+		for-each(fn Tuple2(elem, n): set(list, @cast(n - 1), elem))  # pointlessly complex to stress-test the compiler.
 
 	list <&.count= list&.count - 1
 

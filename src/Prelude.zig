@@ -13,8 +13,18 @@ const Self = @This();
 pub const PremadeType = enum {
     Unit,
     Bool,
-    Int,
-    Float,
+
+    I8,
+    U8,
+    I32,
+    U32,
+    I64,
+    U64,
+    Size,
+
+    F32,
+    F64,
+
     ConstStr,
     Char,
     Ptr,
@@ -52,7 +62,9 @@ pub const PremadeClass = enum {
     Subtraction,
     Multiplication,
     Division,
+    Negation,
 
+    FromIntegral,
     FromChar,
     ListDecon,
     ListLike,

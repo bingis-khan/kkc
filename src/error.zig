@@ -327,11 +327,15 @@ pub const Error = union(enum) {
             .ClassDoesNotExportThing => p("ClassDoesNotExportThing", .{}),
             .CouldNotFindInstanceForType => |e| {
                 if (e.possibilities) |possibs| {
-                    // err.atLocation(e.loc, .{
-                    //     .label = .{ "Could not find instance of ", e.class, " for type ", e.data, ". Possible instances: ", ast.Ctx.iter(possibs.iterator(), ", ") },
-                    // });
-                    _ = possibs; // TEMP
-                    unreachable;
+                    err.atLocation(e.loc, .{
+                        .label = .{ "Could not find instance of ", e.class, " for type ", e.data, ". Possible instances: ", ast.Ctx.iter_(possibs.iterator(), ", ", struct {
+                            pub fn mapFn(x: anytype, ctx: ast.Ctx) void {
+                                const inst: *const ast.Instance = x.value_ptr.*;
+
+                                ctx.print(.{inst.data.name});
+                            }
+                        }.mapFn) },
+                    });
                 } else {
                     // TODO: THIS IS BAD AAAAAAA
                     err.atLocation(e.loc, .{

@@ -2,5 +2,5 @@
 
 Record
 	first Unit
-	second Int
+	second I32
 	third Bool

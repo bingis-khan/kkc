@@ -1,6 +1,7 @@
 #$ Inner function calling nested outer functions.
 #= envsize aaa 1
-#= envsize f 3
+## plus FromIntegral typeclass
+#= envsize f 4
 #= envsize f2 1
 ##
 ## id Bool, aaa Int, println Bool

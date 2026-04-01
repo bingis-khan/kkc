@@ -5,8 +5,8 @@
 
 MyRecord
 	nice Unit
-	other-nice Maybe Int
-	other-other-nice Either Int (Maybe Bool)
+	other-nice Maybe I32
+	other-other-nice Either I32 (Maybe Bool)
 
 rec = MyRecord { nice: Unit, other-nice: Just(1337), other-other-nice: Right(Just(True)) }
 

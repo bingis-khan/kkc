@@ -2,7 +2,7 @@
 # 74
 
 min = 69
-fn sum' (max Int) -> Int
+fn sum' (max I32) -> I32
 	if max == 0
 		return min
 	else

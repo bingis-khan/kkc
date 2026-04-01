@@ -33,6 +33,8 @@ al: std.mem.Allocator,
 tempgen: UniqueGen,
 aux: struct { // RETARDED
     i64cmp: bool = false,
+    i32cmp: bool = false,
+    sizecmp: bool = false,
 },
 
 const FunctionsGenerated = std.HashMap(EnvApp, ?FunGen, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
@@ -976,7 +978,10 @@ const Stmt = struct {
     fn genExpr(stmt: *@This(), expr: *ast.Expr) GenError!void {
         try stmt.p("(");
         switch (expr.e) {
-            .Int => |x| try stmt.p(x),
+            .Int => |x| {
+                try stmt.instFun(x.ref);
+                try stmt.p(.{ "(", x.int, ")" });
+            },
             .Con => |c| {
                 if (c.tys.len == 0) {
                     const t = (try getTypeMapped(stmt.ctx, expr.t)).Con;
@@ -1064,36 +1069,48 @@ const Stmt = struct {
             },
             .Intrinsic => |intr| {
                 switch (intr.intr.ty) {
-                    .@"i64-add" => {
+                    .@"i64-add", .@"i32-add", .@"size-add" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("+");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-sub" => {
+                    .@"i64-sub", .@"i32-sub", .@"size-sub" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("-");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-mul" => {
+                    .@"i64-mul", .@"i32-mul", .@"size-mul" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("*");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-div" => {
+                    .@"i64-div", .@"i32-div", .@"size-div" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("/");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-cmp" => {
+                    .@"i64-cmp", .@"i32-cmp", .@"size-cmp" => {
                         // CRINGE
-                        if (!stmt.ctx.backend.aux.i64cmp) {
-                            defer stmt.ctx.backend.aux.i64cmp = true;
+                        const it = intr.intr.ty;
+                        const cmp = switch (it) {
+                            .@"i64-cmp" => &stmt.ctx.backend.aux.i64cmp,
+                            .@"i32-cmp" => &stmt.ctx.backend.aux.i32cmp,
+                            .@"size-cmp" => &stmt.ctx.backend.aux.sizecmp,
+                            else => unreachable,
+                        };
+                        if (!cmp.*) {
+                            defer cmp.* = true;
 
                             const oldCW = stmt.ctx.backend.cur;
                             stmt.ctx.backend.cur = CW.init(stmt.ctx.backend.al);
                             defer stmt.ctx.backend.cur = oldCW;
 
-                            const tyname = ast.Annotation.find(stmt.ctx.prelude.defined(.Int).annotations, "ctype").?.params[0];
+                            const tyname = ast.Annotation.find(stmt.ctx.prelude.defined(switch (it) {
+                                .@"i64-cmp" => .I64,
+                                .@"i32-cmp" => .I32,
+                                .@"size-cmp" => .Size,
+                                else => unreachable,
+                            }).annotations, "ctype").?.params[0];
 
                             var e = startLine(stmt.ctx);
                             try e.p(.{ "static", tyname });
@@ -2099,8 +2116,8 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             .Unit => {},
             .Bool => {},
             .ConstStr => {},
-            .Int => {},
-            .Float => {},
+            .I32 => {},
+            .F64 => {},
             .Ordering => {},
             .Maybe => {},
             .StrConcat => {},

@@ -13,14 +13,38 @@ Bool
 	#[clit 'true']
 	True
 
-#[ctype 'long']
-Int
+
+#[ctype 'uint8_t', cstdinclude 'stdint.h', bytes '1']
+U8
+
+#[ctype 'uint32_t', cstdinclude 'stdint.h', bytes '4']
+U32
+
+#[ctype 'uint64_t', cstdinclude 'stdint.h', bytes '8']
+U64
+
+
+#[ctype 'int8_t', cstdinclude 'stdint.h', bytes '1']
+I8
+
+#[ctype 'int32_t', cstdinclude 'stdint.h', bytes '4']
+I32
+
+#[ctype 'int64_t', cstdinclude 'stdint.h', bytes '8']
+I64
+
+#[ctype 'float']
+F32
+
+#[ctype 'double']
+F64
+
+#[ctype 'size_t']
+Size
 
 # Is this too much voodoo? I'm basically only using it for Ints
 # class Int <= Eq, Ord, Addition, Subtraction, Multiplication, Division
 
-#[ctype 'float']
-Float
 
 #[ctype 'const char*']
 ConstStr  # TODO: later, make a ptr + length struct string.
@@ -43,12 +67,6 @@ StrCase c1 c2  # big hack for alternative string representations. (ex: Maybe)
 	# But, I'll keep StrCase for now.
 	StrCase1 c1
 	StrCase2 c2
-
-# #[ctype 'uint8_t', cstdinclude 'stdint.h']
-# U8
-
-# #[ctype 'int8_t', cstdinclude 'stdint.h']
-# I8
 
 
 # should ideally be shorthanded to: Ptr a: Ptr a
@@ -80,6 +98,9 @@ class Ord
 	cmp (_, _) -> Ordering
 
 
+class FromIntegral: I32
+	from-integral(I64) -> _
+
 # numeric ops yooo
 class Addition
 	op-add (_, _) -> _
@@ -92,6 +113,9 @@ class Multiplication
 
 class Division
 	op-div (_, _) -> _
+
+class Negation
+	op-neg (_) -> _
 
 
 # Index
@@ -123,7 +147,7 @@ ListSpread spread
 class ListDecon
 	# Elem <- dependent type
 	# correct type would be (_, Slice elem, Maybe (Maybe (Ptr _), Slice elem)), but the current one is easier to call from the iterpreter.
-	deconstruct (self _, lp Ptr (Ptr elem), lc Int, spread ListSpread spread, rp Ptr (Ptr elem), rc Int) -> Bool
+	deconstruct (self _, lp Ptr (Ptr elem), lc I64, spread ListSpread spread, rp Ptr (Ptr elem), rc I64) -> Bool
 
 
 # Iter and IntoIter is directly used by `for .. in` loop.
@@ -164,12 +188,32 @@ inst FromChar Char
 	from-charlike (s): (@cast(s) as Ptr Char)&
 
 
+# Num
+
+inst FromIntegral I64
+	from-integral (x): x
+
+inst FromIntegral I32
+	from-integral (x): @cast(x)
+
+inst FromIntegral I8
+	from-integral (x): @cast(x)
+
+inst FromIntegral Size
+	from-integral (x): @cast(x)
+
 # Eq
 
 inst Eq Unit
 	eq (l, r): True
 
-inst Eq Int
+inst Eq I64
+	eq (l, r): @memeq(l, r)
+
+inst Eq I32
+	eq (l, r): @memeq(l, r)
+
+inst Eq Size
 	eq (l, r): @memeq(l, r)
 
 inst Eq Bool
@@ -196,39 +240,75 @@ inst Eq Maybe
 inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r
 
-inst Ord Int
+inst Ord I64
 	cmp (l, r)
 		return @i64-cmp(l, r)
+
+inst Ord Size
+	cmp (l, r): @size-cmp(l, r)
+
+inst Ord I32
+	cmp (l, r): @i32-cmp(l, r)
 
 # ops
 
 ## Int
 
-inst Addition Int
+inst Addition I64
 	op-add (l, r): @i64-add(l, r)
 
-inst Subtraction Int
+inst Subtraction I64
 	op-sub (l, r): @i64-sub(l, r)
 
-inst Multiplication Int
+inst Multiplication I64
 	op-mul (l, r): @i64-mul(l, r)
 
-inst Division Int
+inst Division I64
 	op-div (l, r): @i64-div(l, r)
+
+
+# I32
+
+inst Addition I32
+	op-add (l, r): @i32-add(l, r)
+
+inst Subtraction I32
+	op-sub (l, r): @i32-sub(l, r)
+
+inst Multiplication I32
+	op-mul (l, r): @i32-mul(l, r)
+
+inst Division I32
+	op-div (l, r): @i32-div(l, r)
+
+
+## Size
+
+inst Addition Size
+	op-add (l, r): @size-add(l, r)
+
+inst Subtraction Size
+	op-sub (l, r): @size-sub(l, r)
+
+inst Multiplication Size
+	op-mul (l, r): @size-mul(l, r)
+
+inst Division Size
+	op-div (l, r): @size-div(l, r)
 
 
 ## Float
 
-inst Addition Float
+inst Addition F64
 	op-add (l, r): @f64-add(l, r)
 
-inst Subtraction Float
+inst Subtraction F64
 	op-sub (l, r): @f64-sub(l, r)
 
-inst Multiplication Float
+inst Multiplication F64
 	op-mul (l, r): @f64-mul(l, r)
 
-inst Division Float
+inst Division F64
 	op-div (l, r): @f64-div(l, r)
 
 

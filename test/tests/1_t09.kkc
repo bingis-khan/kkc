@@ -6,7 +6,7 @@ fn main ()
 	Proxy a
 		Proxy
 
-	x = Proxy as Proxy Int  # a function type will not work: (Int -> Int)
+	x = Proxy as Proxy I32  # a function type will not work: (Int -> Int)
 	println(123)
 
 

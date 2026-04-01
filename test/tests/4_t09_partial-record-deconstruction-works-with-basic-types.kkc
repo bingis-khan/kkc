@@ -2,7 +2,7 @@
 # 133769
 
 Record
-	wow Int
+	wow I32
 	unit Unit
 	soy Bool
 

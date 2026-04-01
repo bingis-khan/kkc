@@ -3,7 +3,7 @@
 # True
 
 IMightHave
-	an-int Maybe Int
+	an-int Maybe I32
 	a-bool Bool
 
 rec = IMightHave { an-int: Just(777), a-bool: True }

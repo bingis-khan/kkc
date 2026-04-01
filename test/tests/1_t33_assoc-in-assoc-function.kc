@@ -7,7 +7,7 @@ class A
 	aaa (self _)
 
 x = 1
-inst A Int
+inst A I32
 	aaa (self _)
 		_ = x
 

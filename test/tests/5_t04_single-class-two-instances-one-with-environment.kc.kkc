@@ -3,15 +3,15 @@
 # 489
 
 class MyAsInt
-	to-int (self _) -> Int
+	to-int (self _) -> I32
 
 m = 69
-inst MyAsInt Int
-	to-int (self Int) -> Int
+inst MyAsInt I32
+	to-int (self I32) -> I32
 		return self + m
 
 inst MyAsInt Unit
-	to-int (self Unit) -> Int
+	to-int (self Unit) -> I32
 		return 11111
 
 println(to-int(Unit))

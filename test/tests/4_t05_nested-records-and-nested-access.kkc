@@ -2,7 +2,7 @@
 # 69420
 
 InnerRec
-	this-is-inner Int
+	this-is-inner I32
 
 OuterRec
 	cool-rec InnerRec

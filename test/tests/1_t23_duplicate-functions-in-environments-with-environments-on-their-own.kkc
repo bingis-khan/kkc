@@ -1,6 +1,6 @@
 
 m = 5
-fn f (x Int) -> Int
+fn f (x I32) -> I32
 	return x + m
 
 fn g (n)

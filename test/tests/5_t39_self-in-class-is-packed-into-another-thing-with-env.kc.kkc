@@ -6,11 +6,11 @@ NotPtr a
 	NotPtr a
 
 class Iter
-	next (self NotPtr _) -> Int
+	next (self NotPtr _) -> I32
 
 int-const = 123
-inst Iter Int
-	next (NotPtr(x)) -> Int
+inst Iter I32
+	next (NotPtr(x)) -> I32
 		return x + int-const
 
 x = NotPtr(420)

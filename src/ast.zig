@@ -73,7 +73,7 @@ pub const Ctx = struct {
         };
     }
 
-    pub fn Iter(itt: type, sept: type) type {
+    pub fn Iter(itt: type, sept: type, comptime mapFn: anytype) type {
         return struct {
             it: itt,
             sep: sept,
@@ -81,20 +81,31 @@ pub const Ctx = struct {
             pub fn print(self: *const @This(), c: Ctx) void {
                 var it = self.it;
                 if (it.next()) |x| {
-                    x.*.print(c);
+                    mapFn(x, c);
                 } else {
                     return;
                 }
 
                 while (it.next()) |x| {
                     c.s(self.sep);
-                    x.*.print(c); // TODO: when needed, make it more general. (eg: take in a function.)
+                    mapFn(x, c); // TODO: when needed, make it more general. (eg: take in a function.)
                 }
             }
         };
     }
-    pub fn iter(it: anytype, sep: anytype) Iter(@TypeOf(it), @TypeOf(sep)) {
-        return Iter(@TypeOf(it), @TypeOf(sep)){
+    pub fn iter(it: anytype, sep: anytype) Iter(@TypeOf(it), @TypeOf(sep), struct {
+        pub fn mapFn(x: anytype, c: Ctx) void {
+            return x.*.print(c);
+        }
+    }.mapFn) {
+        return .{
+            .it = it,
+            .sep = sep,
+        };
+    }
+
+    pub fn iter_(it: anytype, sep: anytype, comptime mapFn: anytype) Iter(@TypeOf(it), @TypeOf(sep), mapFn) {
+        return Iter(@TypeOf(it), @TypeOf(sep), mapFn){
             .it = it,
             .sep = sep,
         };
@@ -841,7 +852,7 @@ pub const Expr = struct {
         Var: struct { v: VarType, match: *Match, locality: Locality }, // NOTE: Match is owned here!
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
-        Int: i64, // obv temporary.
+        Int: struct { int: i64, ref: InstFunInst }, // obv temporary.
         Float: f64,
         IfElse: struct {
             cond: Rec,
@@ -981,7 +992,7 @@ pub const Expr = struct {
             .Con => |con| {
                 con.print(c);
             },
-            .Int => |i| c.sp("{}", .{i}),
+            .Int => |i| c.sp("{}", .{i.int}),
             .Float => |f| c.sp("{}", .{f}),
             .Char => |ch| c.sp("c'{}'", .{ch}),
             .Str => |s| {
@@ -1093,7 +1104,7 @@ pub const UnOp = union(enum) {
     Update: []Expr.Field,
     As: Type,
     Not,
-    Negate,
+    Negate: InstFunInst,
 };
 
 pub const BinOp = union(enum) {
@@ -1704,6 +1715,7 @@ pub const Association = struct {
     depends: TVar,
     class: *Class,
     uid: ID,
+    default: ?*Data,
 
     // when it's null, it's just a `constraint` and not based on a class function call.
     // when it's a value, it's an actual association with an associated function call.

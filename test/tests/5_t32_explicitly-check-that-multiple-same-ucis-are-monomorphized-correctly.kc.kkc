@@ -22,8 +22,8 @@ fn g (n)
 	return
 
 int-const = Unit
-inst MyStr Int
-	print-str (self Int) -> Unit
+inst MyStr I32
+	print-str (self I32) -> Unit
 		println(int-const)
 		println(self)
 		return

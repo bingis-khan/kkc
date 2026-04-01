@@ -9,24 +9,24 @@ use Str
 	print-str
 	chars
 
-fn get-ptr (arr Ptr (Array count a), i Int) -> Ptr a
-	if i < 0 or i >= count
+fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
+	if i < 0 or i >= @cast(count)
 		Error.panic('Access to array at index \(i). (max: \(count))')
 
 	p = Mem.cast(arr) as Ptr a
-	return Mem.offset-ptr(p, i)
+	return Mem.offset-ptr(p, @cast(i))
 
-fn get (arr Ptr (Array count a), i Int) -> a:
+fn get (arr Ptr (Array count a), i Size) -> a:
 	arr get-ptr(i)&
 
-fn set (arr Ptr (Array count a), i Int, e a)
+fn set (arr Ptr (Array count a), i Size, e a)
 	p = arr get-ptr(i)
 	p <&= e
 
 
 # i think it should be in Slice and called `from-array`?
 fn as-slice (arr Ptr (Array count a)) -> Slice a:
-	Slice { ptr: Mem.cast(arr), count }
+	Slice { ptr: Mem.cast(arr), count: @cast(count) }
 
 
 # ARRAY YAH
@@ -34,7 +34,7 @@ fn as-slice (arr Ptr (Array count a)) -> Slice a:
 
 SmolArrayIter ^count a
 	backing SmolArray count a
-	cur Int
+	cur Size
 
 inst IntoIter SmolArray
 	into-iter (self):
@@ -45,7 +45,7 @@ inst IntoIter SmolArrayIter
 
 inst Iter SmolArrayIter
 	next (self Ptr (SmolArrayIter count a))
-		if self&.cur >= count
+		if self&.cur >= @cast(count)
 			return None
 
 		e = (&self&.backing.arr) get(self&.cur)

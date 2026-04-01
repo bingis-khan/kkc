@@ -2,10 +2,10 @@
 # 70
 
 class MyAsInt
-	to-int (self _) -> Int
+	to-int (self _) -> I32
 
-inst MyAsInt Int
-	to-int (self Int) -> Int
+inst MyAsInt I32
+	to-int (self I32) -> I32
 		return self
 
 fn turn-to-int-and-add-69 (x)

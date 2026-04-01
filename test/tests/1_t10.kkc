@@ -1,7 +1,7 @@
 #$ Recursion actually works.
 # 55
 
-fn fib' (n Int) -> Int
+fn fib' (n I32) -> I32
 	if n == 0
 		return 0
 	elif n == 1

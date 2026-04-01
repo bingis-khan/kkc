@@ -6,7 +6,7 @@
 class Whattf
 	dafuq (self _) -> aaaa
 
-inst Whattf Int
+inst Whattf I32
 	dafuq (self): Unit
 
 inst Whattf Bool

@@ -29,9 +29,9 @@ use DynStr
 
 F64StrIter
 	buf Array 32 Char  # seems to be max possible?
-	i Int
+	i I32
 
-inst IntoIter Float
+inst IntoIter F64
 	into-iter (f)
 		buf =& @undefined as Array 32 Char
 		p = Mem.cast(buf) as Ptr Char
@@ -50,7 +50,7 @@ inst Iter F64StrIter
 		self <&.i= self&.i + 1
 		return c Just()
 
-inst Str Float
+inst Str F64
 	print-str (self)
 		Cnile.printf1('%g', self)
 
@@ -64,7 +64,7 @@ fn allocate-str (s, al) -> ConstStr
 	str = al Alloc.allocate(len + 1)
 	s chars()
 		zip(from(0))
-		for-each(fn Tuple2(c, i): str Slice.set(i, c))
+		for-each(fn Tuple2(c, i): str Slice.set(Mem.cast(i), c))
 
 	str Slice.set(len, Str.nullchar())
 	return str.ptr Mem.cast()
@@ -82,7 +82,7 @@ fn is-blank (s): s
 
 LineIter
 	og DynStr
-	last Int
+	last Size
 
 fn lines (s DynStr): LineIter { og: s, last: 0 }
 

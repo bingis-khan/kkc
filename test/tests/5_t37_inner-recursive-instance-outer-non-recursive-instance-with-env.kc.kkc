@@ -9,7 +9,7 @@ class MyStr
 MyStrPtr a
 	MyStrPtr a
 
-inst MyStr Int
+inst MyStr I32
 	do-sth (x) -> Unit
 		println(x)
 

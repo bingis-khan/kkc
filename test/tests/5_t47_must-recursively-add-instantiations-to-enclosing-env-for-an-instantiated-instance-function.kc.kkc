@@ -3,14 +3,14 @@
 ##= envsize f 2
 
 class ToInt
-	to-int (n _) -> Int
+	to-int (n _) -> I32
 
 env = 420
 fn f ()
 	fn g (): env
 
 	inst ToInt Bool
-		to-int (n Bool) -> Int
+		to-int (n Bool) -> I32
 			return g()
 
 	println(to-int(True))

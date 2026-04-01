@@ -539,6 +539,30 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         else => unreachable,
                     });
                 },
+                .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => {
+                    const l = (try self.expr(intr.args[0])).ref.i32;
+                    const r = (try self.expr(intr.args[1])).ref.i32;
+
+                    return try self.intValue(switch (intr.intr.ty) {
+                        .@"i64-add", .@"i32-add" => l + r,
+                        .@"i64-sub", .@"i32-sub" => l - r,
+                        .@"i64-mul", .@"i32-mul" => l * r,
+                        .@"i64-div", .@"i32-div" => @divTrunc(l, r),
+                        else => unreachable,
+                    });
+                },
+                .@"size-add", .@"size-sub", .@"size-mul", .@"size-div" => {
+                    const l = (try self.expr(intr.args[0])).ref.size;
+                    const r = (try self.expr(intr.args[1])).ref.size;
+
+                    return try self.val(.{ .size = switch (intr.intr.ty) {
+                        .@"size-add" => l + r,
+                        .@"size-sub" => l - r,
+                        .@"size-mul" => l * r,
+                        .@"size-div" => @divTrunc(l, r),
+                        else => unreachable,
+                    } }, @sizeOf(@TypeOf(l)));
+                },
                 .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => {
                     const l = (try self.expr(intr.args[0])).ref.float;
                     const r = (try self.expr(intr.args[1])).ref.float;
@@ -555,6 +579,28 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .@"i64-cmp" => {
                     const l = (try self.expr(intr.args[0])).ref.int;
                     const r = (try self.expr(intr.args[1])).ref.int;
+                    if (l < r) {
+                        return try self.intValue(0);
+                    } else if (l == r) {
+                        return try self.intValue(1);
+                    } else {
+                        return try self.intValue(2);
+                    }
+                },
+                .@"i32-cmp" => {
+                    const l = (try self.expr(intr.args[0])).ref.i32;
+                    const r = (try self.expr(intr.args[1])).ref.i32;
+                    if (l < r) {
+                        return try self.intValue(0);
+                    } else if (l == r) {
+                        return try self.intValue(1);
+                    } else {
+                        return try self.intValue(2);
+                    }
+                },
+                .@"size-cmp" => {
+                    const l = (try self.expr(intr.args[0])).ref.size;
+                    const r = (try self.expr(intr.args[1])).ref.size;
                     if (l < r) {
                         return try self.intValue(0);
                     } else if (l == r) {
@@ -581,7 +627,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
             return self.val(.{ .char = c }, 1);
         },
         .Int => |x| {
-            return self.intValue(x);
+            const int = try self.intValue(x.int);
+            const instFun = try self.getAndUnboxInstFunRef(x.ref);
+
+            var args = [_]ValueMeta{int};
+            const ret = try self.function(instFun.fun, &args);
+            return ret;
         },
         .Float => |x| {
             return self.floatValue(x);
@@ -632,17 +683,30 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     return switch (op.op) {
                         // .Equals => try self.boolValue(l.ref.int == r.ref.int), // TEMP!!!
 
-                        .Plus, .Minus, .Times, .Divide => |ref| {
+                        .Plus,
+                        .Minus,
+                        .Times,
+                        .Divide,
+                        .LessThan,
+                        .LessEqualThan,
+                        .GreaterThan,
+                        .GreaterEqualThan,
+                        => |ref| {
                             const instFun = try self.getAndUnboxInstFunRef(ref);
 
                             var args = [_]ValueMeta{ l, r };
-                            return try self.function(instFun.fun, &args);
-                        },
+                            const ret = try self.function(instFun.fun, &args);
 
-                        .LessThan => try self.boolValue(l.ref.int < r.ref.int),
-                        .LessEqualThan => try self.boolValue(l.ref.int <= r.ref.int),
-                        .GreaterThan => try self.boolValue(l.ref.int > r.ref.int),
-                        .GreaterEqualThan => try self.boolValue(l.ref.int >= r.ref.int),
+                            const realRet = switch (op.op) {
+                                .LessThan => try self.boolValue(ret.ref.enoom == 0),
+                                .LessEqualThan => try self.boolValue(ret.ref.enoom != 2),
+                                .GreaterThan => try self.boolValue(ret.ref.enoom == 2),
+                                .GreaterEqualThan => try self.boolValue(ret.ref.enoom != 0),
+                                else => ret,
+                            };
+
+                            return realRet;
+                        },
 
                         else => {
                             std.debug.print("unimplemented op: {}\n", .{op.op});
@@ -1221,6 +1285,8 @@ fn copyValueMeta(self: *Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
 // note about alignments: in C structs the alignments are variable (because we might represent different structs), so everything must be align(1)
 const RawValue = extern union {
     int: i64,
+    i32: i32,
+    size: usize,
     float: f64,
     char: u8,
     extptr: *anyopaque,
@@ -1423,11 +1489,15 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
                 return ffi.types.pointer;
             }
 
-            if (c.type.eq(self.prelude.defined(.Int))) {
-                return ffi.types.sint64;
+            if (c.type.eq(self.prelude.defined(.I32))) {
+                return ffi.types.sint32;
             }
 
-            if (c.type.eq(self.prelude.defined(.Float))) {
+            if (c.type.eq(self.prelude.defined(.Size))) {
+                return ffi.types.ulong;
+            }
+
+            if (c.type.eq(self.prelude.defined(.F64))) {
                 return ffi.types.double;
             }
 
@@ -1448,9 +1518,9 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 
             // TEMP TEMP TEMP
             {
-                if (common.streq(c.type.name, "I32")) {
-                    return ffi.types.sint32;
-                }
+                // if (common.streq(c.type.name, "I32")) {
+                //     return ffi.types.sint32;
+                // }
 
                 if (common.streq(c.type.name, "I64")) {
                     return ffi.types.sint64;

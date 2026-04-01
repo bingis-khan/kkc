@@ -14,13 +14,13 @@ class Str1
 class Str2
 	print-str' (self _) -> Unit
 
-inst Str1 Int
-	print-str (self Int) -> Unit
+inst Str1 I32
+	print-str (self I32) -> Unit
 		println(69)
 		println(self)
 
-inst Str2 Int
-	print-str' (self Int) -> Unit
+inst Str2 I32
+	print-str' (self I32) -> Unit
 		println(111)
 		println(self)
 

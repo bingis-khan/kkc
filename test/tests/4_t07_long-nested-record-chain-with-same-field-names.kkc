@@ -2,7 +2,7 @@
 # 69
 
 R1
-	rec Int
+	rec I32
 
 R2
 	rec R1

@@ -337,7 +337,7 @@ fn typeSynonym(self: *Self, typename: Token, tvarToks: []Token, annotations: []A
                 .tvars = tvars.items,
                 .envVars = &.{},
                 .associations = assocs.items,
-                .env = unreachable,
+                .env = null,
             },
             .t = t.e,
         });
@@ -1400,6 +1400,7 @@ fn addConstraintsToAssocs(self: *Self, assocs: *std.ArrayList(AST.Association), 
                 .depends = kv.key_ptr.*,
                 .uid = self.gen.assocs.newUnique(),
                 .class = class,
+                .default = class.default,
                 .concrete = null,
             });
         }
@@ -1442,7 +1443,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
     } // ignore var
     else if (self.consume(.INTEGER)) |numTok| b: {
         break :b .{
-            .t = try self.definedType(.Int),
+            .t = try self.definedType(.I32),
             .l = self.loc(numTok),
             .d = .{ .Num = self.parseInt(numTok) },
         };
@@ -2019,13 +2020,24 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     // negation (-)
     const beforeNegPrec = comptime binOpPrecedence(.{ .Divide = undefined });
     if (minPrec <= beforeNegPrec) if (self.consume(.MINUS)) |mintok| { // undefined here, because we just want to check binop precedence. note, that we still want to rewrite it, because we confuse both.
+
         const n = try self.precedenceExpression(beforeNegPrec + 1); // higher than div
-        const intTy = try self.definedType(.Int);
-        try self.typeContext.unify(n.t, intTy, &.{ .l = n.l });
+        const l = self.loc(mintok).between(n.l);
+        const class = try self.definedClass(.Negation);
+        const cfun = class.classFuns[0];
+        const ifn = try self.instantiateClassFunction(cfun, l);
+        const retTy = try self.typeContext.fresh();
+        const funTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{n.t},
+            .ret = retTy,
+        } });
+
+        try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
+
         return self.allocExpr(.{
-            .e = .{ .UnOp = .{ .op = .Negate, .e = n } },
-            .t = intTy,
-            .l = self.loc(mintok).between(n.l),
+            .e = .{ .UnOp = .{ .op = .{ .Negate = ifn.ref }, .e = n } },
+            .t = retTy,
+            .l = l,
         });
     };
 
@@ -2253,7 +2265,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             const t = switch (intr.ty) {
                 .cast => try self.typeContext.fresh(),
                 .undefined => try self.typeContext.fresh(),
-                .@"size-of" => try self.definedType(.Int),
+                .@"size-of" => try self.definedType(.Size),
                 .@"offset-ptr" => b: {
                     // arg 1
                     const ptr = (try self.defined(.Ptr)).dataInst;
@@ -2261,12 +2273,12 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     try self.typeContext.unify(ptr.t, args.items[0].t, &.{ .l = args.items[0].l });
 
                     // arg 2
-                    try self.typeContext.unify(try self.definedType(.Int), args.items[1].t, &.{ .l = args.items[1].l });
+                    try self.typeContext.unify(try self.definedType(.I64), args.items[1].t, &.{ .l = args.items[1].l });
 
                     break :b ptr.t;
                 },
 
-                .argc => try self.definedType(.Int),
+                .argc => try self.definedType(.Size),
                 .argv => b: {
                     const ptr = (try self.defined(.Ptr)).dataInst;
                     try self.typeContext.unify(ptr.tyArgs[0].Type, try self.definedType(.ConstStr), null);
@@ -2280,43 +2292,61 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     break :b try self.definedType(.Bool);
                 },
 
-                .errno => try self.definedType(.Int),
+                .errno => try self.definedType(.I32),
                 .@"i64-f64" => b: {
-                    try self.typeContext.unify(args.items[0].t, try self.definedType(.Int), &.{ .l = l });
-                    break :b try self.definedType(.Float);
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.I64), &.{ .l = l });
+                    break :b try self.definedType(.F64);
                 },
                 .@"f64-i64-floor" => b: {
-                    try self.typeContext.unify(args.items[0].t, try self.definedType(.Float), &.{ .l = l });
-                    break :b try self.definedType(.Int);
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.F64), &.{ .l = l });
+                    break :b try self.definedType(.I64);
                 },
 
-                .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => b: {
-                    const intTy = try self.definedType(.Int);
+                .@"i64-add",
+                .@"i64-sub",
+                .@"i64-mul",
+                .@"i64-div",
+                .@"i32-add",
+                .@"i32-sub",
+                .@"i32-mul",
+                .@"i32-div",
+                .@"size-add",
+                .@"size-sub",
+                .@"size-mul",
+                .@"size-div",
+                .@"f64-add",
+                .@"f64-sub",
+                .@"f64-mul",
+                .@"f64-div",
+                => b: {
+                    const intTy = switch (intr.ty) {
+                        .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => try self.definedType(.I64),
+                        .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => try self.definedType(.I32),
+                        .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => try self.definedType(.F64),
+                        .@"size-add", .@"size-sub", .@"size-mul", .@"size-div" => try self.definedType(.Size),
+
+                        else => unreachable,
+                    };
                     try self.typeContext.unify(args.items[0].t, intTy, &.{ .l = args.items[0].l });
                     try self.typeContext.unify(args.items[1].t, intTy, &.{ .l = args.items[1].l });
 
                     break :b intTy;
                 },
-                .@"i64-cmp" => b: {
-                    const intTy = try self.definedType(.Int);
+                .@"i64-cmp",
+                .@"i32-cmp",
+                .@"f64-cmp",
+                .@"size-cmp",
+                => b: {
+                    const intTy = try switch (intr.ty) {
+                        .@"i64-cmp" => self.definedType(.I64),
+                        .@"i32-cmp" => self.definedType(.I32),
+                        .@"f64-cmp" => self.definedType(.F64),
+                        .@"size-cmp" => self.definedType(.Size),
+                        else => unreachable,
+                    };
                     const ordTy = try self.definedType(.Ordering);
                     try self.typeContext.unify(args.items[0].t, intTy, &.{ .l = args.items[0].l });
                     try self.typeContext.unify(args.items[1].t, intTy, &.{ .l = args.items[1].l });
-
-                    break :b ordTy;
-                },
-                .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => b: {
-                    const floatTy = try self.definedType(.Float);
-                    try self.typeContext.unify(args.items[0].t, floatTy, &.{ .l = args.items[0].l });
-                    try self.typeContext.unify(args.items[1].t, floatTy, &.{ .l = args.items[1].l });
-
-                    break :b floatTy;
-                },
-                .@"f64-cmp" => b: {
-                    const floatTy = try self.definedType(.Float);
-                    const ordTy = try self.definedType(.Ordering);
-                    try self.typeContext.unify(args.items[0].t, floatTy, &.{ .l = args.items[0].l });
-                    try self.typeContext.unify(args.items[1].t, floatTy, &.{ .l = args.items[1].l });
 
                     break :b ordTy;
                 },
@@ -2360,15 +2390,28 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         return try self.qualified(con);
     } // con
     else if (self.consume(.INTEGER)) |i| {
+        const intTy = try self.definedType(.I64);
+        const retTy = try self.typeContext.fresh();
+        const funTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{intTy},
+            .ret = retTy,
+        } });
+
+        const class = try self.definedClass(.FromIntegral);
+        const cfun = class.classFuns[0];
+        const l = self.loc(i);
+        const ifun = try self.instantiateClassFunction(cfun, l);
+        try self.typeContext.unify(funTy, ifun.t, &.{ .l = l });
+
         return self.allocExpr(.{
-            .t = try self.definedType(.Int),
-            .e = .{ .Int = self.parseInt(i) },
+            .t = retTy,
+            .e = .{ .Int = .{ .int = self.parseInt(i), .ref = ifun.ref } },
             .l = self.loc(i),
         });
     } // integer
     else if (self.consume(.FRACTIONAL)) |f| {
         return self.allocExpr(.{
-            .t = try self.definedType(.Float),
+            .t = try self.definedType(.F64),
             .e = .{ .Float = self.parseFloat(f) },
             .l = self.loc(f),
         });
@@ -3414,6 +3457,7 @@ const Type = struct {
                                     .depends = tv,
                                     .uid = self.gen.assocs.newUnique(),
                                     .class = class,
+                                    .default = class.default,
                                     .concrete = null,
                                 });
 
@@ -3603,7 +3647,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
     const varInst: VarInst = switch (vorf) {
         .TNum => |tnum| .{
             .v = .{ .TNum = tnum },
-            .t = try self.definedType(.Int),
+            .t = try self.definedType(.I32),
             .m = try Common.allocOne(self.arena, AST.Match.empty(AST.Scheme.empty())),
             .l = l,
         },
@@ -4514,6 +4558,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
                 .instances = instances,
                 .loc = l,
                 .class = assoc.class,
+                .default = assoc.default,
 
                 .concrete = if (assoc.concrete) |conc| .{
                     .to = try self.typeContext.mapType(tvarMatch, conc.to),
@@ -4718,6 +4763,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .depends = assocTV,
                             .class = assoc.class,
                             .uid = assocID,
+                            .default = assoc.default,
 
                             .concrete = .{
                                 .classFun = conc.classFun,
@@ -4760,6 +4806,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             .depends = assocTV,
                             .class = assoc.class,
                             .uid = assocID,
+                            .default = assoc.default,
                             .concrete = null,
                         });
                     }
@@ -4842,7 +4889,7 @@ pub const Association = struct {
     loc: ?Loc,
     class: *AST.Class,
     instances: Module.ClassInstance,
-    default: ?*AST.Data = null, // for now, when generalizing, we DON'T keep defaults. I'm thinking of applying defaults before generalizing, so that returning strings works correctly. Or make a different default type: `late` and `eager`
+    default: ?*AST.Data, // for now, when generalizing, we DON'T keep defaults. I'm thinking of applying defaults before generalizing, so that returning strings works correctly. Or make a different default type: `late` and `eager`
 
     // when it's null, it's just a `constraint` and not based on a class function call.
     // when it's a value, it's an actual association with an associated function call.
@@ -5009,7 +5056,7 @@ fn makeType(self: *Self, t: anytype) !AST.Type {
 }
 
 fn getReturnType(self: *Self) !AST.Type {
-    return self.returnType orelse try self.definedType(.Int);
+    return self.returnType orelse try self.definedType(.I8);
 }
 
 fn definedType(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {

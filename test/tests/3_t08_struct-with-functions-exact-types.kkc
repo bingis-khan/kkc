@@ -12,7 +12,7 @@
 
 
 MegaCallback
-	MC (() -> Unit) (Int -> Int) (Bool -> Int)
+	MC (() -> Unit) (I32 -> I32) (Bool -> I32)
 
 
 fn sos ()

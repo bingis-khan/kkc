@@ -1,11 +1,11 @@
 
 fn undefined(): @undefined
-fn offset-ptr(x Ptr a, count Int):
-	@offset-ptr(x, count * @size-of(@undefined as a))  # Alignment is already included in size, (as padding) so move should be okay?
+fn offset-ptr(x Ptr a, count I64):
+	@offset-ptr(x, count * @cast(@size-of(@undefined as a)))  # Alignment is already included in size, (as padding) so move should be okay?
 
 
 TypeSize a
-	size Int
+	size Size
 
 fn get-typesize () -> TypeSize a
 	return TypeSize { size: @size-of(@undefined as a) }
@@ -43,7 +43,7 @@ fn cast-on-zeroed(x a) -> b
 fn null-ptr() -> Ptr a: zeroed()
 fn is-ptr-null(p Ptr a): @memeq(p, null-ptr())
 
-fn ptr-to-int(p Ptr a) -> Int: @cast(p)
+fn ptr-to-int(p Ptr a) -> Size: @cast(p)
 fn ptr-eq(l Ptr a, r Ptr a):
 	@memeq(l, r)
 
@@ -54,12 +54,4 @@ fn from-nullable-c-str (s ConstStr)
 	else
 		return Just(s)
 
-
-use Cnile
-	I32
-	U64
-	I64
-fn u64-int (x U64) -> Int: @cast(x)
-fn i64-int (x I64) -> Int: @cast(x)
-fn i32-int (x I32) -> Int: cast-on-zeroed(x)
-
+# fn i32-i64(x I32) -> I64: Mem.cast-on-zeroed(x)

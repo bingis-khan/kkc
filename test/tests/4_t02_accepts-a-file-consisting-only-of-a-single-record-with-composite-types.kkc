@@ -1,5 +1,5 @@
 #$ Harder to parse record with ADTs.
 
 HarderRecord
-	nice Maybe Int
-	cool Either (Maybe Unit) (Either Unit Int)
+	nice Maybe I32
+	cool Either (Maybe Unit) (Either Unit I32)

@@ -6,9 +6,6 @@ use Slice
 	Slice
 use Mem
 	undefined
-	i32-int
-	i64-int
-	u64-int
 	cast
 use Error
 	panic
@@ -42,13 +39,12 @@ fn deps (d, it): it
 
 fn run' (args Slice ConstStr)
 	pid = Cnile.fork()
-	pid' = pid i32-int()
-	if pid' < 0
+	if pid < 0
 		panic('fork() failed')
 
 	# child
 	# TODO: turn casts into proper conversions
-	if pid' == 0
+	if pid == 0
 		Cnile.execvp(args Slice.get(0), args.ptr cast())
 
 		panic('execvp() failed')
@@ -57,7 +53,7 @@ fn run' (args Slice ConstStr)
 	# parent
 	else
 		status = 0
-		if Cnile.waitpid(pid, &status cast(), 0 cast()) i32-int() < 0
+		if Cnile.waitpid(pid, &status, 0) < 0
 			panic('waitpid() failed')
 
 		if not Cnile.wifexited(status)

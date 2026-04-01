@@ -30,8 +30,8 @@ inst MyStr MyConcatStr
 
 fn f (x) -> Unit
 	int-const = 69
-	inst MyStr Int
-		print-str (x Int) -> Unit
+	inst MyStr I32
+		print-str (x I32) -> Unit
 			println(int-const)
 			println(x)
 

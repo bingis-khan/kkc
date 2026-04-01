@@ -1,7 +1,7 @@
 #$ Only one constructor is used (an type's inner union is unused.)
 
 Fun
-	Fun1 (Int -> Int)
+	Fun1 (I32 -> I32)
 	Fun2 (() -> Unit)
 
 x = Fun1(fn x: x + 1)

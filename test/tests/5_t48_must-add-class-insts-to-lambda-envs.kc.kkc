@@ -2,14 +2,14 @@
 # 1
 
 class Dupa
-	dupa (x _) -> Int
+	dupa (x _) -> I32
 
-inst Dupa Int
-	dupa (x) -> Int
+inst Dupa I32
+	dupa (x) -> I32
 		return x
 
 inst Dupa Bool
-	dupa (x) -> Int
+	dupa (x) -> I32
 		if x
 			return 1
 		else

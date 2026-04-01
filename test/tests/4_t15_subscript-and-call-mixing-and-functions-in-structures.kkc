@@ -2,7 +2,7 @@
 # 696969
 
 Inner3
-	a Int
+	a I32
 
 Inner2
 	a Inner3

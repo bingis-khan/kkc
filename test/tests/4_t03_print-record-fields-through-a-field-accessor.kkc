@@ -4,7 +4,7 @@
 
 MyRecord
 	nice Unit
-	other-nice Int
+	other-nice I32
 
 rec = MyRecord { nice: Unit, other-nice: 1234 }
 

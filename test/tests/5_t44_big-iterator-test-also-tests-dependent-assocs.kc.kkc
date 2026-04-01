@@ -29,12 +29,12 @@ class Iter
 	next (self Ptr _) -> Maybe item
 
 Range
-	from Int
-	to Int
+	from I32
+	to I32
 
 RangeIter
 	og Range
-	cur Int
+	cur I32
 
 inst IntoIter Range
 	into-iter (self Range) -> RangeIter
@@ -45,7 +45,7 @@ inst IntoIter RangeIter
 		return self
 
 inst Iter RangeIter
-	next (self Ptr RangeIter) -> Maybe Int
+	next (self Ptr RangeIter) -> Maybe I32
 		r = self&.og
 		if self&.cur > r.to
 			return None

@@ -10,8 +10,8 @@ Num a
 
 
 Vec2
-	x Int
-	y Int
+	x I32
+	y I32
 
 
 fn add-vec (v1 Vec2, v2 Vec2)

@@ -4,8 +4,8 @@
 class MyStr
 	print-str (self _) -> Unit
 
-inst MyStr Int
-	print-str (self Int) -> Unit
+inst MyStr I32
+	print-str (self I32) -> Unit
 		println(123)
 
 print-str(123)

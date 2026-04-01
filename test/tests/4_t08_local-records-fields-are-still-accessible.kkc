@@ -1,9 +1,9 @@
 #$ Local record's fields are still accessible.
 # 420
 
-fn get-hidden-record (x Int)
+fn get-hidden-record (x I32)
 	HiddenRecord
-		hidden-value Int
+		hidden-value I32
 
 	return HiddenRecord { hidden-value: x }
 

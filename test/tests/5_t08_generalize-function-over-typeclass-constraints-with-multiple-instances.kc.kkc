@@ -3,14 +3,14 @@
 # 69
 
 class MyAsInt
-	to-int (self _) -> Int
+	to-int (self _) -> I32
 
-inst MyAsInt Int
-	to-int (self Int) -> Int
+inst MyAsInt I32
+	to-int (self I32) -> I32
 		return self
 
 inst MyAsInt Bool
-	to-int (self Bool) -> Int
+	to-int (self Bool) -> I32
 		if self
 			return 1
 		else

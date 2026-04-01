@@ -1,6 +1,6 @@
 #$ Check if we are including environments when making a scheme.
 Asd it
-	Asd it (Int -> Int)
+	Asd it (I32 -> I32)
 
 class IntoAsd
 	into-asd (self _) -> it

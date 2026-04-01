@@ -12,7 +12,7 @@ MiauBox
 fn boxed-miau(MiauBox(n))
 	n miau()
 
-inst Miau Int
+inst Miau I32
 	miau (self _)
 		println('miau \(self)!')
 
@@ -21,7 +21,7 @@ x = MiauBox(1)
 boxed-miau(x)
 
 
-inst Miau Int
+inst Miau I32
 	miau (self _)
 		println('non miau \(self)!')
 

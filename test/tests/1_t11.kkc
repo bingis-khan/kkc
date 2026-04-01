@@ -8,8 +8,8 @@ add = fn x: fn y: x + y
 sub = fn x: fn y: x - y
 
 # add 'unused' warning and silence the warning in the generated code / add (void)expr to silence it.
-mul = fn x: fn y: x * y as Int  # kkc: had to add type hints, because arithmetic operations are now based on typeclasses.
-div = fn x: fn y: x / y as Int
+mul = fn x: fn y: x * y as I32  # kkc: had to add type hints, because arithmetic operations are now based on typeclasses.
+div = fn x: fn y: x / y as I32
 
 println(add(1)(2))
 println(sub(1337)(123))
@@ -17,7 +17,7 @@ println(sub(1337)(123))
 
 add69 = add(69)
 
-fn mapInt (f Int -> Int, x Int) -> Int
+fn mapInt (f I32 -> I32, x I32) -> I32
 	return f(x)
 
 println(mapInt(add69, 420))

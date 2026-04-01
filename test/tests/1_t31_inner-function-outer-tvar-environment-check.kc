@@ -7,7 +7,7 @@
 # todo: turn into test
 class A
 	dosth (x _) -> Unit
-inst A Int
+inst A I32
 	dosth (x) -> Unit
 		return
 

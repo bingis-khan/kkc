@@ -7,9 +7,9 @@
 # 0
 
 CoolVec
-	x Int
-	y Int
-	z Int
+	x I32
+	y I32
+	z I32
 
 fn pvec (p CoolVec) -> Unit
 	println(p.x)

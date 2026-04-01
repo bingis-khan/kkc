@@ -1,7 +1,7 @@
 #$ A constructor with functions and other stuff
 
 Fun
-	Fun (Int -> Int) Int (() -> Unit) Bool Unit
+	Fun (I32 -> I32) I32 (() -> Unit) Bool Unit
 
 fn print1 ()
 	println(1)

@@ -4,7 +4,7 @@
 # ()
 
 NestedRec
-	nested-int Int
+	nested-int I32
 	nested-unit Unit
 
 Rec

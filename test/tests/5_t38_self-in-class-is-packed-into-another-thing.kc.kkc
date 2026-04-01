@@ -6,10 +6,10 @@ NotPtr a
 	NotPtr a
 
 class Iter
-	next (self NotPtr _) -> Int
+	next (self NotPtr _) -> I32
 
-inst Iter Int
-	next (NotPtr(x)) -> Int
+inst Iter I32
+	next (NotPtr(x)) -> I32
 		return x
 
 x = NotPtr(420)

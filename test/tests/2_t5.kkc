@@ -4,8 +4,8 @@
 # AndElse
 
 Fun
-	Fun (Int -> Int)
-	SomethingElse Int Unit
+	Fun (I32 -> I32)
+	SomethingElse I32 Unit
 	AndElse
 
 inst Str.Str Fun

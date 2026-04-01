@@ -7,7 +7,7 @@
 # 3
 
 Vec3
-	Vec3 Int Int Int
+	Vec3 I32 I32 I32
 
 fn mk-vec3 (x, y, z)
 	return Vec3(x, y, z)

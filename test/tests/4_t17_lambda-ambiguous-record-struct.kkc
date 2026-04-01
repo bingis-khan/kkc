@@ -3,8 +3,8 @@
 # 10
 
 Range
-	from Int
-	to Int
+	from I32
+	to I32
 
 fn range (f, t)
 	return Range { from: f, to: t}

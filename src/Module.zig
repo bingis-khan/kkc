@@ -128,6 +128,7 @@ pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
                 .Synonym => return error.PreludeError, // this is so low level, I don't want to handle synonyms.
             }
         } else {
+            std.debug.print("CANNOT FIND {s}\n", .{kv.value.*});
             return error.PreludeError;
         }
     }
@@ -151,7 +152,7 @@ pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
         .predefinedTypes = enums,
         .predefinedClasses = classEnums,
         .intTypeTemp = try typeContext.newType(.{ .Con = .{
-            .type = self.lookupData("Int").?.Data,
+            .type = self.lookupData("U64").?.Data,
             .application = try common.allocOne(typeContext.arena, ast.Match.empty(ast.Scheme.empty())),
             .outerApplication = &.{},
         } }),

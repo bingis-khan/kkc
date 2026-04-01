@@ -8,7 +8,7 @@ use Slice
 
 
 class Allocator
-	allocate (self _, count Int) -> Slice a
+	allocate (self _, count Size) -> Slice a
 	free (self _, slice Slice a) -> Unit
 
 
@@ -21,7 +21,7 @@ fn idc(): CAllocator
 
 
 inst Allocator CAllocator
-	allocate (CAllocator CAllocator, count Int) -> Slice a
+	allocate (CAllocator CAllocator, count Size) -> Slice a
 		size = (get-typesize() as TypeSize a).size
 		ptr = Cnile.malloc(size * count) cast-ptr()
 

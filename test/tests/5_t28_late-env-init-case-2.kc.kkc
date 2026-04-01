@@ -19,8 +19,8 @@ fn f (msp) -> Unit
 	print-str(msp)
 
 sumtin = 420
-inst MyStr Int
-	print-str (x Int) -> Unit
+inst MyStr I32
+	print-str (x I32) -> Unit
 		println(sumtin)
 		println(x)
 

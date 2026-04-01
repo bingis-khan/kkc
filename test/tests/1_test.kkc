@@ -13,11 +13,11 @@ fn g ()
 Unused
 	Some
 	Unused
-	Type Int
+	Type I32
 
 Used a
 	IUseThis a Bool
-	Dupsko a a Unused a Int
+	Dupsko a a Unused a I32
 
 
 hey = IUseThis(123, True)

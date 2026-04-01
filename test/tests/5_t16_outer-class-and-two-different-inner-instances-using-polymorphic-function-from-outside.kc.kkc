@@ -26,8 +26,8 @@ fn f ()
 		h-const = 69
 		fn h()
 			boop-const = Unit
-			inst A Int
-				do-sth (x Int) -> Unit
+			inst A I32
+				do-sth (x I32) -> Unit
 					println(x)
 					print-id(x)
 					return

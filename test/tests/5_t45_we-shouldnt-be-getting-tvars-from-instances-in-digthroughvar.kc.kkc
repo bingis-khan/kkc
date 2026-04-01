@@ -9,12 +9,12 @@ class Iter
 	next (self Ptr _) -> Maybe item
 
 Range
-	from Int
-	to Int
+	from I64
+	to I64
 
 RangeIter
 	og Range
-	cur Int
+	cur I64
 
 inst IntoIter Range
 	into-iter (self Range) -> RangeIter
@@ -25,7 +25,7 @@ inst IntoIter RangeIter
 		return self
 
 inst Iter RangeIter
-	next (self Ptr RangeIter) -> Maybe Int
+	next (self Ptr RangeIter) -> Maybe I64
 		r = self&.og
 		if self&.cur > r.to
 			return None
@@ -109,14 +109,14 @@ fn for-each-print (iterable it) <= IntoIter it
 fn range (from, to)
 	return Range { from: from, to: to }
 
-fn bool-to-int (x Bool) -> Int
+fn bool-to-int (x Bool) -> I64
 	if x
 		return 1
 	else
 		return 0
 
 BoolRange
-	cur Int
+	cur I64
 
 inst IntoIter BoolRange
 	into-iter (self BoolRange) -> BoolRange

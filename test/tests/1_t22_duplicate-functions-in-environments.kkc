@@ -2,10 +2,10 @@
 # 71
 # 422
 
-fn add1 (x Int) -> Int
+fn add1 (x I32) -> I32
 	return x + 1
 
-fn add2 (x Int) -> Int
+fn add2 (x I32) -> I32
 	x' = add1(x)
 	x'' = add1(x')
 	return x''

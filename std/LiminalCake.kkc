@@ -47,7 +47,7 @@ inst ListLike Matrix
 # Unless we change into-iter to take in pointers, we have to do it like this bruv.
 VectorIter ^count a
 	backin' Vector count a
-	cur Int
+	cur I32  # to match the type of ^count bruh
 
 inst IntoIter Vector
 	into-iter (self):
@@ -62,7 +62,7 @@ inst Iter VectorIter
 		if self&.cur >= count
 			return None
 
-		e = (&self&.backin'.backing) Array.get(self&.cur)
+		e = (&self&.backin'.backing) Array.get(@cast(self&.cur))
 		self <&.cur= self&.cur + 1
 		return Just(e)
 
@@ -75,7 +75,7 @@ inst Str Vector
 
 
 
-fn distance-to (v Vector a Float, v' Vector a Float):
+fn distance-to (v Vector a F64, v' Vector a F64):
 	v zip (v')
 		map(fn Tuple2(l, r): l - r)
 		map(fn x: x * x)

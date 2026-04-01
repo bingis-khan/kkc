@@ -17,7 +17,7 @@ fn f (Noah SomeEnum)
 f(Noah)
 
 
-fn ff (Tuple2(x, Tuple2(y, Tuple2(z, soy))) Tuple2 Int (Tuple2 Unit (Tuple2 Bool Bool)))
+fn ff (Tuple2(x, Tuple2(y, Tuple2(z, soy))) Tuple2 I32 (Tuple2 Unit (Tuple2 Bool Bool)))
 	println(x)
 	println(y)
 	println(z)
