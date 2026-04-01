@@ -1210,6 +1210,9 @@ const Stmt = struct {
             .BinOp => |binop| {
                 switch (binop.op) {
                     .Plus, .Minus, .Times, .Divide, .Equals, .NotEquals => |inst| {
+                        if (binop.op == .NotEquals) {
+                            try stmt.p(.{"!"});
+                        }
                         try stmt.instFun(inst);
                         try stmt.p(.{"("});
                         try stmt.genExpr(binop.l);
@@ -1297,7 +1300,7 @@ const Stmt = struct {
                             if (i != 0) {
                                 try stmt.j(",");
                             }
-                            try stmt.j(.{ ".", sanitize(field.field) });
+                            try stmt.j(.{ ".", "f_", sanitize(field.field) });
                             try stmt.p("=");
                             try stmt.genExpr(field.value);
                         }
@@ -2082,7 +2085,9 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
     const data = tyApp.type;
 
     if (ast.Annotation.find(data.annotations, "cstdinclude")) |ann| {
-        try self.backend.imports.insert(ann.params[0]);
+        for (ann.params) |param| {
+            try self.backend.imports.insert(param);
+        }
     }
 
     if (ast.Annotation.find(data.annotations, "ctype")) |ann| {

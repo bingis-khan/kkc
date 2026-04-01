@@ -1436,7 +1436,7 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
             }
 
             if (c.type.eq(self.prelude.defined(.Char))) {
-                return ffi.types.pointer;
+                return ffi.types.schar;
             }
 
             if (ast.Annotation.find(c.type.annotations, "ctype")) |ann| {
@@ -1462,6 +1462,14 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 
                 if (common.streq(c.type.name, "U64")) {
                     return ffi.types.uint64;
+                }
+
+                if (common.streq(c.type.name, "CInt")) {
+                    return ffi.types.sint;
+                }
+
+                if (common.streq(c.type.name, "ExecVpArgv")) {
+                    return ffi.types.pointer;
                 }
             }
 

@@ -9,6 +9,7 @@ use Mem
 	i32-int
 	i64-int
 	u64-int
+	cast
 use Error
 	panic
 use Iter
@@ -46,8 +47,9 @@ fn run' (args Slice ConstStr)
 		panic('fork() failed')
 
 	# child
+	# TODO: turn casts into proper conversions
 	if pid' == 0
-		Cnile.execvp(args Slice.get(0), args.ptr)
+		Cnile.execvp(args Slice.get(0), args.ptr cast())
 
 		panic('execvp() failed')
 		Cnile.exit(127)
@@ -55,7 +57,7 @@ fn run' (args Slice ConstStr)
 	# parent
 	else
 		status = 0
-		if Cnile.waitpid(pid, &status, 0) i32-int() < 0
+		if Cnile.waitpid(pid, &status cast(), 0 cast()) i32-int() < 0
 			panic('waitpid() failed')
 
 		if not Cnile.wifexited(status)

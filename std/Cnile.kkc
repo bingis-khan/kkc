@@ -6,17 +6,20 @@ Void
 FILE
 
 #!temp here
-#[bytes '4']
+#[ctype 'uint32_t', cstdinclude 'stdint.h', bytes '4']
 U32
 
-#[bytes '8']
+#[ctype 'uint64_t', cstdinclude 'stdint.h', bytes '8']
 U64
 
-#[bytes '4']
+#[ctype 'int32_t', cstdinclude 'stdint.h', bytes '4']
 I32
 
-#[bytes '8']
+#[ctype 'int64_t', cstdinclude 'stdint.h', bytes '8']
 I64
+
+#[ctype 'int', bytes '4']
+CInt
 
 
 #[ctype 'struct timespec']
@@ -48,6 +51,10 @@ Stat
 	unused1 I64 # [3]isize
 	unused2 I64
 	unused3 I64
+
+
+#[ctype 'char* const*']
+ExecVpArgv
 
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
@@ -115,12 +122,18 @@ external
 	mkdir (path ConstStr, mode Int) -> Int
 
 	#### unistd.h ####
-	chdir (path ConstStr) -> Int
+	#[cstdinclude 'unistd.h']
+	chdir (path ConstStr) -> CInt
 
 	#### ????
+	#[cstdinclude 'unistd.h']
 	fork () -> I32  # pid_t
-	execvp (name ConstStr, args Ptr ConstStr) -> Void
-	waitpid (pid I32, status Ptr Int, options Int) -> I32
+
+	#[cstdinclude 'unistd.h']
+	execvp (name ConstStr, args ExecVpArgv) -> Void
+
+	#[cstdinclude 'sys/wait.h']
+	waitpid (pid I32, status Ptr CInt, options CInt) -> I32
 	
 
 #[dylib 'libm.so.6']

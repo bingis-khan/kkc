@@ -1322,7 +1322,7 @@ fn mapEnv(self: *Self, match: anytype, envref: ast.EnvRef) error{OutOfMemory}!as
     if (match.mapEnv(envAndBase.base)) |nue| {
         return nue;
     } else {
-        return if (envAndBase.env.*) |*env| bb: {
+        return if (envAndBase.env.*) |env| bb: {
             const menvMatch = try self.mapMatch_(match, env.match);
             break :bb if (menvMatch) |envMatch| b: {
                 break :b try self.newEnv(.{

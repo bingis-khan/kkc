@@ -1220,6 +1220,7 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
 //  #[dylib 'libc.so']
 //  external printf(fmt Ptr Char, x a) -> Void
 // TODO: check if statements make sense in context.
+// TODO: merge / somehow handle duplicate annotations
 fn parseAnnotation(self: *Self) ![]AST.Annotation {
     var annotations = std.ArrayList(AST.Annotation).init(self.arena); // nothing is allocated when there are no annotations.
     while (self.check(.BEGIN_ANNOTATION)) {
@@ -4547,7 +4548,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
     // now environment shit
     for (scheme.envVars, envVars) |sse, me| {
         const se = self.typeContext.getEnv(sse).env;
-        if (se.*) |*env| {
+        if (se.*) |env| { // NOTE: DO NOT EVEN FUCKING TRY TAKING A REFERENCE TO *ENV YOU FUCKING NIGGER.
             try self.typeContext.unifyEnv(me, try self.typeContext.newEnv(.{
                 .env = env.env,
                 .fun = env.fun,
