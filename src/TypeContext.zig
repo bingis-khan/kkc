@@ -1081,11 +1081,13 @@ pub const FTVs = struct {
     pub fn difference(self: *@This(), diff: *const @This()) void {
         self.tyvars.difference(&diff.tyvars);
         self.envs.difference(&diff.envs);
+        self.nums.difference(&diff.nums);
     }
 
     pub fn deinit(self: *@This()) void {
         self.tyvars.deinit();
         self.envs.deinit();
+        self.nums.deinit();
     }
 
     pub fn mkScheme(self: *const @This()) !ast.Scheme {

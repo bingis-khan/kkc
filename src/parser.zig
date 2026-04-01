@@ -4632,6 +4632,20 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         try self.typeContext.unify(e.t, tvt, null);
     }
 
+    var numIt = funftvs.nums.iterator();
+    while (numIt.next()) |freenum| {
+        const name = try std.fmt.allocPrint(self.arena, "'{}", .{freenum.id});
+        const tnum = AST.TNum{
+            .name = name,
+            .binding = expectedBinding,
+            .uid = self.gen.vars.newUnique(),
+        };
+        const tnumref = try self.typeContext.newNum(.{ .TNum = tnum });
+
+        try self.typeContext.unifyNum(freenum.*, tnumref, null, undefined);
+        try tvars.append(.{ .TNum = tnum });
+    }
+
     var envs = std.ArrayList(AST.EnvRef).init(self.arena);
     var envIt = funftvs.envs.iterator();
     while (envIt.next()) |e| {
