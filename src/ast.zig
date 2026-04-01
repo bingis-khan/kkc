@@ -325,7 +325,7 @@ pub const Function = struct {
         c.print(.{ self.name, " (" });
         c.sepBy(self.params, ", ");
         c.s(")");
-        self.env.print(c);
+        // self.env.print(c); // TEMP
         // c.encloseSepBy(self.temp__calls.items, ", ", "[", "]");
         c.s(" -> ");
         self.ret.print(c);
@@ -1295,9 +1295,9 @@ pub const TyVar = struct {
 
         const mFields = c.typeContext.getFieldsForTVar(self);
 
-        if (mFields) |fields| {
-            std.debug.assert(fields.len > 0);
-            c.encloseSepBy(fields, ", ", " { ", " }");
+        if (mFields) |tvs| {
+            std.debug.assert(tvs.fields.len > 0);
+            c.encloseSepBy(tvs.fields, ", ", " { ", " }");
         }
     }
 
@@ -1442,14 +1442,14 @@ pub fn TypeF(comptime a: ?type) type {
                             c.s(" ");
                             c.sepBy(con.application.tvars, " ");
                         }
-                        if (con.application.envVars.len > 0) {
-                            c.s(" |] ");
-                            c.sepBy(con.application.envVars, " ");
-                        }
-                        if (con.outerApplication.len > 0) {
-                            c.s(" |> ");
-                            c.sepBy(con.outerApplication, " ");
-                        }
+                        // if (con.application.envVars.len > 0) {
+                        //     c.s(" |] ");
+                        //     c.sepBy(con.application.envVars, " ");
+                        // }
+                        // if (con.outerApplication.len > 0) {
+                        //     c.s(" |> ");
+                        //     c.sepBy(con.outerApplication, " ");
+                        // }
                         c.s(")");
                     } else {
                         con.type.print(c);
@@ -1458,7 +1458,7 @@ pub fn TypeF(comptime a: ?type) type {
 
                 .Fun => |fun| {
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    fun.env.print(c); // TEMP
+                    // fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                 },

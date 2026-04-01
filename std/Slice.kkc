@@ -33,13 +33,13 @@ fn get-ptr (slice Slice a, i Idx) -> Ptr a
 	if i < 0 or i >= slice.count
 		panic('Access to slice at index \(i). (max: \(slice.count))')
 
-	elem-ptr = slice.ptr Mem.offset-ptr(@cast(i))
+	elem-ptr = slice.ptr Mem.offset-ptr(Mem.size-i64(i))
 	return elem-ptr
 
 fn try-get (slice Slice a, i Idx) -> Maybe a
 	if i < 0 or i >= slice.count
 		return None
-	elem-ptr = slice.ptr Mem.offset-ptr(@cast(i))  # TODO(safe-cast)
+	elem-ptr = slice.ptr Mem.offset-ptr(Mem.size-i64(i))
 	return Just(elem-ptr&)
 
 fn get (slice Slice a, i Idx) -> a:
@@ -57,7 +57,7 @@ fn subslice (slice Slice a, from Idx, to Idx) -> Slice a
 		panic('tried to sublice [\(from):\(to)], but slice has \(slice.count) elements')
 	
 
-	begin-ptr = slice.ptr Mem.offset-ptr(@cast(from))
+	begin-ptr = slice.ptr Mem.offset-ptr(Mem.size-i64(from))
 	count = to - from
 	if count < 0
 		count <= 0
@@ -83,7 +83,7 @@ inst Iter SliceIter
 		if off + 1 > self&.slice.count
 			return None
 
-		elem = self&.slice.ptr offset-ptr(@cast(off))&
+		elem = self&.slice.ptr offset-ptr(Mem.size-i64(off))&
 		self <&.current-offset= off + 1
 		return Just(elem)
 
@@ -114,7 +114,7 @@ inst Iter SliceAddressIter
 		if off + 1 > self&.slice.count
 			return None
 
-		elem = self&.slice.ptr offset-ptr(@cast(off))
+		elem = self&.slice.ptr offset-ptr(Mem.size-i64(off))
 		self <&.current-offset= off + 1
 		return Just(elem)
 
@@ -123,7 +123,7 @@ fn copy-to (src Slice a, dest Slice a) -> Unit
 	if src.count > dest.count
 		panic('cannot copy to a slice that is smaller! (copying from \(src.count)-element slice to \(dest.count)-element slice)')
 
-	src zip(Iter.from(0)) for-each(fn Tuple2(elem, i): set(dest, @cast(i), elem))
+	src zip(Iter.from(0)) for-each(fn Tuple2(elem, i): set(dest, Mem.i32-size(i), elem))
 
 
 inst Str Slice

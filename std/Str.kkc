@@ -35,11 +35,11 @@ inst IntoIter ConstStrIter
 
 inst Iter ConstStrIter
 	next (self)
-		if self&.i >= @cast(Cnile.strlen(self&.ogstr))  # later this will be good, when the default string will also have a length.
+		if self&.i >= Mem.i32-size(Cnile.strlen(self&.ogstr))  # later this will be good, when the default string will also have a length.
 			return None
 
 		char-ptr = Mem.cast(self&.ogstr) as Ptr Cnile.Char
-		c = (char-ptr Mem.offset-ptr(@cast(self&.i)))&  # TODO(safe-conversion)
+		c = (char-ptr Mem.offset-ptr(Mem.size-i64(self&.i)))&
 		self <&.i= self&.i + 1
 		return Just(c)
 
@@ -295,8 +295,11 @@ inst Str TakeWhile
 fn nullchar() -> Cnile.Char: Mem.zeroed()  # HACK!!
 fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this is incorrect, because zip() trims!
 fn streq(l, r): eq(l, r)
-fn char-int(c Char) -> I32:
+fn char-i32(c Char) -> I32:
 	Mem.cast-on-zeroed(c)
+fn i32-char(i I32) -> Char:
+	Mem.cast(i)
+
 fn print-as-list(it)
 	print-str('[')
 	case it head()

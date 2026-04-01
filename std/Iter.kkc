@@ -309,7 +309,7 @@ fn break' (it, pred):
 
 fn unordered-pairs(it): it
 	zip(from(1))
-	map(fn Tuple2(e, d): it drop(@cast(d)) map(fn e': Tuple2(e, e'))) # TODO(safe-conversion)
+	map(fn Tuple2(e, d): it drop(Mem.i32-size(d)) map(fn e': Tuple2(e, e'))) # TODO(safe-conversion)
 	flatten()
 
 ### append
@@ -413,8 +413,8 @@ fn null(it): it head() == None
 
 
 inst ListDecon Range
-	deconstruct (Range(rf, rt), lp, lc, spread, rp, rc)
-		count = rt - rf
+	deconstruct (Range(rf, rt), lp, lc Size, spread, rp, rc Size)
+		count = Mem.i32-size(rt - rf)
 		fn set-ptr (p, i, e)
 			pp = Mem.offset-ptr(p, i)
 			pp <&= e
@@ -424,18 +424,18 @@ inst ListDecon Range
 				return False
 
 			Range(rf, rt)
-				take(@cast(lc)) # TEMP: use proper class function later
+				take(lc)
 				zip(from(0))
-				for-each(fn Tuple2(lv, i): set-ptr(lp&, @cast(i), lv)) # TODO(safe-conversion)
+				for-each(fn Tuple2(lv, i): set-ptr(lp&, Mem.i32-i64(i), lv))
 
 		if rc > 0
 			if rc + lc > count
 				return False
 
 			Range(rf, rt)
-				drop(@cast(count - rc + 1))
+				drop(count - rc + 1)
 				zip(from(0))
-				for-each(fn Tuple2(rv, i): set-ptr(rp&, @cast(i), rv)) # TODO(safe-conversion)
+				for-each(fn Tuple2(rv, i): set-ptr(rp&, Mem.i32-i64(i), rv))
 
 		case spread
 			NoSpread
@@ -445,7 +445,7 @@ inst ListDecon Range
 				return True
 
 			AssignedSpread(xptr)
-				xptr <&= Range(rf + lc, rt - rc)
+				xptr <&= Range(rf + Mem.size-i32(lc), rt - Mem.size-i32(rc))
 				return True
 
 
@@ -455,7 +455,7 @@ inst ListDecon Range
 # effectful version will end with a `'`
 
 fn drop'(it, n)
-	1 to (n) for-each(fn _: it next())
+	1 to (Mem.size-i32(n)) for-each(fn _: it next())
 
 
 fn drop-while'(it iter, pred) -> iter <= Iter iter

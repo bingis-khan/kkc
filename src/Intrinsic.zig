@@ -16,6 +16,7 @@ pub const Type: type = addNumericEnums(enum {
 
     @"i64-f64",
     @"f64-i64-floor",
+    @"i32-i64",
 });
 
 const List = [_]Self{
@@ -29,6 +30,7 @@ const List = [_]Self{
     .{ .ty = .errno, .args = 0 },
     .{ .ty = .@"i64-f64", .args = 1 },
     .{ .ty = .@"f64-i64-floor", .args = 1 },
+    .{ .ty = .@"i32-i64", .args = 1 },
 } ++ addNumericDecls();
 
 const Self = @This();
@@ -51,7 +53,7 @@ pub fn findByName(name: Str) ?Self {
     return finder.get(name);
 }
 
-const NumberTypes = [_][]const u8{ "i32", "i64", "f64", "size" };
+const NumberTypes = [_][]const u8{ "i32", "u32", "i64", "f64", "size" };
 const NumberOps = [_][]const u8{ "add", "sub", "mul", "div", "cmp" };
 
 // https://kihlander.net/post/extending-an-enum-in-zig/

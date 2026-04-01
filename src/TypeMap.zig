@@ -20,6 +20,11 @@ pub const TypeMap = struct {
         };
     }
 
+    pub fn initMap(match: *const ast.Match, tyc: TypeContext, prev: ?*const @This()) !@This() {
+        const mm = if (prev) |tm| try tyc.mapMatch(tm, match) else match;
+        return TypeMap.init(mm, prev);
+    }
+
     pub fn mapTVar(self: *const @This(), tv: ast.TVar) ?ast.Type {
         // SLOW
         for (self.scheme.tvars, self.match.tvars) |s, m| {

@@ -1,0 +1,16 @@
+#!/bin/env kkc
+#$ Anonymous record polymorphically turns to named record.
+# 420
+
+Rec
+	x I32
+
+fn uni(l a, r a)
+	pass
+
+fn what(r)
+	uni(r, { x: 1 })
+	return r
+
+m = what({ x: 420 }) as Rec
+m.x println()

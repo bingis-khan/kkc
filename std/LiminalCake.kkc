@@ -62,7 +62,7 @@ inst Iter VectorIter
 		if self&.cur >= count
 			return None
 
-		e = (&self&.backin'.backing) Array.get(@cast(self&.cur))
+		e = (&self&.backin'.backing) Array.get(Mem.i32-size(self&.cur))
 		self <&.cur= self&.cur + 1
 		return Just(e)
 

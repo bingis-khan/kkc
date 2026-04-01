@@ -64,7 +64,7 @@ fn allocate-str (s, al) -> ConstStr
 	str = al Alloc.allocate(len + 1)
 	s chars()
 		zip(from(0))
-		for-each(fn Tuple2(c, i): str Slice.set(Mem.cast(i), c))
+		for-each(fn Tuple2(c, i): str Slice.set(Mem.i32-size(i), c))
 
 	str Slice.set(len, Str.nullchar())
 	return str.ptr Mem.cast()
@@ -141,12 +141,12 @@ inst Iter SplitWhitespaceIter
 
 # kekkekekekekkekekek
 fn is-digit (c):
-	Str.char-int(c) >= Str.char-int('0') and Str.char-int(c) <= Str.char-int('9')
+	Str.char-i32(c) >= Str.char-i32('0') and Str.char-i32(c) <= Str.char-i32('9')
 
 
 fn parse-digit (c)
 	if is-digit(c)
-		return Just(Str.char-int(c) - Str.char-int('0'))
+		return Just(Str.char-i32(c) - Str.char-i32('0'))
 	else
 		return None
 
@@ -160,6 +160,6 @@ fn parse-int(s)
 					None
 						return None
 					Just(xe)
-						return Just(x * 10 + xe)
+						return Just(x * 10 + Mem.i32-i64(xe))
 
 	return s chars() reduce(Just(0), sequence-maybe)

@@ -1098,6 +1098,13 @@ const Stmt = struct {
                             .@"size-cmp" => &stmt.ctx.backend.aux.sizecmp,
                             else => unreachable,
                         };
+                        const tyname = ast.Annotation.find(stmt.ctx.prelude.defined(switch (it) {
+                            .@"i64-cmp" => .I64,
+                            .@"i32-cmp" => .I32,
+                            .@"size-cmp" => .Size,
+                            else => unreachable,
+                        }).annotations, "ctype").?.params[0];
+
                         if (!cmp.*) {
                             defer cmp.* = true;
 
@@ -1105,16 +1112,9 @@ const Stmt = struct {
                             stmt.ctx.backend.cur = CW.init(stmt.ctx.backend.al);
                             defer stmt.ctx.backend.cur = oldCW;
 
-                            const tyname = ast.Annotation.find(stmt.ctx.prelude.defined(switch (it) {
-                                .@"i64-cmp" => .I64,
-                                .@"i32-cmp" => .I32,
-                                .@"size-cmp" => .Size,
-                                else => unreachable,
-                            }).annotations, "ctype").?.params[0];
-
                             var e = startLine(stmt.ctx);
                             try e.p(.{ "static", tyname });
-                            try e.j(.{ "builtin_i64cmp (", tyname, " l, ", tyname, " r)" });
+                            try e.j(.{ "builtin_", tyname, "cmp (", tyname, " l, ", tyname, " r)" });
                             try e.beginBody();
                             {
                                 var retl = startLine(stmt.ctx);
@@ -1124,7 +1124,7 @@ const Stmt = struct {
                             try endBodyAndFinish(stmt.ctx);
                             try stmt.ctx.backend.parts.append(stmt.ctx.backend.cur);
                         }
-                        try stmt.p(.{"builtin_i64cmp("});
+                        try stmt.j(.{ "builtin_", tyname, "cmp(" });
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p(",");
                         try stmt.genExpr(intr.args[1]);
@@ -1174,6 +1174,10 @@ const Stmt = struct {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p(")");
                     },
+                    .@"i32-i64" => {
+                        try stmt.j(.{ "(", expr.t, ")" });
+                        try stmt.genExpr(intr.args[0]);
+                    },
                     else => unreachable,
                 }
             },
@@ -1221,7 +1225,10 @@ const Stmt = struct {
                         try stmt.genExpr(unop.e);
                     },
                     .Update => unreachable,
-                    .Negate => unreachable,
+                    .Negate => {
+                        try stmt.j(.{"-"});
+                        try stmt.genExpr(unop.e);
+                    },
                 }
             },
             .BinOp => |binop| {

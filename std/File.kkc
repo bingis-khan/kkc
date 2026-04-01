@@ -25,10 +25,10 @@ fn try-read-contents (filename, al)
 	file-size = Cnile.ftell(file)
 	Cnile.fseek(file, 0, Cnile.seek-set())
 
-	file-buf = al allocate(Mem.cast-on-zeroed(file-size) + 1) as Slice Cnile.Char
+	file-buf = al allocate(Mem.i32-size(file-size) + 1) as Slice Cnile.Char
 
 	Cnile.fread(file-buf.ptr, 1, file-size, file)
-	file-buf Slice.set(Mem.cast-on-zeroed(file-size), Mem.cast(0))
+	file-buf Slice.set(Mem.i32-size(file-size), Str.nullchar())
 
 	Cnile.fclose(file)
 

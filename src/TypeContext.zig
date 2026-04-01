@@ -117,10 +117,14 @@ const NumStore = std.ArrayList(union(enum) {
 // instead of putting it in tyvars, make a separate map (as only a minority of tyvars will have any fields.)
 const TyVarFields = std.HashMap(
     ast.TyVar,
-    std.ArrayList(ast.Record),
+    TyVarSpecs,
     ast.TyVar.comparator(),
     std.hash_map.default_max_load_percentage,
 );
+const TyVarSpecs = struct {
+    fields: std.ArrayList(ast.Record),
+    areFieldsLockedIn: bool,
+};
 
 prelude: ?Prelude = null,
 context: TyStore,
@@ -151,9 +155,22 @@ pub fn fresh(self: *Self) !ast.Type {
     return self.newType(.{
         .TyVar = .{
             .uid = tid,
-            // .fields = std.ArrayList(ast.Record).init(self.arena),
         },
     });
+}
+
+pub fn newAnon(self: *Self, fields: []ast.TypeF(ast.Type).Field) !ast.Type {
+    const tyv = ast.TyVar{ .uid = self.gen.newUnique() };
+    const t = try self.newType(.{ .TyVar = tyv });
+    const gp = try self.tyvarFields.getOrPut(tyv);
+
+    const tyvstuff = gp.value_ptr;
+    tyvstuff.* = .{ .areFieldsLockedIn = true, .fields = std.ArrayList(ast.Record).init(self.arena) };
+    for (fields) |f| {
+        try tyvstuff.fields.append(.{ .field = f.field, .t = f.t });
+    }
+
+    return t;
 }
 
 pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
@@ -215,8 +232,8 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
     // TODO: occurs check
     switch (tt1) {
         .TyVar => |tyv| {
-            if (self.getFieldsForTVar(tyv)) |fields| {
-                for (fields) |f| {
+            if (self.getFieldsForTVar(tyv)) |tyvspecs| {
+                for (tyvspecs.fields) |f| {
                     const t2f = try self.field(t2, f.field, locs);
                     try self.unify_(t2f, f.t, locs, fullTys);
                 }
@@ -229,8 +246,8 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
             switch (tt2) {
                 .TyVar => |tyv| {
                     // COPYPASTA.
-                    if (self.getFieldsForTVar(tyv)) |fields| {
-                        for (fields) |f| {
+                    if (self.getFieldsForTVar(tyv)) |tvs| {
+                        for (tvs.fields) |f| {
                             const t1f = try self.field(t1, f.field, locs);
                             try self.unify_(t1f, f.t, locs, fullTys);
                         }
@@ -252,15 +269,15 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                     try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = fields2 }, locs, fullTys);
                     try self.setType(t1, t2, locs, false);
                 },
-                .Con => |rcon| {
-                    switch (rcon.type.stuff) {
-                        .recs => |recs| {
-                            try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = recs }, locs, fullTys);
-                            try self.setType(t1, t2, locs, false);
-                        },
-                        .cons => unreachable, // error! (make it more specialized, explain that this constructor does not have fields)
-                    }
-                },
+                // .Con => |rcon| {
+                //     switch (rcon.type.stuff) {
+                //         .recs => |recs| {
+                //             try self.matchFields(.{ .t = t1, .fields = fields1 }, .{ .t = t2, .fields = recs }, locs, fullTys);
+                //             try self.setType(t1, t2, locs, false);
+                //         },
+                //         .cons => unreachable, // error! (make it more specialized, explain that this constructor does not have fields)
+                //     }
+                // },
                 else => try self.errMismatch(t1, t2, locs, fullTys),
             }
         },
@@ -276,15 +293,15 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                     try self.unifyParamsWithTNums(lcon.outerApplication, rcon.outerApplication, locs, fullTys);
                 },
 
-                .Anon => |fields2| {
-                    switch (lcon.type.stuff) {
-                        .recs => |recs| {
-                            try self.matchFields(.{ .t = t1, .fields = recs }, .{ .t = t2, .fields = fields2 }, locs, fullTys);
-                            try self.setType(t2, t1, locs, true);
-                        },
-                        .cons => unreachable, // explain
-                    }
-                },
+                // .Anon => |fields2| {
+                //     switch (lcon.type.stuff) {
+                //         .recs => |recs| {
+                //             try self.matchFields(.{ .t = t1, .fields = recs }, .{ .t = t2, .fields = fields2 }, locs, fullTys);
+                //             try self.setType(t2, t1, locs, true);
+                //         },
+                //         .cons => unreachable, // explain
+                //     }
+                // },
                 else => try self.errMismatch(t1, t2, locs, fullTys),
             }
         },
@@ -343,9 +360,9 @@ fn matchFields(self: *Self, rec1: struct { t: ast.Type, fields: []ast.Record }, 
     }
 }
 
-pub fn getFieldsForTVar(self: *const Self, tyv: ast.TyVar) ?[]ast.Record {
-    return if (self.tyvarFields.get(tyv)) |fields|
-        fields.items
+pub fn getFieldsForTVar(self: *const Self, tyv: ast.TyVar) ?struct { fields: []ast.Record, total: bool } {
+    return if (self.tyvarFields.get(tyv)) |tvspecs|
+        .{ .fields = tvspecs.fields.items, .total = tvspecs.areFieldsLockedIn }
     else
         null;
 }
@@ -375,19 +392,27 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
         .TyVar => |tyv| {
             const gpr = try self.tyvarFields.getOrPut(tyv);
             if (!gpr.found_existing) {
-                gpr.value_ptr.* = std.ArrayList(ast.Record).init(self.tyvarFields.allocator);
+                gpr.value_ptr.* = .{
+                    .fields = std.ArrayList(ast.Record).init(self.tyvarFields.allocator),
+                    .areFieldsLockedIn = false,
+                };
             }
 
             // try put result
             // if it exists, UNIFY!
-            const fields = gpr.value_ptr;
+            const tyvstats = gpr.value_ptr;
+            const fields = &tyvstats.fields;
             for (fields.items) |rec| {
                 if (common.streq(rec.field, mem)) {
                     return rec.t;
                 }
             } else {
                 const ft = try self.fresh();
-                try fields.append(.{ .field = mem, .t = ft });
+                if (tyvstats.areFieldsLockedIn) {
+                    try self.typeDoesNotHaveField(t, mem, locs, t);
+                } else {
+                    try fields.append(.{ .field = mem, .t = ft });
+                }
                 return ft;
             }
         },
@@ -801,8 +826,8 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
         },
         .TyVar => |tyv| {
             try store.tyvars.insert(.{ .tyv = tyv, .t = tref });
-            if (self.getFieldsForTVar(tyv)) |fields| {
-                for (fields) |field_| {
+            if (self.getFieldsForTVar(tyv)) |tvs| {
+                for (tvs.fields) |field_| {
                     try self.ftvs(store, field_.t);
                 }
             }
@@ -909,8 +934,8 @@ pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref
             }
         },
         .TyVar => |tyv| {
-            if (self.getFieldsForTVar(tyv)) |fields| {
-                for (fields) |field_| {
+            if (self.getFieldsForTVar(tyv)) |tyvs| {
+                for (tyvs.fields) |field_| {
                     try self.getOuterTVars(binding, store, field_.t);
                 }
             }
@@ -989,8 +1014,8 @@ pub fn getTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref: ast
             }
         },
         .TyVar => |tyv| {
-            if (self.getFieldsForTVar(tyv)) |fields| {
-                for (fields) |field_| {
+            if (self.getFieldsForTVar(tyv)) |tyvs| {
+                for (tyvs.fields) |field_| {
                     try self.getTVars(binding, store, field_.t);
                 }
             }

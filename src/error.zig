@@ -227,7 +227,7 @@ pub const Error = union(enum) {
                 err.atLocation(e.loc, .{ .label = .{ "undefined tnum '", e.tvname, "'" } });
             },
             .UndefinedIntrinsic => |e| {
-                err.atLocation(e.loc, .{ .label = .{"undefined intrinsic"} });
+                err.atLocation(e.loc, .{ .label = .{ "undefined intrinsic '", e.name, "'" } });
             },
             .OccursCheck => |oc| {
                 if (oc.tpos == null and oc.tyvpos == null) {

@@ -1613,8 +1613,11 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
 
         // ====== Construct fun ty from here. ======
         const params = try self.arena.alloc(AST.Type, 6);
+        for (params) |*param| {
+            param.* = try self.typeContext.fresh();
+        }
 
-        params[0] = listTy;
+        try self.typeContext.unify(params[0], listTy, null);
 
         const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
         const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
@@ -2293,12 +2296,18 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 },
 
                 .errno => try self.definedType(.I32),
+
                 .@"i64-f64" => b: {
                     try self.typeContext.unify(args.items[0].t, try self.definedType(.I64), &.{ .l = l });
                     break :b try self.definedType(.F64);
                 },
                 .@"f64-i64-floor" => b: {
                     try self.typeContext.unify(args.items[0].t, try self.definedType(.F64), &.{ .l = l });
+                    break :b try self.definedType(.I64);
+                },
+
+                .@"i32-i64" => b: {
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.I32), &.{ .l = l });
                     break :b try self.definedType(.I64);
                 },
 
@@ -2310,6 +2319,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .@"i32-sub",
                 .@"i32-mul",
                 .@"i32-div",
+                .@"u32-add",
+                .@"u32-sub",
+                .@"u32-mul",
+                .@"u32-div",
                 .@"size-add",
                 .@"size-sub",
                 .@"size-mul",
@@ -2322,6 +2335,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     const intTy = switch (intr.ty) {
                         .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => try self.definedType(.I64),
                         .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => try self.definedType(.I32),
+                        .@"u32-add", .@"u32-sub", .@"u32-mul", .@"u32-div" => try self.definedType(.U32),
                         .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => try self.definedType(.F64),
                         .@"size-add", .@"size-sub", .@"size-mul", .@"size-div" => try self.definedType(.Size),
 
@@ -2334,12 +2348,14 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 },
                 .@"i64-cmp",
                 .@"i32-cmp",
+                .@"u32-cmp",
                 .@"f64-cmp",
                 .@"size-cmp",
                 => b: {
                     const intTy = try switch (intr.ty) {
                         .@"i64-cmp" => self.definedType(.I64),
                         .@"i32-cmp" => self.definedType(.I32),
+                        .@"u32-cmp" => self.definedType(.U32),
                         .@"f64-cmp" => self.definedType(.F64),
                         .@"size-cmp" => self.definedType(.Size),
                         else => unreachable,
@@ -2434,9 +2450,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         for (definitions, 0..) |def, i| {
             typeFields[i] = .{ .t = def.value.t, .field = def.field };
         }
-        const t = try self.typeContext.newType(.{
-            .Anon = typeFields,
-        });
+        const t = try self.typeContext.newAnon(typeFields);
 
         return self.allocExpr(.{
             .e = .{ .AnonymousRecord = definitions },
@@ -3266,7 +3280,7 @@ const Type = struct {
             const l = self.loc(leftTok).between(self.loc(rightTok));
 
             return .{
-                .e = try self.typeContext.newType(.{ .Anon = fields.items }),
+                .e = try self.typeContext.newAnon(fields.items),
                 .l = l,
             };
         } else {
@@ -4671,7 +4685,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             .uid = self.gen.tvars.newUnique(),
             .binding = expectedBinding,
             .inferred = true,
-            .fields = self.typeContext.getFieldsForTVar(e.tyv) orelse &.{},
+            .fields = if (self.typeContext.getFieldsForTVar(e.tyv)) |tyvs| tyvs.fields else &.{},
         };
         try tvars.append(.{ .TVar = tv });
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
@@ -4744,7 +4758,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                                 .uid = self.gen.tvars.newUnique(),
                                 .binding = .{ .Function = functionId },
                                 .inferred = true,
-                                .fields = self.typeContext.getFieldsForTVar(tyv.tyv) orelse &.{},
+                                .fields = if (self.typeContext.getFieldsForTVar(tyv.tyv)) |tyvs| tyvs.fields else &.{},
                             };
                             try tvars.append(.{ .TVar = tv });
                             const tvt = try self.typeContext.newType(.{ .TVar = tv });

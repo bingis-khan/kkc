@@ -84,3 +84,4 @@ use Sh
 	deps
 
 use CnileInst
+use Into

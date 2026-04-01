@@ -147,7 +147,7 @@ ListSpread spread
 class ListDecon
 	# Elem <- dependent type
 	# correct type would be (_, Slice elem, Maybe (Maybe (Ptr _), Slice elem)), but the current one is easier to call from the iterpreter.
-	deconstruct (self _, lp Ptr (Ptr elem), lc I64, spread ListSpread spread, rp Ptr (Ptr elem), rc I64) -> Bool
+	deconstruct (self _, lp Ptr (Ptr elem), lc Size, spread ListSpread spread, rp Ptr (Ptr elem), rc Size) -> Bool
 
 
 # Iter and IntoIter is directly used by `for .. in` loop.
@@ -194,6 +194,9 @@ inst FromIntegral I64
 	from-integral (x): x
 
 inst FromIntegral I32
+	from-integral (x): @cast(x)
+
+inst FromIntegral U32
 	from-integral (x): @cast(x)
 
 inst FromIntegral I8
@@ -266,6 +269,9 @@ inst Multiplication I64
 inst Division I64
 	op-div (l, r): @i64-div(l, r)
 
+inst Negation I64
+	op-neg (l): @i64-sub(0, l)
+
 
 # I32
 
@@ -280,6 +286,24 @@ inst Multiplication I32
 
 inst Division I32
 	op-div (l, r): @i32-div(l, r)
+
+inst Negation I32
+	op-neg (x): @i32-sub(0, x)  # :)
+
+
+# U32
+
+inst Addition U32
+	op-add (l, r): @u32-add(l, r)
+
+inst Subtraction U32
+	op-sub (l, r): @u32-sub(l, r)
+
+inst Multiplication U32
+	op-mul (l, r): @u32-mul(l, r)
+
+inst Division U32
+	op-div (l, r): @u32-div(l, r)
 
 
 ## Size
@@ -317,4 +341,15 @@ inst ListLike Array
 
 inst ListLike SmolArray
 	from-listlike (arr): SmolArray { arr }
+
+
+
+# experimental: cool typeclasses
+
+class Int
+	into-int (self _) -> I64
+	
+class UInt
+	into-uint (self _) -> Size
+	clamp-uint (self _) -> Size
 

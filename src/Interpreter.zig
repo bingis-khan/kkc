@@ -527,6 +527,11 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     return try self.intValue(@intFromFloat(i));
                 },
 
+                .@"i32-i64" => {
+                    const i = (try self.expr(intr.args[0])).ref.i32;
+                    return try self.intValue(@intCast(i));
+                },
+
                 .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => {
                     const l = (try self.expr(intr.args[0])).ref.int;
                     const r = (try self.expr(intr.args[1])).ref.int;
@@ -548,6 +553,18 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         .@"i64-sub", .@"i32-sub" => l - r,
                         .@"i64-mul", .@"i32-mul" => l * r,
                         .@"i64-div", .@"i32-div" => @divTrunc(l, r),
+                        else => unreachable,
+                    });
+                },
+                .@"u32-add", .@"u32-sub", .@"u32-mul", .@"u32-div" => {
+                    const l = (try self.expr(intr.args[0])).ref.u32;
+                    const r = (try self.expr(intr.args[1])).ref.u32;
+
+                    return try self.intValue(switch (intr.intr.ty) {
+                        .@"u32-add" => l + r,
+                        .@"u32-sub" => l - r,
+                        .@"u32-mul" => l * r,
+                        .@"u32-div" => @divTrunc(l, r),
                         else => unreachable,
                     });
                 },
@@ -590,6 +607,17 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .@"i32-cmp" => {
                     const l = (try self.expr(intr.args[0])).ref.i32;
                     const r = (try self.expr(intr.args[1])).ref.i32;
+                    if (l < r) {
+                        return try self.intValue(0);
+                    } else if (l == r) {
+                        return try self.intValue(1);
+                    } else {
+                        return try self.intValue(2);
+                    }
+                },
+                .@"u32-cmp" => {
+                    const l = (try self.expr(intr.args[0])).ref.u32;
+                    const r = (try self.expr(intr.args[1])).ref.u32;
                     if (l < r) {
                         return try self.intValue(0);
                     } else if (l == r) {
@@ -965,6 +993,23 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         .cons => unreachable,
                     }
                 },
+                .TyVar => |tyv| {
+                    if (self.typeContext.getFieldsForTVar(tyv)) |tyvs| {
+                        if (!tyvs.total) unreachable;
+
+                        // order fields according to type (SLOW)
+                        for (tyvs.fields) |field| {
+                            for (recs) |rec| {
+                                if (common.streq(field.field, rec.field)) {
+                                    _ = try self.writeExpr(w, rec.value);
+                                    break;
+                                }
+                            } else unreachable;
+                        }
+                    } else {
+                        unreachable;
+                    }
+                },
                 else => unreachable,
             }
 
@@ -1068,6 +1113,14 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
     switch (self.getType(t)) {
         .Anon => |fields| {
             return self.getFieldFromFields(v, fields, mem);
+        },
+        .TyVar => |tyv| {
+            if (self.typeContext.getFieldsForTVar(tyv)) |tyvs| {
+                if (!tyvs.total) unreachable;
+                return self.getFieldFromFields(v, tyvs.fields, mem);
+            } else {
+                unreachable;
+            }
         },
         .Con => |con| {
             // map it like function or sizeOf for cons!
@@ -1286,6 +1339,7 @@ fn copyValueMeta(self: *Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
 const RawValue = extern union {
     int: i64,
     i32: i32,
+    u32: u32,
     size: usize,
     float: f64,
     char: u8,
@@ -1704,7 +1758,19 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
             .size = @sizeOf(*RawValue.Fun),
             .alignment = @alignOf(*RawValue.Fun),
         },
-        .TyVar => unreachable, // actual error. should not happen!
+        .TyVar => |tyv| {
+            if (self.typeContext.getFieldsForTVar(tyv)) |tyvs| {
+                if (tyvs.total) {
+                    return self.sizeOfRecord(tyvs.fields, 0);
+                } else {
+                    unreachable;
+                }
+            } else {
+                unreachable;
+            }
+
+            // TEMP: we are handling empty records here for now. We should normally unify em while typecheckin bruh
+        },
     }
 }
 

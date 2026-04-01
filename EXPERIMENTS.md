@@ -105,3 +105,24 @@ I guess we might also remove the `while` loop and replace it with `loop` and the
 # `else` clause for loops when it's not broken out of?
 
 I found this pretty nice in zig. Duplicate this behavior? I'll wait until I need it in real code.
+
+
+# Provide a typeclass for general Int/UInt (which *may be* called `Int`/`UInt`).
+
+```
+class UInt  # or maybe IntoSize
+  into-uint (self _) -> Size
+  clamp-uint (self _) -> Size  # possible two functions, where the user can choose if the lower than 0 values are equivalent to 0.
+```
+
+basically, it's annoying for the user to convert values all the time. This will "soften" the requirements. Calling it `Int`/`UInt` will encourage use.
+
+But it's harder to debug, so I'm not sure if I want to encourage this.
+If it was a longer name like `IntoSize`, it would end up being used more sparingly and *with intent* (which should decrease compile times too :) )
+
+ALSO, provide an instance for the default type (in this case `I32`), which checks the range and can panic.
+Why? it helps when writing small programs and the type of the integer is not that important.
+
+
+Another name could be `Indexable`, `Counted`, `UIntLike`, `SizeLike`, etc.
+That's because `Size` is used when it comes to offsets and lengths.

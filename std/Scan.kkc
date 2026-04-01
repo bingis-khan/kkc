@@ -34,13 +34,13 @@ inst IntoIter Scanner
 fn mk (s str) <= Str str:
 	Scanner { s: s chars() }
 
-fn scan-int (sc Ptr (Scanner s)) -> Maybe I32 <= Iter s, IntoIter s
+fn scan-int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s, Str s
 	digit-chars = sc take-while(is-digit)
 
 	if digit-chars null()
 		return None
 
-	sc drop'(digit-chars count() Mem.cast())
+	sc drop'(digit-chars count())
 	return digit-chars parse-int()
 
 	

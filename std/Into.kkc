@@ -1,0 +1,22 @@
+
+
+inst UInt Size
+	into-uint (self _): self
+	clamp-uint (self _): self
+
+inst UInt U32
+	into-uint (self _): Mem.u32-size(self)
+	clamp-uint (self _): Mem.u32-size(self)
+
+inst UInt I32
+	into-uint (self _)
+		if self < 0 
+			Error.panic('(into-uint) Expect non-negative, but got \(self).')
+
+		return @cast(self)
+
+	clamp-uint (self _)
+		if self < 0
+			return 0
+		else
+			return Mem.u32-size(@cast(self))
