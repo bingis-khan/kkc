@@ -1059,7 +1059,7 @@ const Stmt = struct {
                     try writer.writeByte(' ');
                 }
                 try writer.writeByte('"');
-                try std.zig.stringEscape(s, "", .{}, stmt.buf.writer());
+                try std.zig.stringEscape(s, "", .{}, stmt.buf.writer()); // TODO: escape '?' in strings to avoid trigraphs
                 try writer.writeByte('"');
             },
             .Intrinsic => |intr| {

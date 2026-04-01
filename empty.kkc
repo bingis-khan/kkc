@@ -1,9 +1,10 @@
 #!/bin/env kkc
 al = Alloc.idc()
 
-'day6-test'
+'./README.md'
 	File.read-contents(al)
 	lines()
+	drop(2)
 	head()
 	or-fail('empty??')
 	split()

@@ -109,13 +109,18 @@ pub fn main() !void {
                 std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
 
                 if (!opts.dontRun) {
-                    const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });
-                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{exe_name} });
-                    try stdout.writeAll(res.stdout);
-                    try stdout.writeAll(res.stderr);
                     try stdoutbuf.flush();
 
-                    switch (res.term) {
+                    const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });
+                    var child = std.process.Child.init(&.{exe_name}, aa);
+                    child.stdin_behavior = .Inherit;
+                    child.stdout_behavior = .Inherit;
+                    child.stderr_behavior = .Inherit;
+
+                    try child.spawn();
+                    const term = try child.wait();
+
+                    switch (term) {
                         .Exited => |code| {
                             std.debug.print("program exited with code {}\n", .{code});
                         },
