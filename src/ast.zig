@@ -377,7 +377,23 @@ pub const Env = struct {
         var oleIt = self.monoInsts.iterator();
         while (oleIt.next()) |inst| {
             var minst = inst.*;
-            minst.m = try tc.mapMatch(m, inst.m);
+            switch (inst.v) {
+                .ClassFun => |cfun| {
+                    switch (cfun.ref.*.?) {
+                        .Id => |id| {
+                            const ifn = m.tryGetFunctionByID(id).?;
+                            minst.v = .{ .Fun = ifn.fun };
+                            minst.m = ifn.m;
+                        },
+                        .InstFun => |ifn| {
+                            minst.v = .{ .Fun = ifn.fun };
+                            minst.m = ifn.m;
+                        },
+                    }
+                },
+                else => {},
+            }
+            minst.m = try tc.mapMatch(m, minst.m);
             try dedupped.insert(minst);
         }
 
@@ -442,7 +458,7 @@ pub const EnvVar = struct {
 
     // when we get to equality, we'll ignore the type and level, because I think they are irrelevant except for displaying.
 
-    pub fn locality(self: *const @This(), funenv: *const Env) Locality { // funenv: env this envvar is in.
+    pub fn locality(self: *const @This(), funenv: *const Env) Locality { // funenv: check if the current envvar came from the outside relative to env instantiation(!)
         if (funenv.outer) |outer| {
             return if (self.l < outer.env.level) .External else .Local;
         } else {
@@ -502,7 +518,19 @@ pub const EnvVar = struct {
                     },
                     else => false,
                 },
-                .ClassFun => unreachable,
+                .ClassFun => |lfun| switch (b.v) {
+                    .ClassFun => |rfun| {
+                        if (lfun.cfun.uid != rfun.cfun.uid) return false;
+                        switch (lfun.ref.*.?) {
+                            .Id => |lid| switch (rfun.ref.*.?) {
+                                .Id => |rid| return lid == rid,
+                                .InstFun => unreachable,
+                            },
+                            .InstFun => unreachable,
+                        }
+                    },
+                    else => false,
+                },
                 .Var => |v1| switch (b.v) {
                     .Var => |v2| Var.comparator().eql(.{}, v1.v, v2.v),
                     else => false,
@@ -1130,7 +1158,12 @@ pub const TyRef = struct {
                     return Match.Comparator.eql(.{ .typeContext = tyc }, c1.application, c2.application);
                 },
                 .TVar => return false,
-                .TyVar => unreachable,
+                .TyVar => |tyv| {
+                    // assume Unit
+                    if (tyc.getFieldsForTVar(tyv) != null) unreachable; // if has any fields, should not happen yo.
+                    const unitData = tyc.prelude.?.defined(.Unit);
+                    return c1.type.eq(unitData);
+                },
                 else => false,
             },
             .Fun => |f1| switch (tyc.getType(r)) {
@@ -1203,7 +1236,17 @@ pub const EnvRef = struct {
     // BRUH, this only makes sense when using mono, if it's used in parser, then bruh.
     // this is temporary, because I want to add unions at some point tho.
     pub fn envEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
-        return tyc.getEnv(l).base.id == tyc.getEnv(r).base.id;
+        const le = tyc.getEnv(l);
+        const re = tyc.getEnv(r);
+
+        if (le.env.* == null and re.env.* == null) {
+            return le.base.id == re.base.id;
+        } else {
+            // currently, we don't care about structural equality that much, especially if we're gonna implement unions.
+            if (le.env.*.?.env.id != re.env.*.?.env.id) return false;
+            // Ctx.pp(ctx.typeContext, a);
+            return Match.Comparator.eql(.{ .typeContext = tyc }, le.env.*.?.match, re.env.*.?.match);
+        }
     }
 };
 pub const NumRef = struct {
@@ -1905,12 +1948,7 @@ pub const Match = struct {
 
             for (a.envVars, b.envVars) |leRef, reRef| {
                 // ENV SHOULD BE THE SAME SIZE (thats what I'm )
-                const le = ctx.typeContext.getEnv(leRef);
-                const re = ctx.typeContext.getEnv(reRef);
-                // currently, we don't care about structural equality that much, especially if we're gonna implement unions.
-                if (le.env.*.?.env.id != re.env.*.?.env.id) return false;
-                // Ctx.pp(ctx.typeContext, a);
-                return ctx.eql(le.env.*.?.match, re.env.*.?.match);
+                if (!EnvRef.envEq(leRef, reRef, ctx.typeContext)) return false;
             }
 
             for (a.assocs, b.assocs) |mla, mra| {

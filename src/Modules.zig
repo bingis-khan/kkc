@@ -303,5 +303,6 @@ pub fn cloneWithAllocator(self: *const Self, al: std.mem.Allocator) !Self {
         .stdPath = self.stdPath,
         .gen = self.gen.clone(),
         .opts = self.opts,
+        .roots = try self.roots.clone(),
     };
 }

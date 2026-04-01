@@ -3,7 +3,7 @@
 # 8008135
 # 420
 ## controversial: it's 3, because the two `println`s appear, because MyStrPtr instance is instantiated twice. This println does not depend on a generic parameter, so later it might be only one println, so envsize f will be 2 then
-#= envsize f 3
+##= envsize f 3
 
 class MyStr
 	do-sth (x _) -> Unit

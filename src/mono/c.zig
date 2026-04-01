@@ -35,7 +35,14 @@ aux: struct { // RETARDED
     i64cmp: bool = false,
 },
 
-const FunctionsGenerated = std.HashMap(EnvApp, ?Unique, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
+const FunctionsGenerated = std.HashMap(EnvApp, ?FunGen, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
+const FunGen = struct {
+    id: Unique,
+    type: enum {
+        Function,
+        Recursive,
+    },
+};
 const EnvsGenerated = std.HashMap(EnvApp, ?Unique, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
 const EnvInstsGenerated = Set(Unique, std.hash_map.AutoContext(Unique)); // Env's Unique => ()
 const TypesGenerated = std.HashMap(ast.TypeApplication, Unique, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
@@ -95,11 +102,11 @@ pub fn genFunction(self: *Self, fun: *ast.Function) GenError!void { // TODO: par
     _ = try genFunctionForRealForReal(self, fun);
 }
 
-pub fn genFunctionForRealForReal(self: *Self, fun: *ast.Function) !Unique {
+pub fn genFunctionForRealForReal(self: *Self, fun: *ast.Function) !FunGen {
     return try genFunctionForReal(self, fun.name.name, fun.params, fun.ret, fun.env, fun, .{ .Body = fun.body });
 }
 
-fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.Type, env: *ast.Env, fun: ?*ast.Function, body: union(enum) { Expr: *ast.Expr, Body: []*ast.Stmt }) !Unique {
+fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.Type, env: *ast.Env, fun: ?*ast.Function, body: union(enum) { Expr: *ast.Expr, Body: []*ast.Stmt }) !FunGen {
     const isFunEnvEmpty = try isEnvEmpty(self, env);
 
     const m = self.tymap.match;
@@ -117,7 +124,10 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
     {
         // self.ctx.print(.{ "fun: ", name, " ", m, "\n" });
         const gp = try self.backend.functionsGenerated.getOrPut(envapp);
-        if (gp.found_existing) return gp.value_ptr.*.?;
+        if (gp.found_existing) {
+            // here if it's null, it means it's recursive
+            return gp.value_ptr.*.?;
+        }
         gp.value_ptr.* = null;
     }
 
@@ -133,6 +143,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
     // };
 
     const nuId = (try genEnvStruct(self, .{ .env = env, .fun = fun }, m)) orelse self.backend.tempgen.newUnique();
+    try self.backend.functionsGenerated.put(envapp, .{ .id = nuId, .type = .Recursive });
 
     {
         // decl
@@ -238,7 +249,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
 
         // add the function to places.
         try self.backend.parts.append(self.backend.cur);
-        try self.backend.functionsGenerated.put(envapp, nuId);
+        try self.backend.functionsGenerated.put(envapp, .{ .id = nuId, .type = .Function });
     }
 
     // generate env inst
@@ -309,7 +320,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         try endBodyAndFinishStmt(self);
     }
 
-    return nuId;
+    return .{ .id = nuId, .type = .Function };
 }
 
 // generate the env struct
@@ -327,6 +338,8 @@ pub fn genEnvStruct(self: *Self, envfun: ast.EnvFun, um: *const ast.Match) !?Uni
     {
         const gp = try self.backend.envsGenerated.getOrPut(envapp);
         if (gp.found_existing) return gp.value_ptr.*.?;
+
+        // NOTE: for recursive functions you should initialize them immediately
         gp.value_ptr.* = null; // safety null :face-blushing-emoji:
     }
 
@@ -477,8 +490,13 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
             try s.varExpr(sw.refvar, sw.switchOn);
             const cond = sw.refvar;
 
-            const tyApp = (try getTypeMapped(self, sw.switchOn.t)).Con;
-            switch (tyApp.type.structureType()) {
+            const ty = (try getTypeMapped(self, sw.switchOn.t));
+            const structType = switch (ty) {
+                .Con => |con| con.type.structureType(),
+                .Anon => .RecordLike,
+                else => unreachable,
+            };
+            switch (structType) {
                 .Opaque => { // TODO: also Ints...
                     var l = startLine(self);
                     try l.beginBody();
@@ -554,6 +572,7 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
                             .Con => |c| {
                                 var defcase = startLine(self);
                                 try defcase.p(.{"case"});
+                                const tyApp = ty.Con;
                                 try defcase.constructor(c.con, tyApp);
                                 try defcase.p(.{":"});
                                 try defcase.beginBody();
@@ -686,7 +705,7 @@ fn deconPathTyBegin(dt: anytype, self: ast.Decon.PathF(dt).Type, stmt: *Stmt) !v
 fn deconPathTyEnd(dt: anytype, self: ast.Decon.PathF(dt).Type, stmt: *Stmt) !void {
     switch (self) {
         .Ptr => try stmt.p(")"),
-        .Field => unreachable,
+        .Field => |field| try stmt.j(.{ ".", "f_", field }),
         .Con => |con| {
             const dataType = con.con.data.structureType();
             std.debug.assert(dataType != .Opaque);
@@ -793,7 +812,19 @@ fn deconAssignments_(self: *Self, decon: *const ast.Decon, dp: *const DeconPath)
                 },
             }
         },
-        .Record => unreachable,
+        .Record => |fields| {
+            for (fields) |field| {
+                const nextDP = DeconPath{
+                    .Concat = .{
+                        .path = .{
+                            .Field = field,
+                        },
+                        .next = dp,
+                    },
+                };
+                try deconAssignments_(self, field.decon, &nextDP);
+            }
+        },
         .List => unreachable,
     }
 }
@@ -984,7 +1015,10 @@ const Stmt = struct {
                 .ClassFun => |cfun| {
                     try stmt.instFun(cfun.ref);
                 },
-                else => unreachable,
+                .TNum => |tnum| {
+                    const num = stmt.ctx.typeContext.getNum(stmt.ctx.tymap.mapTNum(tnum).?).Literal;
+                    try stmt.p(.{num});
+                },
             },
             .Call => |call| {
                 const funTy = (try getType(stmt.ctx, call.callee.t)).Fun;
@@ -1059,9 +1093,11 @@ const Stmt = struct {
                             stmt.ctx.backend.cur = CW.init(stmt.ctx.backend.al);
                             defer stmt.ctx.backend.cur = oldCW;
 
+                            const tyname = ast.Annotation.find(stmt.ctx.prelude.defined(.Int).annotations, "ctype").?.params[0];
+
                             var e = startLine(stmt.ctx);
-                            try e.p(.{ "static", "int" });
-                            try e.j(.{"builtin_i64cmp (int l, int r)"});
+                            try e.p(.{ "static", tyname });
+                            try e.j(.{ "builtin_i64cmp (", tyname, " l, ", tyname, " r)" });
                             try e.beginBody();
                             {
                                 var retl = startLine(stmt.ctx);
@@ -1225,7 +1261,7 @@ const Stmt = struct {
                 }
             },
             .Lam => |lam| {
-                const nuId = try genFunctionForReal(stmt.ctx, "lam", lam.params, lam.body.Expr.t, lam.env, null, .{ .Expr = lam.body.Expr });
+                const nuId = (try genFunctionForReal(stmt.ctx, "lam", lam.params, lam.body.Expr.t, lam.env, null, .{ .Expr = lam.body.Expr })).id;
 
                 // TEMP?
                 if (try isEnvEmpty(stmt.ctx, lam.env)) {
@@ -1276,7 +1312,7 @@ const Stmt = struct {
                             if (i != 0) {
                                 try stmt.j(",");
                             }
-                            try stmt.j(.{ ".", sanitize(field.field) });
+                            try stmt.j(.{ ".", "f_", sanitize(field.field) });
                             try stmt.p("=");
                             try stmt.genExpr(field.value);
                         }
@@ -1319,7 +1355,7 @@ const Stmt = struct {
             },
             .Id => |id| {
                 const ip = stmt.ctx.tymap.tryGetFunctionByID(id).?;
-                try stmt.function(ip.fun, ip.m, ip.locality);
+                try stmt.function(ip.fun, ip.m, .External); // i guess if  it's an Id (which means it was generalized), it should always be external
             },
         }
     }
@@ -1334,7 +1370,8 @@ const Stmt = struct {
         stmt.ctx.tymap = &tymap;
         defer stmt.ctx.tymap = oldTymap;
 
-        const nuId = try genFunctionForRealForReal(stmt.ctx, fun);
+        const funNuId = try genFunctionForRealForReal(stmt.ctx, fun);
+        const nuId = funNuId.id;
 
         if (try isEnvEmpty(stmt.ctx, fun.env)) {
             try stmt.p(.{ast.Var{ .name = fun.name.name, .uid = nuId }});
@@ -1354,9 +1391,17 @@ const Stmt = struct {
                 "){ .fun = ",
                 ast.Var{ .name = fun.name.name, .uid = nuId },
                 ", .env = ",
-                if (locality == .Local) "" else "env.",
-                "envinst",
-                nuId,
+            });
+            if (funNuId.type == .Recursive) {
+                try stmt.j(.{"env"});
+            } else {
+                try stmt.j(.{
+                    if (locality == .Local) "" else "env.",
+                    "envinst",
+                    nuId,
+                });
+            }
+            try stmt.j(.{
                 " }",
             });
         }
@@ -1548,7 +1593,19 @@ const Stmt = struct {
                     },
                 }
             },
-            .Record => unreachable,
+            .Record => |fields| {
+                for (fields) |field| {
+                    const nextDP = ast.Decon.PathM{
+                        .Concat = .{
+                            .path = .{
+                                .Field = field.field,
+                            },
+                            .next = dp,
+                        },
+                    };
+                    try self.deconCondition_(hadCondition, field.decon, &nextDP);
+                }
+            },
             .List => unreachable,
         }
     }
@@ -1792,12 +1849,20 @@ fn isEnvEmpty(self: *Self, env: *ast.Env) !bool {
             switch (inst.v) {
                 .Var => return false,
                 .Fun => |fun| {
+                    const oldTymap = self.tymap;
+                    defer self.tymap = oldTymap;
+                    self.tymap = &TypeMap.init(inst.m, self.tymap); // TODO: map match?
+
                     if (!try isEnvEmpty(self, fun.env)) return false;
                 },
                 .ClassFun => |cfun| {
                     switch (cfun.ref.*.?) {
                         .Id => |id| {
                             if (self.tymap.tryGetFunctionByID(id)) |ip| {
+                                const oldTymap = self.tymap;
+                                defer self.tymap = oldTymap;
+                                self.tymap = &TypeMap.init(ip.m, self.tymap); // TODO: map match?
+
                                 if (!try isEnvEmpty(self, ip.fun.env)) return false;
                             } else {
                                 unreachable;
@@ -1997,7 +2062,7 @@ fn anonRecord(self: *Self, fields: []Field) !Unique {
 
         for (fields) |field| {
             var i = startLine(self);
-            try i.definition(field.t, sanitize(field.field));
+            try i.definition(field.t, Join(.{ "f_", sanitize(field.field) }));
             try i.finishStmt();
         }
 

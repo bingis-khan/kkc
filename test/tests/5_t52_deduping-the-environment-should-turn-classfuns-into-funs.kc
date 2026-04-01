@@ -1,0 +1,27 @@
+#!/bin/env kkc
+#$ deduping the environment should turn classfuns into funs.
+## breaks in mono, because we might have the same function as a classfun
+#= envsize a 1
+#= envsize b 0
+# ()
+# 4
+# ()
+# 4
+
+class A
+	aaa (self _)
+
+y = 4
+inst A Unit
+	aaa (self _)
+		println(self)
+		println(y)
+
+fn a(x)
+	fn b(y)
+		aaa(y)
+
+	b(x)
+	b(Unit)
+
+a(Unit)

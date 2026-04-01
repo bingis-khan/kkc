@@ -1,0 +1,20 @@
+#!/bin/env kkc
+#$ nested function crap yo 
+## it should only have one association, so the environment should be 0
+#= envsize a 0
+
+class A
+	aaa (self _)
+
+x = 1
+inst A Int
+	aaa (self _)
+		_ = x
+
+fn a(x)
+	fn b(y)
+		aaa(y)
+
+	b(x)
+
+a(1)

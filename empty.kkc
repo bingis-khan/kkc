@@ -1,2 +1,11 @@
 #!/bin/env kkc
+al = Alloc.idc()
 
+'day6-test'
+	File.read-contents(al)
+	lines()
+	head()
+	or-fail('empty??')
+	split()
+	count()
+	println()

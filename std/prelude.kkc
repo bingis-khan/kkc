@@ -13,7 +13,7 @@ Bool
 	#[clit 'true']
 	True
 
-#[ctype 'int']
+#[ctype 'long']
 Int
 
 # Is this too much voodoo? I'm basically only using it for Ints

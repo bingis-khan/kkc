@@ -1,5 +1,5 @@
-#= envsize a 1
-#= envsize b 1
+##= envsize a 1
+##= envsize b 1
 ## a is not called, so c's environment is 0!
 #= envsize c 0
 fn cast(x): @cast(x)

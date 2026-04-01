@@ -4724,7 +4724,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                                 .ref = conc.ref,
                                 .env = switch (conc.envType) {
                                     .ClassFunInstantiation => env.outer,
-                                    .AssociatedInstantiation => conc.env, // TODO: which?
+                                    .AssociatedInstantiation => env.outer, // TODO: which?
                                 },
                                 .match = conc.match,
                             },

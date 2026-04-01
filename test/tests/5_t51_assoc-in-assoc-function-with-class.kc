@@ -1,0 +1,25 @@
+#!/bin/env kkc
+#$ nested functions in class yo
+## it should only have one association, so the environment should be 0
+#= envsize a 0
+# 1
+# 2
+## it broke the monomorphiser, since I wasn't mappping the instance types.
+
+
+class A
+	aaa (self _)
+
+x = 2
+inst A Int
+	aaa (self _)
+		println(self)
+		println(x)
+
+fn a(x)
+	fn b(y)
+		aaa(y)
+
+	b(x)
+
+a(1)
