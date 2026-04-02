@@ -3361,10 +3361,35 @@ const Type = struct {
                 }),
                 .l = self.loc(tv),
             };
-        } else if (self.check(.LEFT_PAREN)) {
+        } else if (self.consume(.LEFT_PAREN)) |lp| {
             const ty = try this.sepTyo();
-            try self.devour(.RIGHT_PAREN);
-            return ty;
+            if (self.check(.COMMA)) {
+                var args = std.ArrayList(AST.Type).init(self.arena);
+                try args.append(ty.e);
+                const rp = b: while (true) {
+                    try args.append((try this.sepTyo()).e);
+                    if (self.consume(.RIGHT_PAREN)) |rp| break :b rp;
+                    try self.devour(.COMMA);
+                };
+                const tupty = try switch (args.items.len) {
+                    2 => self.defined(.Tuple2),
+                    3 => self.defined(.Tuple3),
+                    4 => self.defined(.Tuple4),
+                    else => unreachable,
+                };
+
+                for (args.items, 0..) |arg, i| {
+                    try self.typeContext.unify(tupty.dataInst.tyArgs[i].Type, arg, null);
+                }
+
+                return .{
+                    .e = tupty.dataInst.t,
+                    .l = self.loc(lp).between(self.loc(rp)),
+                };
+            } else {
+                try self.devour(.RIGHT_PAREN);
+                return ty;
+            }
         } else if (self.consume(.UNDERSCORE)) |tok| {
             if (self.selfType) |t| {
                 return .{ .e = t, .l = self.loc(tok) };
@@ -3505,9 +3530,19 @@ const Type = struct {
             } else if (args.items.len == 0) {
                 // only Unit tuple is supported.
                 return .{ .e = try self.definedType(.Unit), .l = l };
-            } else { // this LOOKS like a tuple, but we don't support tuples yet!
-                try self.reportError(.{ .TuplesNotYetSupported = .{} });
-                return .{ .e = try self.typeContext.fresh(), .l = l };
+            } else {
+                const tupty = try switch (args.items.len) {
+                    2 => self.defined(.Tuple2),
+                    3 => self.defined(.Tuple3),
+                    4 => self.defined(.Tuple4),
+                    else => unreachable,
+                };
+
+                for (args.items, 0..) |arg, i| {
+                    try self.typeContext.unify(tupty.dataInst.tyArgs[i].Type, arg, null);
+                }
+
+                return .{ .e = tupty.dataInst.t, .l = l };
             }
         } else if (self.consume(.IDENTIFIER)) |tv| {
             const tvt = try self.typeContext.newType(.{
