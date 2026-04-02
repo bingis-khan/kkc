@@ -293,7 +293,27 @@ inst Str TakeWhile
 ###### Functions ######
 
 fn nullchar() -> Cnile.Char: Mem.zeroed()  # HACK!!
-fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this is incorrect, because zip() trims!
+# fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this is incorrect, because zip() trims!
+fn eq(l, r)
+	l =& l chars()
+	r =& r chars()
+
+	while True
+		mlc = l next()
+		mrc = r next()
+
+		case (mlc, mrc)
+			(None, None)
+				return True
+
+			(Just(lc), Just(rc))
+				if lc /= rc
+					return False
+
+			_
+				return False
+
+
 fn streq(l, r): eq(l, r)
 fn char-i32(c Char) -> I32:
 	Mem.cast-on-zeroed(c)

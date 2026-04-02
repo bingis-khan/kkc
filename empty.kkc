@@ -1,8 +1,0 @@
-#!/bin/env kkc
-
-fn sized(x UInt)
-	x = into-uint(x)
-	println(x)
-
-x = -1
-sized(x)
