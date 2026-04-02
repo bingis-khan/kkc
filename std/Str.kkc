@@ -267,6 +267,18 @@ inst Str Tuple2
 			Tuple2(l, r)
 				print-str('(\(l), \(r))')
 
+inst Str Tuple3
+	print-str (tup)
+		case tup
+			Tuple3(a, b, c)
+				print-str('(\(a), \(b), \(c))')
+
+inst Str Tuple4
+	print-str (tup)
+		case tup
+			Tuple4(a, b, c, d)
+				print-str('(\(a), \(b), \(c), \(d))')
+
 
 ##### Iterators (rn I've decided that treating strings as iterators should *just work*(TM)) (this MIGHT CHANGE IN THE FUTURE)
 
