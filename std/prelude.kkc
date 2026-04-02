@@ -167,6 +167,12 @@ class Iter
 Tuple2 a b
 	Tuple2 a b
 
+Tuple3 a b c
+	Tuple3 a b c
+
+Tuple4 a b c d
+	Tuple4 a b c d
+
 # maybe they should not be here?
 fn fst(Tuple2(l, _)): l
 fn snd(Tuple2(_, r)): r

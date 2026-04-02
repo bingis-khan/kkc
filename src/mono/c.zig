@@ -701,12 +701,14 @@ fn deconPathTyBegin(dt: anytype, self: ast.Decon.PathF(dt).Type, stmt: *Stmt) !v
         .Ptr => try stmt.p("(*"),
         .Con => {},
         .Field => {},
+        .None => {},
     }
 }
 
 fn deconPathTyEnd(dt: anytype, self: ast.Decon.PathF(dt).Type, stmt: *Stmt) !void {
     switch (self) {
         .Ptr => try stmt.p(")"),
+        .None => {},
         .Field => |field| try stmt.j(.{ ".", "f_", field }),
         .Con => |con| {
             const dataType = con.con.data.structureType();

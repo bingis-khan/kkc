@@ -33,6 +33,10 @@ pub const PremadeType = enum {
     ListSpread,
     Ordering,
     Maybe,
+
+    Tuple2,
+    Tuple3,
+    Tuple4,
 };
 pub const NumPredefinedTypes = NumEnums(PremadeType);
 

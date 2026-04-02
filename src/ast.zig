@@ -822,6 +822,7 @@ pub const Decon = struct {
                 },
                 Field: Str,
                 Ptr,
+                None, // in case of tuples, we don't know if it's just a grouping paren OR a tuple only AFTER we parse a deconstruction. So, we need to patch it in later. In case it's just grouping, have a None path, which does nothing.
                 // List: *const struct {},
 
             };

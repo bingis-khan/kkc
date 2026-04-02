@@ -1448,6 +1448,59 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
             .d = .{ .Num = self.parseInt(numTok) },
         };
     } // number
+    else if (self.consume(.LEFT_PAREN)) |lp| b: {
+        const path = try AST.Decon.Path.concat(self.arena, dp, .None);
+        const first = try self.deconstruction_(path);
+        if (self.check(.COMMA)) {
+            var tups = std.ArrayList(*AST.Decon).init(self.arena);
+            var paths = std.ArrayList(*AST.Decon.Path).init(self.arena);
+            try tups.append(first);
+            try paths.append(path);
+
+            const rp = bb: while (true) {
+                const pp = try AST.Decon.Path.concat(self.arena, dp, .None);
+                try tups.append(try self.deconstruction_(pp));
+                try paths.append(pp);
+
+                if (self.consume(.RIGHT_PAREN)) |rp| break :bb rp;
+                try self.devour(.COMMA);
+            };
+
+            std.debug.assert(tups.items.len > 1);
+            const tupty = try switch (tups.items.len) {
+                2 => self.defined(.Tuple2),
+                3 => self.defined(.Tuple3),
+                4 => self.defined(.Tuple4),
+                else => unreachable,
+            };
+
+            // update paths after determining the type of the tuple.
+            const con = &tupty.data.stuff.cons[0];
+            for (tups.items, paths.items, 0..) |d, p, i| {
+                p.Concat.path = .{ .Con = .{
+                    .con = con,
+                    .field = i,
+                    .t = d.t,
+                } };
+                try self.typeContext.unify(tupty.dataInst.tyArgs[i].Type, d.t, null);
+            }
+
+            break :b .{
+                .t = tupty.dataInst.t,
+                .l = self.loc(lp).between(self.loc(rp)),
+                .d = .{
+                    .Con = .{
+                        .con = con,
+                        .decons = tups.items,
+                    },
+                },
+            };
+        } else {
+            try self.devour(.RIGHT_PAREN);
+            return first;
+        }
+        //
+    } // grouping OR tuple
     else if (self.consume(.TYPE)) |cn| b: {
         const con = bb: {
             if (self.check(.DOT)) {
@@ -2435,10 +2488,66 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     else if (self.consume(.STRING)) |s| {
         return try self.stringLiteral(s);
     } // string
-    else if (self.check(.LEFT_PAREN)) {
+    else if (self.consume(.LEFT_PAREN)) |lp| {
+        // it might be a UNIT
+        if (self.consume(.RIGHT_PAREN)) |rp| {
+            const unit = try self.defined(.Unit);
+            return self.allocExpr(.{
+                .t = unit.dataInst.t,
+                .e = .{ .Con = &unit.data.stuff.cons[0] },
+                .l = self.loc(lp).between(self.loc(rp)),
+            });
+        }
+
         const expr = try self.expression();
-        try self.devour(.RIGHT_PAREN);
-        return expr;
+
+        // check if we're defining a tuple.
+        if (self.check(.COMMA)) {
+            var tups = std.ArrayList(*AST.Expr).init(self.arena);
+            try tups.append(expr);
+
+            const rp = b: while (true) {
+                try tups.append(try self.expression());
+                if (self.consume(.RIGHT_PAREN)) |rp| break :b rp;
+                try self.devour(.COMMA);
+            };
+
+            std.debug.assert(tups.items.len > 1);
+            const tupty = try switch (tups.items.len) {
+                2 => self.defined(.Tuple2),
+                3 => self.defined(.Tuple3),
+                4 => self.defined(.Tuple4),
+                else => unreachable,
+            };
+
+            var confuntys = try self.arena.alloc(AST.Type, tups.items.len);
+            for (tups.items, 0..) |et, i| {
+                try self.typeContext.unify(tupty.dataInst.tyArgs[i].Type, et.t, null);
+                confuntys[i] = et.t;
+            }
+
+            // setup call
+            const l = self.loc(lp).between(self.loc(rp));
+            return try self.allocExpr(.{
+                .e = .{ .Call = .{
+                    .callee = try self.allocExpr(.{
+                        .e = .{ .Con = &tupty.data.stuff.cons[0] },
+                        .t = try self.typeContext.newType(.{ .Fun = .{
+                            .args = confuntys,
+                            .ret = tupty.dataInst.t,
+                            .env = try self.typeContext.newEnv(try TypeContext.Env.empty(self.gen.envs.newUnique(), self.arena)),
+                        } }),
+                        .l = l,
+                    }),
+                    .args = tups.items,
+                } },
+                .t = tupty.dataInst.t,
+                .l = l,
+            });
+        } else {
+            try self.devour(.RIGHT_PAREN);
+            return expr;
+        }
     } // grouping
     else if (self.consume(.LEFT_BRACE)) |leftTok| {
         const definitionsAndLoc = try self.someRecordDefinition();
