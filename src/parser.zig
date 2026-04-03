@@ -3380,6 +3380,12 @@ const Type = struct {
                 .l = self.loc(tv),
             };
         } else if (self.consume(.LEFT_PAREN)) |lp| {
+            if (self.consume(.RIGHT_PAREN)) |rp| {
+                return .{
+                    .e = try self.definedType(.Unit),
+                    .l = self.loc(lp).between(self.loc(rp)),
+                };
+            }
             const ty = try this.sepTyo();
             if (self.check(.COMMA)) {
                 var args = std.ArrayList(AST.Type).init(self.arena);
