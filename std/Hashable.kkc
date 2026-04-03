@@ -13,3 +13,6 @@ inst Hashable U32
 
 inst Hashable I64
 	hash (self _): @cast(self) # not using the normal conversion function, since I don't yet know if they should throw conversion errors or not.
+
+inst Hashable Unit
+	hash (_): 0
