@@ -72,6 +72,7 @@ pub const PremadeClass = enum {
     FromChar,
     ListDecon,
     ListLike,
+    Indexable,
 
     // needed for `for .. in`
     Iter,

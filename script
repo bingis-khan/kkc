@@ -1,8 +1,8 @@
 
 al = Alloc.idc()
-x =& Hash.mk(al) as Hash _ () I32
-
-x Hash.insert((), 0)
-x println()
-x Hash.insert((), 5120)
-x println()
+h =& Hash.mk(al)
+h Hash.insert('a' as Char, 420)
+h Hash.insert('b' as Char, 1337)
+h['a'] println()
+h['b'] println()
+h['c'] println()

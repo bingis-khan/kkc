@@ -1227,9 +1227,19 @@ const Stmt = struct {
                         try stmt.genExpr(unop.e);
                     },
                     .Update => unreachable,
-                    .Negate => {
-                        try stmt.j(.{"-"});
+                    .Negate => |ifun| {
+                        try stmt.instFun(ifun);
+                        try stmt.p(.{"("});
                         try stmt.genExpr(unop.e);
+                        try stmt.p(.{")"});
+                    },
+                    .ElementAccess => |ea| {
+                        try stmt.instFun(ea.access);
+                        try stmt.p(.{"("});
+                        try stmt.genExpr(unop.e);
+                        try stmt.p(.{","});
+                        try stmt.genExpr(ea.index);
+                        try stmt.p(.{")"});
                     },
                 }
             },

@@ -130,6 +130,8 @@ fn copy-to (src Slice a, dest Slice a) -> Unit
 
 	src zip(Iter.from(0)) for-each(fn Tuple2(elem, i): set(dest, Mem.i32-size(i), elem))
 
+inst Indexable Slice
+	elem-get (self, idx): get(self, idx)
 
 inst Str Slice
 	print-str (self): self

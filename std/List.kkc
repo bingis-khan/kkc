@@ -140,6 +140,8 @@ fn remove (list Ptr (List alloc a), i Idx) -> Unit <= Allocator alloc
 	return
 
 
+inst Indexable List
+	elem-get (self, k): get(&self, k)
 
 inst Str List
 	print-str (self)

@@ -142,7 +142,7 @@ fn insert (self Ptr (Hash Allocator k v), k k, v v) <= Eq k, Hashable k
 	self resize-if-needed()
 	self insert-no-check(k, v)
 
-fn get-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr v) <= Eq k, Hashable k
+fn lookup-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr v) <= Eq k, Hashable k
 	case self get-bucket-ptr(k)
 		Just(Ptr(Taken((_, v))))
 			return Just(&v)
@@ -154,8 +154,11 @@ fn get-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr v) <= Eq k, Hashable k
 			unreachable()
 
 
-fn get (self Ptr (Hash al k v), k k) -> Maybe v <= Eq k, Hashable k
-	return self get-ptr(k) fmap-maybe(fn x: x&)
+fn lookup (self Ptr (Hash al k v), k k) -> Maybe v <= Eq k, Hashable k
+	return self lookup-ptr(k) fmap-maybe(fn x: x&)
+
+fn get (self Ptr (Hash al k v), k k) -> v <= Eq k, Hashable k
+	return self lookup(k) or-fail('(Hash.get) lookup failed.')
 
 
 fn remove (self Ptr (Hash al k v), k k) -> () <= Eq k, Hashable k
@@ -171,3 +174,6 @@ fn remove (self Ptr (Hash al k v), k k) -> () <= Eq k, Hashable k
 inst Str Hash
 	print-str (self _): (&self) entries() as-if-list() print-str()
 	chars (self _): (&self) entries() as-if-list() chars()
+
+inst Indexable Hash
+	elem-get (self, k): get(&self, k)

@@ -954,7 +954,19 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 },
                 .As => v,
                 .Not => try self.boolValue(!isTrue(v)),
-                .Negate => try self.intValue(-v.ref.int),
+                .Negate => |inst| b: {
+                    const instFun = try self.getAndUnboxInstFunRef(inst);
+                    var args = [_]ValueMeta{v};
+                    const res = try self.function(instFun.fun, &args);
+                    break :b res;
+                },
+                .ElementAccess => |ea| b: {
+                    const idx = try self.expr(ea.index);
+                    const instFun = try self.getAndUnboxInstFunRef(ea.access);
+                    var args = [_]ValueMeta{ v, idx };
+                    const res = try self.function(instFun.fun, &args);
+                    break :b res;
+                },
             };
         },
 

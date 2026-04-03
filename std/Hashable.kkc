@@ -16,3 +16,8 @@ inst Hashable I64
 
 inst Hashable Unit
 	hash (_): 0
+
+inst Hashable Char
+	hash (c): c
+		Str.char-i32()
+		Mem.i32-size()

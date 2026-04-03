@@ -1047,6 +1047,9 @@ pub const Expr = struct {
                     .Negate => {
                         c.print(.{ "-", uop.e });
                     },
+                    .ElementAccess => |acc| {
+                        c.print(.{ uop.e, "[", acc.index, "]" });
+                    },
                 }
                 c.s(")");
             },
@@ -1109,6 +1112,10 @@ pub const UnOp = union(enum) {
     As: Type,
     Not,
     Negate: InstFunInst,
+    ElementAccess: struct {
+        access: InstFunInst,
+        index: *Expr,
+    },
 };
 
 pub const BinOp = union(enum) {
@@ -1135,6 +1142,7 @@ pub const BinOp = union(enum) {
     RecordUpdate,
     Deref,
     As,
+    ElementAccess,
 
     fn print(self: @This(), c: Ctx) void {
         const sop = switch (self) {
@@ -1462,7 +1470,7 @@ pub fn TypeF(comptime a: ?type) type {
 
                 .Fun => |fun| {
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    fun.env.print(c); // TEMP
+                    // fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                 },

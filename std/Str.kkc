@@ -345,8 +345,7 @@ fn print-as-list(it)
 		Just(x)
 			print-str(x)
 
-	for x in it drop(1)
-		', \(x)' print-str()
+	it drop(1) for-each(fn x: ', \(x)' print-str())
 	print-str(']')
 
 

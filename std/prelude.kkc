@@ -119,10 +119,10 @@ class Negation
 
 
 # Index
-class Gettable
+class Indexable
 	# Key
 	# Elem
-	get (self _, key key) -> elem  # problem: no autodereferencing so either we choose List (pass by reference) or Slice/Vector (pass by value)
+	elem-get (self _, key key) -> elem  # problem: no autodereferencing so either we choose List (pass by reference) or Slice/Vector (pass by value)
 	# so, in case of pass by value:
 	# Slice: slice[0]
 	# List: list&[0]
@@ -198,6 +198,10 @@ inst FromChar ConstStr
 
 inst FromChar Char
 	from-charlike (s): (@cast(s) as Ptr Char)&
+
+
+inst Indexable Ptr
+	elem-get (Ptr(self), k): self elem-get(k)
 
 
 # Num

@@ -1944,6 +1944,40 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
             });
         }
 
+        if (binop == .ElementAccess) {
+            const expr = try self.expression();
+            const rp = try self.expect(.RIGHT_SQBR);
+
+            const selfType = left.t;
+            const keyTy = expr.t;
+            const class = try self.definedClass(.Indexable);
+            const classfun = class.classFuns[0];
+
+            const l = self.loc(optok).between(self.loc(rp));
+            const inst = try self.instantiateClassFunction(classfun, l);
+            const ret = try self.typeContext.fresh();
+            const funTy = try self.makeType(.{
+                .Fun = .{
+                    .args = [_]AST.Type{ selfType, keyTy },
+                    .ret = ret,
+                },
+            });
+            try self.typeContext.unify(funTy, inst.t, &.{ .l = l });
+            return try self.allocExpr(.{
+                .t = ret,
+                .e = .{
+                    .UnOp = .{
+                        .e = left,
+                        .op = .{ .ElementAccess = .{
+                            .access = inst.ref,
+                            .index = expr,
+                        } },
+                    },
+                },
+                .l = l,
+            });
+        }
+
         const right = try self.precedenceExpression(nextPrec);
 
         const exprType = switch (binop) {
@@ -3300,6 +3334,7 @@ fn getBinOp(tok: Token) ?AST.BinOp {
         .DOT => .RecordAccess,
         .LEFT_BRACE => .RecordUpdate,
         .AS => .As,
+        .LEFT_SQBR => .ElementAccess,
         else => null,
     };
 }
@@ -3333,6 +3368,7 @@ fn binOpPrecedence(op: AST.BinOp) u32 {
         .RecordUpdate => 18,
         .Deref => 18,
         .PostfixCall => 18,
+        .ElementAccess => 18,
         // else => unreachable,
     };
 }
