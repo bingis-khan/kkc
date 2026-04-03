@@ -158,7 +158,7 @@ fn get (self Ptr (Hash al k v), k k) -> Maybe v <= Eq k, Hashable k
 	return self get-ptr(k) fmap-maybe(fn x: x&)
 
 
-fn remove (self Ptr (Hash Allocator k v), k k) -> () <= Eq k, Hashable k
+fn remove (self Ptr (Hash al k v), k k) -> () <= Eq k, Hashable k
 	case self get-bucket-ptr(k)
 		Just(bucket-ptr)
 			bucket-ptr <&= Tombstone
