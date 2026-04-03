@@ -21,12 +21,12 @@ returnValue: ValueMeta = undefined, // default value is returned at the end of r
 scope: *Scope,
 tymap: *const TypeMap,
 funLoader: DyLibLoader,
-typeContext: *const TypeContext,
+typeContext: *TypeContext,
 prelude: Prelude,
 progArgs: []Args.Arg,
 
 // right now a very simple interpreter where we don't free.
-pub fn run(modules: []ast, prelude: Prelude, typeContext: *const TypeContext, progArgs: []Args.Arg, al: std.mem.Allocator) !i64 {
+pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs: []Args.Arg, al: std.mem.Allocator) !i64 {
     var scope = Scope.init(null, al);
     const scheme = ast.Scheme.empty();
     const tymap = TypeMap{
@@ -756,7 +756,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 },
 
                 .Fun => |fun| {
-                    return try self.initFunction(fun, v.match);
+                    return try self.initFunction(fun, try self.typeContext.mapMatch(self.tymap, v.match)); // mapMatch fixes some mapping issues due to 6_t01 test. NOTE: check if it's needed for ClassFun? Couldn't trigger it manually.
                 },
 
                 .ClassFun => |cfr| {
@@ -904,7 +904,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         },
                         .Body => |bod| {
                             // COPYPASTA
-                            self.stmts(bod) catch |err| switch (err) {
+                            self.stmts(bod.stmts) catch |err| switch (err) {
                                 error.Return => {
                                     return self.returnValue;
                                 },
@@ -1257,12 +1257,7 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
 
     // also new typemap yo.
     const match = funAndEnv.match;
-    var tymap = TypeMap{
-        .prev = self.tymap,
-        .scheme = &funAndEnv.fun.scheme,
-        .match = match,
-    };
-    self.tymap = &tymap;
+    self.tymap = &try TypeMap.initMap(match, self.typeContext, self.tymap);
     // defer self.tymap = oldTyMap;
     // no need to defer here. Previous defer will reset.
 
@@ -1814,7 +1809,10 @@ fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usiz
 
 fn getType(self: *const Self, ogt: ast.Type) ast.TypeF(ast.Type) {
     return switch (self.typeContext.getType(ogt)) {
-        .TVar => |tv| self.getType(self.tymap.mapTVar(tv) orelse unreachable),
+        .TVar => |tv| self.getType(self.tymap.mapTVar(tv) orelse {
+            std.debug.print("TVAR WHICH WAS NOT FOUND: {s}{}\n", .{ tv.name, tv.uid });
+            unreachable;
+        }),
         else => |t| t,
     };
 }

@@ -1,0 +1,173 @@
+use Into
+use Alloc
+	allocate
+	Allocator
+use Iter
+	map-maybe
+	for-each
+	cons
+use Math
+	mod
+use Hashable
+	Hashable
+	hash
+use Str
+	Str
+	print-str
+	chars
+use Str2
+	as-if-list
+use Error
+	panic
+	unreachable
+	or-fail
+	todo
+use Slice
+	Slice
+
+
+Bucket k v
+	Empty  # first entry, so we can zero initialize
+	Tombstone
+	Taken (k, v)
+
+Hash al k v
+	allocator al
+	buckets Slice (Bucket k v)
+	entries U32
+
+
+fn mk (al Allocator) -> Hash Allocator k v
+	return {
+		buckets: Slice.empty(),
+		allocator: al,
+		entries: 0 }
+
+
+fn bucket-to-maybe (b Bucket k v) -> Maybe (k, v)
+	case b
+		Taken(t)
+			return Just(t)
+		_
+			return None
+
+fn entries (self Ptr (Hash al k v)) -> Iter.MapMaybe (Slice.SliceIter (Bucket k v)) (Bucket k v) (k, v):
+	self&.buckets map-maybe(bucket-to-maybe)
+
+fn insert-no-check (self Ptr (Hash Allocator k v), k k, v v) <= Eq k, Hashable k
+	h = k hash()
+	i = h mod (self&.buckets.count)
+	first-free = None
+	while True
+		case self&.buckets Slice.get(i)
+			Taken ((found-k, _))
+				if found-k == k
+					first-free <= Just(i)
+					break
+				
+			Tombstone
+				if first-free == None
+					first-free <= Just(i)
+			Empty
+				if first-free == None
+					first-free <= Just(i)
+				break
+
+		i <= i mod (self&.buckets.count)
+
+	insert-i = first-free or-fail('(insert-no-check): no free slot?')
+	self&.buckets Slice.set(insert-i, Taken((k, v)))
+	self <&.entries= self&.entries + 1
+
+fn resize-if-needed (self Ptr (Hash Allocator k v)) <= Eq k, Hashable k
+	load-factor = 100 * (self&.entries into-uint() + 1) / (self&.buckets.count + 1)
+
+	min-size = 16
+	min-load-factor = 5
+	max-load-factor = 60
+	if (load-factor < max-load-factor and (load-factor >= min-load-factor or self&.entries into-uint() > min-size))
+		return
+
+	new-size =
+		if self&.buckets.count == 0: 8
+		elif load-factor < min-load-factor: Math.max(self&.buckets.count / 2, min-size) # decrease
+		else self&.buckets.count * 2 # increase
+
+	old-bucket-arr = self&.buckets
+
+	# new array and replace the old one.
+	nu-hash =& Hash {
+		buckets: self&.allocator allocate(new-size) as Slice (Bucket k v),
+		allocator: self&.allocator,
+		entries: 0
+		}
+	Slice.zero-initialize(nu-hash&.buckets)
+
+	self entries()
+		for-each(fn ((ek, ev)): nu-hash insert-no-check(ek as k, ev as v))
+
+	self&.allocator Alloc.free(old-bucket-arr)
+	self <&= nu-hash&
+
+
+fn fmap-maybe (x Maybe a, fun a -> b) -> Maybe b
+	case x
+		None
+			return None
+		Just(y)
+			return Just(fun(y))
+
+fn get-bucket-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr (Bucket k v)) <= Eq k, Hashable k
+	h = k hash()
+	i = h mod (self&.buckets.count)
+	while True
+		bucket-ptr = self&.buckets Slice.get-ptr(i)
+		case bucket-ptr
+			Ptr(Taken ((found-k, v)))  # NOTE: this requires deconstructions to operate on ORIGINAL VALUES.
+				if found-k == k
+					return Just(bucket-ptr)
+				
+			Ptr(Tombstone)
+				pass
+
+			Ptr(Empty)
+				return None
+
+		i <= i mod (self&.buckets.count)
+
+
+##### API
+
+fn insert (self Ptr (Hash Allocator k v), k k, v v) <= Eq k, Hashable k
+	self resize-if-needed()
+	self insert-no-check(k, v)
+
+fn get-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr v) <= Eq k, Hashable k
+	case self get-bucket-ptr(k)
+		Just(Ptr(Taken((_, v))))
+			return Just(&v)
+
+		None
+			return None
+
+		_
+			unreachable()
+
+
+fn get (self Ptr (Hash al k v), k k) -> Maybe v <= Eq k, Hashable k
+	return self get-ptr(k) fmap-maybe(fn x: x&)
+
+
+fn remove (self Ptr (Hash Allocator k v), k k) -> () <= Eq k, Hashable k
+	case self get-bucket-ptr(k)
+		Just(bucket-ptr)
+			bucket-ptr <&= Tombstone
+			self <&.entries= self&.entries - 1
+			# don't resize ON PURSPOSE. removing should not fail!
+		None
+			panic('(Hash.remove) Element not in Hash.')
+
+
+inst Str Hash
+	print-str (self _): (&self) entries() as-if-list() print-str()
+	chars (self _): (&self) entries() as-if-list() chars()

@@ -1,3 +1,6 @@
-#!./zig-out/bin/kkc
 
-
+al = Alloc.idc()
+x =& Hash.mk(al) as Hash _ I32 Unit
+x Hash.insert(1, ())
+x Hash.insert(3, ())
+x Hash.entries() as-if-list() println()

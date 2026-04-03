@@ -4,6 +4,7 @@ use Iter
 	into-iter
 	all
 	reduce
+	drop
 use Str
 	Str
 	print-str
@@ -17,6 +18,7 @@ use Iter
 	drop-while'
 use Error
 	panic
+	todo
 use Alloc
 use Slice
 use Mem
@@ -55,6 +57,32 @@ inst Str F64
 		Cnile.printf1('%g', self)
 
 	chars (self): self into-iter()
+
+
+##### Display
+## In case we want to print the contents of an iterator like a list, make a special consumer (name TBD)
+DisplayList it
+	it it
+
+inst Str DisplayList
+	print-str (self)
+		print-str('[')
+		case self.it head()
+			Just(first)
+				print-str(first)
+
+				self.it drop(1) for-each(fn(x))
+					print-str(', \(x)')
+
+			None
+				pass
+
+		print-str(']')
+
+	chars (self): todo()
+
+fn as-if-list(it):
+	DisplayList { it: it into-iter() }
 
 
 ##### Functions

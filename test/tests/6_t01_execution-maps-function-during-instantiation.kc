@@ -1,0 +1,11 @@
+#$ Not mapping when instantiating function (during interpretation) causes `a` to not be mapped and fail when entering `just()`.
+# 1
+
+fn just(x): Just(x)
+
+fn entries (self Slice a) -> Iter.MapMaybe (Slice.SliceIter a) a a:
+	self into-iter() Iter.map-maybe(just)
+
+xxs = Array.as-slice(&[1])
+xs = entries(xxs as Slice I32)
+xs for-each(println)

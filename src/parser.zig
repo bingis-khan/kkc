@@ -2150,18 +2150,22 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             const lamscopeSave = self.scope.currentScope().*;
             self.endScope();
 
+            const ret = try self.typeContext.fresh();
             const lamExpr = try self.allocExpr(.{
                 .t = try self.typeContext.newType(.{
                     .Fun = .{
                         .args = argTys,
                         .env = try self.typeContext.newEnv(null),
-                        .ret = try self.typeContext.fresh(),
+                        .ret = ret,
                     },
                 }),
                 .e = .{
                     .Lam = .{
                         .params = params.items,
-                        .body = .{ .Body = &.{} }, // temporary empty list!
+                        .body = .{ .Body = .{
+                            .stmts = &.{},
+                            .ret = ret,
+                        } }, // temporary empty list!
                         .env = undefined,
                     },
                 },
@@ -2649,7 +2653,9 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
 
     // CRAP CODE!!!
     const ret = try self.typeContext.fresh();
-    try self.typeContext.unify(self.typeContext.getType(lamMode.this.Lambda.lamExpr.t).Fun.ret, ret, null);
+    const lamty = lamMode.this.Lambda.lamExpr.t;
+    const funty = self.typeContext.getType(lamty).Fun;
+    try self.typeContext.unify(funty.ret, ret, null);
     const oldReturnType = self.returnType;
     defer self.returnType = oldReturnType;
     self.returnType = ret;
@@ -2670,8 +2676,20 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
 
     try self.finishBodyAndInferReturnType(&stmts, bod.returnStatus, tempLoc); // TEMP. I should return the location of the last statement (but I don''t have locations in statements yet.')
 
-    lamMode.this.Lambda.lamExpr.e.Lam.body.Body = stmts.items;
-    lamMode.this.Lambda.lamExpr.e.Lam.env = lamMode.this.Lambda.env;
+    const lamenv = lamMode.this.Lambda.env;
+    const envty = try self.typeContext.newEnv(.{
+        .env = lamenv,
+        .fun = null,
+        .match = &AST.Match.Empty,
+        .level = lamenv.level,
+    });
+    try self.typeContext.unifyEnv(funty.env, envty, &.{ .l = lamMode.this.Lambda.lamExpr.l }, &.{ .lfull = lamty, .rfull = null });
+
+    lamMode.this.Lambda.lamExpr.e.Lam.body.Body = .{
+        .stmts = stmts.items,
+        .ret = ret,
+    };
+    lamMode.this.Lambda.lamExpr.e.Lam.env = lamenv;
 
     self.mode = .{ .Simple = lamMode.prev };
 }
@@ -3394,8 +3412,13 @@ const Type = struct {
             if (self.selfType) |t| {
                 return .{ .e = t, .l = self.loc(tok) };
             } else {
-                // TODO: signal error
-                unreachable;
+                // underscore without declaration means "whatever" type.
+                if (this.constrain == null) {
+                    return .{ .e = try self.typeContext.fresh(), .l = self.loc(tok) };
+                } else {
+                    // TODO: signal error
+                    unreachable;
+                }
             }
         } else if (self.consume(.LEFT_BRACE)) |leftTok| {
             var fields = std.ArrayList(AST.TypeF(AST.Type).Field).init(self.arena);

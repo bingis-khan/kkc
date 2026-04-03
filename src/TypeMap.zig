@@ -20,7 +20,7 @@ pub const TypeMap = struct {
         };
     }
 
-    pub fn initMap(match: *const ast.Match, tyc: TypeContext, prev: ?*const @This()) !@This() {
+    pub fn initMap(match: *const ast.Match, tyc: *TypeContext, prev: ?*const @This()) !@This() {
         const mm = if (prev) |tm| try tyc.mapMatch(tm, match) else match;
         return TypeMap.init(mm, prev);
     }

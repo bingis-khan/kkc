@@ -1071,27 +1071,27 @@ const Stmt = struct {
             },
             .Intrinsic => |intr| {
                 switch (intr.intr.ty) {
-                    .@"i64-add", .@"i32-add", .@"size-add" => {
+                    .@"u32-add", .@"i64-add", .@"i32-add", .@"size-add" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("+");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-sub", .@"i32-sub", .@"size-sub" => {
+                    .@"u32-sub", .@"i64-sub", .@"i32-sub", .@"size-sub" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("-");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-mul", .@"i32-mul", .@"size-mul" => {
+                    .@"u32-mul", .@"i64-mul", .@"i32-mul", .@"size-mul" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("*");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-div", .@"i32-div", .@"size-div" => {
+                    .@"u32-div", .@"i64-div", .@"i32-div", .@"size-div" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("/");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"i64-cmp", .@"i32-cmp", .@"size-cmp" => {
+                    .@"u32-cmp", .@"i64-cmp", .@"i32-cmp", .@"size-cmp" => {
                         // CRINGE
                         const it = intr.intr.ty;
                         const cmp = switch (it) {
@@ -1290,7 +1290,13 @@ const Stmt = struct {
                 }
             },
             .Lam => |lam| {
-                const nuId = (try genFunctionForReal(stmt.ctx, "lam", lam.params, lam.body.Expr.t, lam.env, null, .{ .Expr = lam.body.Expr })).id;
+                const nuId = (try genFunctionForReal(stmt.ctx, "lam", lam.params, switch (lam.body) {
+                    .Expr => |lamexpr| lamexpr.t,
+                    .Body => |bod| bod.ret,
+                }, lam.env, null, switch (lam.body) {
+                    .Expr => |lamexpr| .{ .Expr = lamexpr },
+                    .Body => |bod| .{ .Body = bod.stmts },
+                })).id;
 
                 // TEMP?
                 if (try isEnvEmpty(stmt.ctx, lam.env)) {
@@ -1364,6 +1370,19 @@ const Stmt = struct {
                     try stmt.genExpr(ae);
                 }
                 try stmt.p(.{ "}", "}" });
+            },
+            .IfElse => |ifelse| {
+                try stmt.genExpr(ifelse.cond);
+                try stmt.p("?");
+                try stmt.genExpr(ifelse.ifTrue);
+                try stmt.p(":");
+                for (ifelse.ifOthers) |elif| {
+                    try stmt.genExpr(elif.cond);
+                    try stmt.p("?");
+                    try stmt.genExpr(elif.then);
+                    try stmt.p(":");
+                }
+                try stmt.genExpr(ifelse.ifFalse);
             },
             else => unreachable,
         }
@@ -2125,11 +2144,18 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             .Unit => {},
             .Bool => {},
             .ConstStr => {},
+            .I8 => {},
             .I32 => {},
+            .I64 => {},
+            .U8 => {},
+            .U32 => {},
             .F64 => {},
             .Ordering => {},
             .Maybe => {},
             .StrConcat => {},
+            .Tuple2 => {},
+            .Tuple3 => {},
+            .Tuple4 => {},
 
             .Ptr => return .{ .Ptr = tyApp.application.tvars[0].Type },
             .Array => {

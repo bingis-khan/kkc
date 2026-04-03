@@ -12,6 +12,7 @@ use Iter
 	Take
 	TakeWhile
 	drop
+	AppendIter
 use Mem
 use Math
 
@@ -280,7 +281,7 @@ inst Str Tuple4
 				print-str('(\(a), \(b), \(c), \(d))')
 
 
-##### Iterators (rn I've decided that treating strings as iterators should *just work*(TM)) (this MIGHT CHANGE IN THE FUTURE)
+##### Iterators (rn I've decided that treating strings as iterators should *just work* for strings(TM)) (this MIGHT CHANGE IN THE FUTURE)
 
 inst Str Take
 	print-str (self)
@@ -299,6 +300,10 @@ inst Str TakeWhile
 	print-str (self)
 		self for-each(print-str)
 
+	chars (self): self
+
+inst Str AppendIter
+	print-str (self): self for-each(print-str)
 	chars (self): self
 
 
@@ -343,6 +348,7 @@ fn print-as-list(it)
 	for x in it drop(1)
 		', \(x)' print-str()
 	print-str(']')
+
 
 ###### Other Instances #####
 

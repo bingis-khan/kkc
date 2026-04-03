@@ -8,6 +8,7 @@ use Str2
 	is-blank
 	is-digit
 	parse-int
+	as-if-list
 
 use Iter
 	Range
@@ -85,3 +86,5 @@ use Sh
 
 use CnileInst
 use Into
+use Hash
+	Hash

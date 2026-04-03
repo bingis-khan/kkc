@@ -1,6 +1,7 @@
 use Term
 use Mem
 	offset-ptr
+	TypeSize
 use Error
 	or-fail
 	panic
@@ -64,6 +65,10 @@ fn subslice (slice Slice a, from Idx, to Idx) -> Slice a
 
 	return Slice { ptr: begin-ptr, count: count }
 
+
+fn zero-initialize (s Slice a) -> ()
+	sz = (Mem.get-typesize() as TypeSize a).size
+	Cnile.memset(Mem.cast-ptr(s.ptr), 0, sz * s.count)
 
 
 SliceIter a

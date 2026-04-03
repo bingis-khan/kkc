@@ -913,14 +913,17 @@ pub const Expr = struct {
         env: *Env,
         body: union(enum) {
             Expr: Rec,
-            Body: []*Stmt,
+            Body: struct {
+                stmts: []*Stmt,
+                ret: Type,
+            },
 
             pub fn print(self: *const @This(), c: Ctx) void {
                 switch (self.*) {
                     .Expr => |expr| c.print(.{ ": ", expr }),
                     .Body => |body| {
                         c.print("{\n");
-                        printBody(body, c);
+                        printBody(body.stmts, c);
                         c.print("}");
                     },
                 }
@@ -1459,7 +1462,7 @@ pub fn TypeF(comptime a: ?type) type {
 
                 .Fun => |fun| {
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    // fun.env.print(c); // TEMP
+                    fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                 },

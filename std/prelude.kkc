@@ -39,7 +39,7 @@ F32
 #[ctype 'double']
 F64
 
-#[ctype 'size_t']
+#[ctype 'size_t', cstdinclude 'stddef.h']
 Size
 
 # Is this too much voodoo? I'm basically only using it for Ints
@@ -122,7 +122,13 @@ class Negation
 class Gettable
 	# Key
 	# Elem
-	get (_, key key) -> elem
+	get (self _, key key) -> elem  # problem: no autodereferencing so either we choose List (pass by reference) or Slice/Vector (pass by value)
+	# so, in case of pass by value:
+	# Slice: slice[0]
+	# List: list&[0]
+	# in case of pass by reference:
+	# Slice: (&slice)[0]
+	# List: list[0]
 
 
 # List construction (but actually Array bruhhhhhh)
