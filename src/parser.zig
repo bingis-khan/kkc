@@ -739,6 +739,12 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                         break :bb try self.newVar(v, null);
                     },
                 };
+                try self.addToEnvIfPossible(self.env, .{
+                    .v = .{ .Var = vv.v },
+                    .m = &AST.Match.Empty,
+                    .t = vv.t,
+                    .l = vtsc.level,
+                }, false);
 
                 try self.typeContext.unify(vv.t, e.t, &.{ .l = self.loc(v), .r = e.l });
                 break :b .{ .VarMut = .{
@@ -748,6 +754,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     .varValue = e,
                 } };
             } else if (self.check(.LT)) {
+                // TODO: maybe I should use instantiateVar for this? or somehow deal with it to not copy-paste this.
                 const vtsc = try self.lookupVar(&.{}, v);
                 const vv = switch (vtsc.vorf) {
                     .Var => |vt| vt,
@@ -756,6 +763,12 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                         break :bb try self.newVar(v, null);
                     },
                 };
+                try self.addToEnvIfPossible(self.env, .{
+                    .v = .{ .Var = vv.v },
+                    .m = &AST.Match.Empty,
+                    .t = vv.t,
+                    .l = vtsc.level,
+                }, false);
 
                 var innerTy = vv.t;
                 var accessors = std.ArrayList(AST.Stmt.Accessor).init(self.arena);

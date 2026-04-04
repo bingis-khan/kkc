@@ -39,6 +39,8 @@ while running
 			_
 				pass
 
+	screen Tui.resize-screen-if-needed()
+
 	x <= x Math.clamp(0, (tui&.width - 1) u32-i32())
 	y <= y Math.clamp(0, (tui&.height - 1) u32-i32())
 	screen Tui.clear-screen()

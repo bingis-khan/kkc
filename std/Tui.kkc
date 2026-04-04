@@ -130,6 +130,7 @@ fn disable-mouse()
     Str.print-str('\x1b[?1000l\x1b[?1006l')
 
 
+should-resize =& False
 fn mk() -> Tui
 	og-termios = enable-raw-mode()
 	Term.hide-cursor()
@@ -143,6 +144,9 @@ fn mk() -> Tui
 	fps = 60
 	last-sync = @undefined
 	Cnile.clock-gettime(Cnile.clock-monotonic(), &last-sync)
+
+	@register-signal(28, fn (_))
+		should-resize <&= True
 
 	return Tui
 		{ width: dims fst()
@@ -407,6 +411,19 @@ fn read-key() -> Maybe InputEvent
 	return Just(Key(Escape))
 
 
+fn update-dimensions (tui Ptr Tui)
+	if not should-resize&
+		return
+
+	should-resize <&= False
+	dim = Term.get-dimensions()
+	w = dim fst()
+	h = dim snd()
+
+	tui <&.width= w
+	tui <&.height= h
+
+
 ### SCREEN
 
 Color
@@ -526,7 +543,6 @@ fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
 	rs <&.x = rs&.x + 1
 
 fn render-screen(screen Ptr (Screen Allocator))
-
 	w = screen&.tui&.width u32-i32()
 	h = screen&.tui&.height u32-i32()
 	rs =& RenderState { x: 0, y: 0, fg: ColorDefault, bg: ColorDefault }
@@ -541,6 +557,22 @@ fn render-screen(screen Ptr (Screen Allocator))
 				prev <&= cur&
 	Term.reset-colors()
 	flush-stdout()
+
+# calls update-dimensions() anyway.
+fn resize-screen-if-needed(screen Ptr (Screen Allocator))
+	tui = screen&.tui
+	tui update-dimensions()
+
+	w = screen&.tui&.width
+	h = screen&.tui&.height
+
+	nusz = u32-size(w * h)
+	if nusz <= screen&.current.count
+		return
+
+	nuscreen = tui mk-screen(screen&.al)
+	screen <&.current= nuscreen.current
+	screen <&.previous= nuscreen.previous
 
 
 # non-wrapping drawing thing.

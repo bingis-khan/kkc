@@ -1352,6 +1352,17 @@ const Stmt = struct {
                                     var sigcallln = startLine(self);
                                     try sigcallln.p(.{ "signal(", sigv, ",", sighandlerfnname, ")" });
                                     try sigcallln.finishStmt();
+
+                                    // this is actually called in code, so return unit.
+                                    var retln = startLine(self);
+                                    const unit = self.prelude.defined(.Unit);
+                                    try retln.p(.{"return"});
+                                    try retln.constructor(&unit.stuff.cons[0], .{
+                                        .type = unit,
+                                        .application = &ast.Match.Empty,
+                                        .outerApplication = &.{},
+                                    });
+                                    try retln.finishStmt();
                                 }
                                 try endBodyAndFinish(self);
 
