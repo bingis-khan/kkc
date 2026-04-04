@@ -425,7 +425,8 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
                     return try self.fresh();
                 },
                 .recs => |recs| {
-                    for (recs) |rec| {
+                    for (recs) |arec| {
+                        const rec = arec.rec;
                         if (common.streq(rec.field, mem)) {
                             const outerMatch = ast.Match.fromOuterTVars(data.outerTVars, con.outerApplication);
                             return try self.mapType(con.application, try self.mapType(&outerMatch, rec.t));

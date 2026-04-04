@@ -17,6 +17,11 @@ pub const Type: type = addNumericEnums(enum {
     @"i64-f64",
     @"f64-i64-floor",
     @"i32-i64",
+
+    // bit ops
+    @"u32-bit-and",
+    @"u32-bit-or",
+    @"u32-bit-neg",
 });
 
 const List = [_]Self{
@@ -31,6 +36,9 @@ const List = [_]Self{
     .{ .ty = .@"i64-f64", .args = 1 },
     .{ .ty = .@"f64-i64-floor", .args = 1 },
     .{ .ty = .@"i32-i64", .args = 1 },
+    .{ .ty = .@"u32-bit-and", .args = 2 },
+    .{ .ty = .@"u32-bit-or", .args = 2 },
+    .{ .ty = .@"u32-bit-neg", .args = 1 },
 } ++ addNumericDecls();
 
 const Self = @This();

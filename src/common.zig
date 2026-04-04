@@ -79,3 +79,13 @@ pub fn cloneArrayListWithAllocator(arraylist: anytype, al: std.mem.Allocator) !@
     try nuArrayList.appendSlice(arraylist.items);
     return nuArrayList;
 }
+
+//
+
+pub fn id(comptime T: type) fn (T) T {
+    return struct {
+        fn idfn(x: T) T {
+            return x;
+        }
+    }.idfn;
+}

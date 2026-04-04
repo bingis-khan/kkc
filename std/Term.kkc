@@ -1,5 +1,15 @@
 use Str
 	print-str
+	chars
+	Str
+use Mem
+	cast
+use Convert
+	from-hex
+use Math
+	rshift
+
+# basic stuff
 
 fn print(s)
 	print-str(s)
@@ -7,3 +17,294 @@ fn print(s)
 fn println (s)
 	print-str('\(s)\n')
 
+
+## color term stuff.
+## SHOULD THIS BE IN THE SAME FILE???
+
+fn show-cursor()
+	print-str('\x1b[?25h')
+
+fn hide-cursor()
+	print-str('\x1b[?25l')
+
+fn move-cursor-to (x U32, y U32)
+	# 1..
+	x = x + 1
+	y = y + 1
+	print-str('\x1b[\(y);\(x)H')
+
+fn reset-cursor-position()
+	print-str('\x1b[H')
+
+fn move-cursor-to-line-start ()
+	print-str('\r')  # :)
+
+fn get-dimensions() -> (U32, U32)
+	ws =& Mem.zeroed() as Cnile.Winsize
+	if Cnile.ioctl(Cnile.stdout-fileno(), Cnile.tiocgwinsz(), ws) == -1 or ws&.ws-col == 0
+		return (80, 24)
+
+	return (Mem.u16-u32(ws&.ws-col), Mem.u16-u32(ws&.ws-row))
+
+
+## Colors
+
+fn set-default-fg()
+	print-str('\x1b[39m')
+
+fn set-default-bg()
+	print-str('\x1b[49m')
+
+
+ColorPalette
+	Palette8
+	Palette16
+	Palette256
+	PaletteRGB
+
+inst Str ColorPalette
+	print-str (p)
+		case p
+			Palette8
+				print-str('Palette8')
+			Palette16
+				print-str('Palette16')
+			Palette256
+				print-str('Palette256')
+			PaletteRGB
+				print-str('PaletteRGB')
+
+	chars (p)
+		case p
+			Palette8
+				return 'Palette8' chars()
+			Palette16
+				return 'Palette16' chars()
+			Palette256
+				return 'Palette256' chars()
+			PaletteRGB
+				return 'PaletteRGB' chars()
+
+
+fn query-palette() -> ColorPalette
+	colorterm = Env.get('COLORTERM')
+	case colorterm
+		Just(def)
+			if def == 'truecolor' or def == '24bit'
+				return PaletteRGB
+		None
+			pass
+
+	case Env.get('TERM')
+		Just(term)
+			if term == 'linux'
+				return Palette8
+		None
+			pass
+
+	return Palette16  # default
+
+
+
+Color8
+	Black8
+	Red8
+	Green8
+	Yellow8
+	Blue8
+	Magenta8
+	Cyan8
+	White8
+
+inst Eq Color8
+	eq (l, r): (Mem.cast-on-zeroed(l) as I32) == Mem.cast-on-zeroed(r) # :)
+
+Color16
+	Black16
+	Red16
+	Green16
+	Yellow16
+	Blue16
+	Magenta16
+	Cyan16
+	White16
+	BrightBlack16
+	BrightRed16
+	BrightGreen16
+	BrightYellow16
+	BrightBlue16
+	BrightMagenta16
+	BrightCyan16
+	BrightWhite16
+
+inst Eq Color16
+	eq (l, r): (Mem.cast-on-zeroed(l) as I32) == Mem.cast-on-zeroed(r) # :)
+
+fn set-fg8(color Color8)
+	case color
+		Black8
+			print-str('\x1b[30m')
+		Red8
+			print-str('\x1b[31m')
+		Green8
+			print-str('\x1b[32m')
+		Yellow8
+			print-str('\x1b[33m')
+		Blue8
+			print-str('\x1b[34m')
+		Magenta8
+			print-str('\x1b[35m')
+		Cyan8
+			print-str('\x1b[36m')
+		White8
+			print-str('\x1b[37m')
+
+fn set-fg16(color Color16)
+	case color
+		Black16
+			print-str('\x1b[30m')
+		Red16
+			print-str('\x1b[31m')
+		Green16
+			print-str('\x1b[32m')
+		Yellow16
+			print-str('\x1b[33m')
+		Blue16
+			print-str('\x1b[34m')
+		Magenta16
+			print-str('\x1b[35m')
+		Cyan16
+			print-str('\x1b[36m')
+		White16
+			print-str('\x1b[37m')
+		BrightBlack16
+			print-str('\x1b[90m')
+		BrightRed16
+			print-str('\x1b[91m')
+		BrightGreen16
+			print-str('\x1b[92m')
+		BrightYellow16
+			print-str('\x1b[93m')
+		BrightBlue16
+			print-str('\x1b[94m')
+		BrightMagenta16
+			print-str('\x1b[95m')
+		BrightCyan16
+			print-str('\x1b[96m')
+		BrightWhite16
+			print-str('\x1b[97m')
+
+fn set-bg8(color Color8)
+	case color
+		Black8
+			print-str('\x1b[40m')
+		Red8
+			print-str('\x1b[41m')
+		Green8
+			print-str('\x1b[42m')
+		Yellow8
+			print-str('\x1b[43m')
+		Blue8
+			print-str('\x1b[44m')
+		Magenta8
+			print-str('\x1b[45m')
+		Cyan8
+			print-str('\x1b[46m')
+		White8
+			print-str('\x1b[47m')
+
+fn set-bg16(color Color16)
+	case color
+		Black16
+			print-str('\x1b[40m')
+		Red16
+			print-str('\x1b[41m')
+		Green16
+			print-str('\x1b[42m')
+		Yellow16
+			print-str('\x1b[43m')
+		Blue16
+			print-str('\x1b[44m')
+		Magenta16
+			print-str('\x1b[45m')
+		Cyan16
+			print-str('\x1b[46m')
+		White16
+			print-str('\x1b[47m')
+		BrightBlack16
+			print-str('\x1b[100m')
+		BrightRed16
+			print-str('\x1b[101m')
+		BrightGreen16
+			print-str('\x1b[102m')
+		BrightYellow16
+			print-str('\x1b[103m')
+		BrightBlue16
+			print-str('\x1b[104m')
+		BrightMagenta16
+			print-str('\x1b[105m')
+		BrightCyan16
+			print-str('\x1b[106m')
+		BrightWhite16
+			print-str('\x1b[107m')
+
+fn reset-colors()
+	print-str('\x1b[0m')
+
+fn clear-screen()
+	print-str('\x1b[2J')
+
+fn set-fg256(color U8)
+	print-str('\x1b[38;5;\(color)m')
+
+fn set-bg256(color U8)
+	print-str('\x1b[48;5;\(color)m')
+
+
+RGB
+	r U8
+	g U8
+	b U8
+
+inst Eq RGB
+	eq (l, r): l.r == r.r and l.g == r.g and l.b == r.b
+
+fn rgb(r, g, b): RGB { r, g, b }
+
+fn rgb-from-hex(hex) -> RGB
+	n = hex from-hex() as U32
+	return { r: (n rshift(16)) Mem.u32-u8(), g: n rshift(8) Math.mod(256) Mem.u32-u8(), b: n Math.mod(256) Mem.u32-u8() }
+
+fn set-fg-rgb(c RGB)
+	print-str('\x1b[38;2;\(c.r);\(c.g);\(c.b)m')
+
+fn set-bg-rgb(c RGB)
+	print-str('\x1b[48;2;\(c.r);\(c.g);\(c.b)m')
+
+fn cprintln-rgb(s, fg RGB, bg RGB)
+	set-fg-rgb(fg)
+	set-bg-rgb(bg)
+	print-str(s)
+	reset-colors()
+	print-str('\n')
+
+fn cprintln256(s, fg U8, bg U8)
+	set-fg256(fg)
+	set-bg256(bg)
+	print-str(s)
+	reset-colors()
+	print-str('\n')
+
+fn cprintln8(s, fg Color8, bg Color8)
+	set-fg8(fg)
+	set-bg8(bg)
+	print-str(s)
+	reset-colors()
+	print-str('\n')
+
+fn cprintln16(s, fg Color16, bg Color16)
+	set-fg16(fg)
+	set-bg16(bg)
+	print-str(s)
+	reset-colors()
+	print-str('\n')

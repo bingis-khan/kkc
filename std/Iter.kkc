@@ -343,6 +343,26 @@ inst Iter AppendIter
 				return None
 
 
+FunIter a
+	fun () -> Maybe a
+	finished Bool
+
+inst IntoIter FunIter
+	into-iter (self _): self
+
+inst Iter FunIter
+	next (self Ptr _)
+		if self&.finished
+			return None
+
+		case self&.fun()
+			Just(x)
+				return Just(x)
+			None
+				self <&.finished= True
+				return None
+
+fn from-function (fun): FunIter { fun, finished: False }
 
 # consoomers
 

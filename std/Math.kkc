@@ -4,6 +4,14 @@ use Iter
 fn pow (base, p):
 	0 to (p - 1) Iter.reduce(1, fn(item, x): x * base)
 
+fn lshift (x, am): x * (2 pow(am))
+fn rshift (x, am): x / (2 pow(am))
+
+fn u32-or(l U32, r U32): @u32-bit-or(l, r)
+fn u32-ors(vals): vals Iter.reduce(0, u32-or)
+fn u32-and(l U32, r U32): @u32-bit-and(l, r)
+fn u32-neg(l U32): @u32-bit-neg(l)
+
 fn mod(l, d)
 	r = l / d
 	# There should be an assert that r >= 0...
@@ -30,3 +38,11 @@ fn sqrt(f F64):
 	Cnile.sqrt(f)  # geeeeeeg
 
 fn floor(f F64): @f64-i64-floor(f)
+
+fn clamp(x, mn, mx)
+	if x < mn
+		return mn
+	elif x > mx
+		return mx
+	else
+		return x

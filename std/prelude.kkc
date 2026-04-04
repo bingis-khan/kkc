@@ -17,6 +17,9 @@ Bool
 #[ctype 'uint8_t', cstdinclude 'stdint.h', bytes '1']
 U8
 
+#[ctype 'uint16_t', cstdinclude 'stdint.h', bytes '2']
+U16
+
 #[ctype 'uint32_t', cstdinclude 'stdint.h', bytes '4']
 U32
 
@@ -211,10 +214,16 @@ inst FromIntegral I32
 inst FromIntegral U32
 	from-integral (x): @cast(x)
 
+inst FromIntegral U16
+	from-integral (x): @cast(x)
+
 inst FromIntegral I8
 	from-integral (x): @cast(x)
 
 inst FromIntegral U8
+	from-integral (x): @cast(x)
+
+inst FromIntegral U64
 	from-integral (x): @cast(x)
 
 inst FromIntegral Size
@@ -235,6 +244,9 @@ inst Eq U32
 	eq (l, r): @memeq(l, r)
 
 inst Eq U8
+	eq (l, r): @memeq(l, r)
+
+inst Eq U16
 	eq (l, r): @memeq(l, r)
 
 inst Eq Size

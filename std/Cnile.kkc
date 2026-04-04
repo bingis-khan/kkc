@@ -7,13 +7,55 @@ FILE
 
 
 CInt = I32
+CULong = U64
 
+ClockId = I32
+fn clock-monotonic() -> ClockId: 1
 
 #[ctype 'struct timespec']
 Timespec
+	#[cfield 'tv_sec']
 	tv-sec I64
+	#[cfield 'tv_nsec']
 	tv-nsec I64
 
+
+# struct termios (x86_64 Linux, NCCS=32)
+Termios
+	c-iflag  U32
+	c-oflag  U32
+	c-cflag  U32
+	c-lflag  U32
+	c-line   U8
+	c-cc     Array 32 U8
+	c-ispeed U32
+	c-ospeed U32
+
+#[ctype 'struct termios']
+CTermios
+
+Pollfd
+	fd      CInt
+	events  U16
+	revents U16
+
+#[ctype 'struct pollfd']
+CPollfd
+
+
+
+# NOTE: I'm thinking, since records are already C layout compatible,
+# my default would be to NOT set custom field names, cause it's annoying.
+# #[ctype 'struct winsize']
+Winsize
+	# #[cfield 'ws_row']
+	ws-row U16
+	# #[cfield 'ws_col']
+	ws-col U16
+	# #[cfield 'ws_xpixel']
+	ws-xpixel U16
+	# #[cfield 'ws_ypixel']
+	ws-ypixel U16
 
 # Stat for x86_64 linux :)
 #[ctype 'struct Stat']
@@ -80,6 +122,12 @@ external
 
 	time (p Ptr Void) -> CInt
 
+	#[cstdinclude 'time.h', cfunname 'clock_gettime']
+	clock-gettime (clock-id ClockId, timespec Ptr Timespec) -> Void
+
+	#[cstdinclude 'time.h']
+	nanosleep (req Ptr Timespec, rem Ptr Timespec) -> CInt
+
 
 	#### string.h #####
 	#[cstdinclude 'string.h']
@@ -99,6 +147,7 @@ external
 	fseek (file Ptr FILE, offset CInt, origin CInt) -> Void
 	ftell (file Ptr FILE) -> CInt
 	fread (buf Ptr a, size CInt, count CInt, stream Ptr FILE) -> CInt
+	fflush (file Ptr FILE) -> CInt
 
 	#[cstdinclude 'stdlib.h']
 	getenv (s ConstStr) -> ConstStr
@@ -121,6 +170,22 @@ external
 
 	#[cstdinclude 'sys/wait.h']
 	waitpid (pid CInt, status Ptr CInt, options CInt) -> CInt
+
+	#[cstdinclude 'sys/ioctl.h']
+	ioctl (fd CInt, request CULong, opt1 a) -> CInt
+
+	#[cstdinclude 'termios.h']
+	tcgetattr (fd CInt, termios Ptr CTermios) -> CInt
+
+	#[cstdinclude 'termios.h']
+	tcsetattr (fd CInt, optional-actions CInt, termios Ptr CTermios) -> CInt
+
+	#[cstdinclude 'poll.h']
+	poll (fds Ptr CPollfd, nfds CInt, timeout CInt) -> CInt
+
+	#[cstdinclude 'unistd.h']
+	read (fd CInt, buf Ptr Void, count Size) -> CInt
+
 	
 
 #[dylib 'libm.so.6']
@@ -129,11 +194,45 @@ external
 
 
 
-
+# seek
 fn seek-set(): 0
 fn seek-cur(): 1
 fn seek-end(): 2
 
+# fd
+# later, we'll use type synonyms for this btw
+# STDOUT-FILENO = 1
+fn stdout-fileno(): 1
+fn stdin-fileno(): 0
+
+# termios lflags
+fn echo(): 8
+fn icanon(): 2
+fn isig(): 1
+fn iexten(): 32768
+
+# termios iflags
+fn brkint(): 2
+fn icrnl(): 256
+fn inpck(): 16
+fn istrip(): 32
+fn ixon(): 1024
+
+# termios oflags
+fn opost(): 1
+
+# termios cflags
+fn cs8(): 48
+
+# termios c_cc
+fn vmin(): 6
+fn vtime(): 5
+
+# tcattr actions
+fn tcsa-flush() -> CInt: 2
+
+# ioctl requests
+fn tiocgwinsz() -> CULong: 21523
 
 fn wifexited (status CInt):
 	status == 0

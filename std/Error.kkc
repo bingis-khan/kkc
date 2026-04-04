@@ -1,24 +1,29 @@
-use Term
 use Cnile
 use Mem
+use Str
 
 fn todo() -> a
-	Term.println('todo')
+	Str.print-str('todo\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn unreachable() -> a
-	Term.println('unreachable')
+	Str.print-str('unreachable\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn panic (errmsg) -> Unit
-	Term.println('PANIC: \(errmsg)')
+	Str.print-str('PANIC: \(errmsg)\n')
 	Cnile.exit(1)
+
+fn panic' (errmsg) -> a
+	Str.print-str('PANIC: \(errmsg)\n')
+	Cnile.exit(1)
+	return Mem.undefined()
 
 fn assert(cond, msg)
 	if not cond
-		Term.println('ASSERTION FAILED: \(msg)')
+		Str.print-str('ASSERTION FAILED: \(msg)\n')
 		Cnile.exit(1)
 
 

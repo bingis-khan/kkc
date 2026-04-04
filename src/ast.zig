@@ -589,6 +589,8 @@ pub const Stmt = union(enum) {
     For: struct { // TODO: later, I should remove it and just generate some code. The only benefit is better type errors (which I can ensure, because we typecheck while parsing) and easier debuggability (only for compiler development, so whatever)
         decon: DeconBase,
         iter: *Expr,
+        iterTy: Type,
+        condTy: Type, // not needed per se, but make codegen easier.
         intoIterFun: InstFunInst,
         nextFun: InstFunInst,
         body: []Rec,
@@ -820,7 +822,7 @@ pub const Decon = struct {
                     field: usize,
                     t: if (e == .Poly) TyRef else Unique,
                 },
-                Field: Str,
+                Field: struct { rec: Str, t: TyRef },
                 Ptr,
                 None, // in case of tuples, we don't know if it's just a grouping paren OR a tuple only AFTER we parse a deconstruction. So, we need to patch it in later. In case it's just grouping, have a None path, which does nothing.
                 // List: *const struct {},
@@ -1573,10 +1575,18 @@ pub const Data = struct {
     outerTVars: []TVarOrNum,
     stuff: union(enum) {
         cons: []Con,
-        recs: []Record,
+        recs: []DecRecord,
     },
     annotations: []Annotation, // TODO: we may later check if annotations are valid for each thing they are assigned to.
 
+    pub const DecRecord = struct {
+        rec: Record,
+        anns: []Annotation,
+
+        pub fn mapRecord(self: @This()) Record {
+            return self.rec;
+        }
+    };
     pub fn eq(l: *const @This(), r: *const @This()) bool {
         return l.uid == r.uid;
     }

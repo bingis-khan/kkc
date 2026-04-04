@@ -209,7 +209,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         }
 
         var cons = std.ArrayList(AST.Con).init(self.arena);
-        var recs = std.ArrayList(AST.Record).init(self.arena);
+        var recs = std.ArrayList(AST.Data.DecRecord).init(self.arena);
         var tag: u32 = 0;
         var assocs = std.ArrayList(AST.Association).init(self.arena);
         const tyconstr = Type.Constrain{ .Data = .{ .uid = data.uid, .assocs = &assocs } };
@@ -225,8 +225,11 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                 try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, t.e);
 
                 try recs.append(.{
-                    .field = recname.literal(self.lexer.source),
-                    .t = t.e,
+                    .rec = .{
+                        .field = recname.literal(self.lexer.source),
+                        .t = t.e,
+                    },
+                    .anns = conAnnotations,
                 });
                 try self.endStmt();
             } else if (self.consume(.TYPE)) |conName| {
@@ -968,6 +971,8 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             break :b .{ .For = .{
                 .decon = decon,
                 .iter = itexpr,
+                .iterTy = iterType,
+                .condTy = maybeElem.t,
                 .intoIterFun = intoIterFunInst.ref,
                 .nextFun = nextFunInst.ref,
                 .body = bod.stmts.items,
@@ -1582,7 +1587,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
 
             if (self.check(.COLON)) {
                 const decon = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, .{
-                    .Field = fieldName,
+                    .Field = .{ .rec = fieldName, .t = t },
                 }));
                 try self.typeContext.unify(fieldTy, decon.t, null);
                 try fields.append(.{
@@ -1591,7 +1596,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
                 });
             } else {
                 const vnt = try self.newVar(fieldTok, .{ .dp = try AST.Decon.Path.concat(self.arena, dp, .{
-                    .Field = fieldName,
+                    .Field = .{ .rec = fieldName, .t = t },
                 }) });
                 try self.typeContext.unify(fieldTy, vnt.t, null);
                 try fields.append(.{
@@ -2416,6 +2421,19 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     break :b try self.definedType(.I64);
                 },
 
+                .@"u32-bit-and", .@"u32-bit-or" => b: {
+                    const u32ty = try self.definedType(.U32);
+                    try self.typeContext.unify(args.items[0].t, u32ty, &.{ .l = l });
+                    try self.typeContext.unify(args.items[1].t, u32ty, &.{ .l = l });
+                    break :b u32ty;
+                },
+
+                .@"u32-bit-neg" => b: {
+                    const u32ty = try self.definedType(.U32);
+                    try self.typeContext.unify(args.items[0].t, u32ty, &.{ .l = l });
+                    break :b u32ty;
+                },
+
                 .@"i64-add",
                 .@"i64-sub",
                 .@"i64-mul",
@@ -2871,7 +2889,8 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
                         const match = dataInst.match;
 
                         // check if all fields were defined
-                        for (dataFields) |dataField| {
+                        for (dataFields) |annDF| {
+                            const dataField = annDF.rec;
                             for (definitions) |def| {
                                 if (Common.streq(dataField.field, def.field)) {
                                     try self.typeContext.unify(def.value.t, try self.typeContext.mapType(match, dataField.t), &.{ .l = self.loc(name) });
@@ -3201,7 +3220,15 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                 },
                 't' => try s.append('\t'),
                 'n' => try s.append('\n'),
+                'r' => try s.append('\r'),
                 '\\' => try s.append('\\'),
+                'x' => {
+                    // TODO: do error checking.
+                    const hex = og[i .. i + 2];
+                    const num = std.fmt.parseInt(u8, hex, 16) catch unreachable;
+                    i += 2;
+                    try s.append(num);
+                },
                 '0' => try s.append(0),
                 else => unreachable, // TODO handle errors
             }
@@ -3611,7 +3638,7 @@ const Type = struct {
             }
 
             if (self.check(.RIGHT_ARROW)) {
-                const ret = try this.typ();
+                const ret = try this.sepTyo();
                 return .{
                     .e = try self.typeContext.newType(.{ .Fun = .{
                         .ret = ret.e,

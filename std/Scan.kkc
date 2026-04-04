@@ -15,6 +15,8 @@ use Str
 use Str2
 	is-digit
 	parse-int
+use Error
+	todo
 
 # TODO: make definition something like:
 # Scanner
@@ -43,4 +45,5 @@ fn scan-int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s, Str s
 	sc drop'(digit-chars count())
 	return digit-chars parse-int()
 
-	
+fn try-scan-char (sc Ptr (Scanner s), options) -> Bool <= Iter s, IntoIter s
+	return todo()
