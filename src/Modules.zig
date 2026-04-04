@@ -51,7 +51,15 @@ stdPath: Str,
 gen: Gen,
 opts: *const Args,
 
-pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str, stdPath: Str, args: *const Args) Self {
+// signals!
+// TEMP: each signal currently needs to have the same type. This is temporary. To finish it:
+//  1. Either add unions and each signal will have the same union.
+//  2. Make signals compile-time known (by use of TNums) and somehow check that.
+// I prefer 1, because for 2 we have to handle generalizing over TNums and such.
+// the fun type needs to be shared among all signals.
+signalFunTy: ast.Type,
+
+pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, root: Str, stdPath: Str, args: *const Args) !Self {
     return .{
         .modules = ModuleLookup.init(al),
         .errors = errors,
@@ -66,6 +74,7 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
         .rootPath = root,
         .gen = Gen.init(),
         .opts = args,
+        .signalFunTy = try typeContext.fresh(),
     };
 }
 

@@ -37,6 +37,8 @@ aux: struct { // RETARDED
     u32cmp: bool = false,
     u8cmp: bool = false,
     sizecmp: bool = false,
+
+    sighandler: bool = false,
 },
 
 const FunctionsGenerated = std.HashMap(EnvApp, ?FunGen, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
@@ -155,27 +157,6 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         self.backend.cur = CW.init(self.backend.al);
         defer self.backend.cur = oldCW;
 
-        // prepare paramteres for deconstruction.
-        const Parameter = struct {
-            v: union(enum) {
-                NormalVar: ast.Var,
-                RefVar: ast.Var,
-                Env: Unique, // funny! it should only happend in the beginning.
-            },
-            t: ast.Type,
-
-            pub fn write(s: @This(), stmt: *Stmt) anyerror!void {
-                switch (s.v) {
-                    .NormalVar => |v| try stmt.definition(s.t, v),
-                    .RefVar => |t| try stmt.definition(s.t, t),
-                    .Env => |nuid| {
-                        try stmt.p(.{"struct"});
-                        try stmt.j(.{ "env", nuid });
-                        try stmt.p(.{"env"});
-                    },
-                }
-            }
-        };
         var typarams = std.ArrayList(Parameter).init(self.backend.al);
 
         if (!isFunEnvEmpty) {
@@ -326,6 +307,27 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
 
     return .{ .id = nuId, .type = .Function };
 }
+// prepare paramteres for deconstruction.
+const Parameter = struct {
+    v: union(enum) {
+        NormalVar: ast.Var,
+        RefVar: ast.Var,
+        Env: Unique, // funny! it should only happend in the beginning.
+    },
+    t: ast.Type,
+
+    pub fn write(s: @This(), stmt: *Stmt) anyerror!void {
+        switch (s.v) {
+            .NormalVar => |v| try stmt.definition(s.t, v),
+            .RefVar => |t| try stmt.definition(s.t, t),
+            .Env => |nuid| {
+                try stmt.p(.{"struct"});
+                try stmt.j(.{ "env", nuid });
+                try stmt.p(.{"env"});
+            },
+        }
+    }
+};
 
 // generate the env struct
 pub fn genEnvStruct(self: *Self, envfun: ast.EnvFun, um: *const ast.Match) !?Unique {
@@ -1252,6 +1254,118 @@ const Stmt = struct {
                         try stmt.genExpr(intr.args[1]);
                     },
                     .errno => unreachable,
+
+                    .@"register-signal" => {
+                        const regfunname = "_intr_register_signal";
+                        if (!stmt.ctx.backend.aux.sighandler) {
+                            defer stmt.ctx.backend.aux.sighandler = true;
+
+                            const funTy = intr.args[1].t;
+                            const sigarrname = "_intr_sigarr";
+
+                            // create array of signals + envs.
+                            {
+                                const self = stmt.ctx;
+                                const oldCW = self.backend.cur;
+                                self.backend.cur = CW.init(self.backend.al);
+                                defer self.backend.cur = oldCW;
+
+                                var sigarrln = startLine(self);
+                                try sigarrln.definition(funTy, Join(.{ sigarrname, "[32]" }));
+                                try sigarrln.finishStmt();
+
+                                try self.backend.parts.append(self.backend.cur);
+                            }
+
+                            const sighandlerfnname = "_intr_sighandle";
+
+                            // generate call function
+                            {
+                                const self = stmt.ctx;
+                                const oldCW = self.backend.cur;
+                                self.backend.cur = CW.init(self.backend.al);
+                                defer self.backend.cur = oldCW;
+
+                                const sigv = ast.Var{ .name = "_intr_sig", .uid = self.backend.temp().id };
+                                const typarams = [_]Parameter{
+                                    Parameter{ .v = .{ .NormalVar = sigv }, .t = intr.args[0].t },
+                                };
+                                var regfun = startLine(self);
+                                try regfun.p(.{ "static", "void", sighandlerfnname, "(", SepBy(", ", &typarams), ")" });
+                                try regfun.beginBody();
+                                {
+
+                                    // COPYPASTA (I'm not yet sure how to handle expr calls)
+                                    const sigFunTy = (try getType(self, funTy)).Fun;
+                                    const envm = getEnv(self, sigFunTy.env);
+
+                                    if (try isEnvEmptyT(self, &envm)) {
+                                        var sigarrsetln = startLine(self);
+                                        try sigarrsetln.p(.{ sigarrname, "[", sigv, "]" });
+                                        try sigarrsetln.p(.{ "(", sigv, ")" });
+                                        try sigarrsetln.finishStmt();
+                                    } else {
+                                        var sigarrsetln = startLine(self);
+                                        const t = self.backend.temp();
+                                        try sigarrsetln.definition(funTy, t);
+                                        try sigarrsetln.p(.{ "=", sigarrname, "[", sigv, "]" });
+                                        try sigarrsetln.finishStmt();
+
+                                        var callln = startLine(self);
+                                        try callln.j(.{ t, ".fun" });
+
+                                        try callln.p("(");
+                                        try callln.j(.{ t, ".env" });
+
+                                        try callln.p(.{ ",", sigv, ")" });
+                                        try callln.finishStmt();
+                                    }
+                                }
+                                try endBodyAndFinish(self);
+
+                                try self.backend.parts.append(self.backend.cur);
+                            }
+
+                            // generate register function
+                            {
+                                const self = stmt.ctx;
+                                const oldCW = self.backend.cur;
+                                self.backend.cur = CW.init(self.backend.al);
+                                defer self.backend.cur = oldCW;
+
+                                const sigv = ast.Var{ .name = "_intr_sig", .uid = self.backend.temp().id };
+                                const funv = ast.Var{ .name = "_intr_fun", .uid = self.backend.temp().id };
+                                const typarams = [_]Parameter{
+                                    Parameter{ .v = .{ .NormalVar = sigv }, .t = intr.args[0].t },
+                                    Parameter{ .v = .{ .NormalVar = funv }, .t = intr.args[1].t },
+                                };
+                                var regfun = startLine(self);
+                                try regfun.p(.{"static"});
+                                try regfun.definition(expr.t, Tuple(.{ regfunname, "(", SepBy(", ", &typarams), ")" }));
+                                try regfun.beginBody();
+                                {
+                                    var sigarrsetln = startLine(self);
+                                    try sigarrsetln.p(.{ sigarrname, "[", sigv, "]", "=", funv });
+                                    try sigarrsetln.finishStmt();
+
+                                    try self.backend.imports.insert("signal.h");
+                                    var sigcallln = startLine(self);
+                                    try sigcallln.p(.{ "signal(", sigv, ",", sighandlerfnname, ")" });
+                                    try sigcallln.finishStmt();
+                                }
+                                try endBodyAndFinish(self);
+
+                                try self.backend.parts.append(self.backend.cur);
+                            }
+                        }
+
+                        try stmt.p(.{ regfunname, "(" });
+                        try stmt.genExpr(intr.args[0]);
+                        try stmt.p(",");
+                        try stmt.genExpr(intr.args[1]);
+                        try stmt.p(")");
+                    },
+
                     .@"offset-ptr" => {
                         try stmt.j(.{ "(", expr.t, ")" });
                         try stmt.p("(");

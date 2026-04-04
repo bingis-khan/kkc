@@ -166,7 +166,7 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
 
     const errors = try common.allocOne(aa, Errors.init(aa));
     const typeContext = try common.allocOne(aa, try TypeContext.init(aa, errors));
-    var modules = Modules.init(aa, errors, typeContext, "", stdRoot, opts);
+    var modules = try Modules.init(aa, errors, typeContext, "", stdRoot, opts);
 
     const prelude = try modules.loadPrelude();
     typeContext.prelude = prelude;

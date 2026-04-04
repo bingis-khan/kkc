@@ -13,6 +13,7 @@ pub const Type: type = addNumericEnums(enum {
     argc,
     memeq,
     errno,
+    @"register-signal",
 
     @"i64-f64",
     @"f64-i64-floor",
@@ -33,6 +34,7 @@ const List = [_]Self{
     .{ .ty = .argc, .args = 0 },
     .{ .ty = .memeq, .args = 2 },
     .{ .ty = .errno, .args = 0 },
+    .{ .ty = .@"register-signal", .args = 2 },
     .{ .ty = .@"i64-f64", .args = 1 },
     .{ .ty = .@"f64-i64-floor", .args = 1 },
     .{ .ty = .@"i32-i64", .args = 1 },

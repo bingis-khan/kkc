@@ -11,8 +11,10 @@ const Args = @import("Args.zig");
 const errr = @import("error.zig");
 const stdlib = @cImport(@cInclude("stdlib.h"));
 const TypeMap = @import("TypeMap.zig").TypeMap;
+const posix = std.posix;
 
 const Self = @This();
+var sigself: ?*Self = null;
 
 // NOTE: I'll try to mark areas where something is SLOW due to laziness with `SLOW`.
 
@@ -24,6 +26,13 @@ funLoader: DyLibLoader,
 typeContext: *TypeContext,
 prelude: Prelude,
 progArgs: []Args.Arg,
+
+signalHandlers: SignalHandlers,
+
+const SignalHandlers = std.AutoArrayHashMap(i32, struct {
+    funval: ValueMeta,
+    funty: ast.Type,
+});
 
 // right now a very simple interpreter where we don't free.
 pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs: []Args.Arg, al: std.mem.Allocator) !i64 {
@@ -42,7 +51,10 @@ pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs
         .funLoader = DyLibLoader.init(al),
         .prelude = prelude,
         .progArgs = progArgs,
+        .signalHandlers = SignalHandlers.init(al),
     };
+    sigself = &self;
+
     for (modules) |module| {
         self.stmts(module.toplevel) catch |err| switch (err) {
             error.Return => {
@@ -458,10 +470,10 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
     }
 }
 
-fn exprs(self: *Self, es: []*ast.Expr) ![]ValueMeta {
-    var args = try self.arena.alloc(ValueMeta, es.len);
+fn exprs(self: *Self, es: []*ast.Expr) ![]TypeVal {
+    var args = try self.arena.alloc(TypeVal, es.len);
     for (es, 0..) |a, i| {
-        args[i] = try self.expr(a);
+        args[i] = .{ .v = try self.expr(a), .t = a.t };
     }
 
     return args;
@@ -518,6 +530,13 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
 
                 .errno => {
                     return self.intValue(std.c._errno().*);
+                },
+
+                .@"register-signal" => {
+                    const i = (try self.expr(intr.args[0])).ref.i32;
+                    const fun = (try self.expr(intr.args[1]));
+                    try self.registerSignal(i, fun, intr.args[1].t);
+                    return try self.intValue(0); // unit
                 },
 
                 .@"i64-f64" => {
@@ -832,139 +851,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         },
         .Call => |c| {
             const fun = try self.expr(c.callee);
-            const ptrAndfunType = nunbox(fun.ref.extptr); // funny, but in this case we *know* the inner value is a pointer, which just don't know what to. So, we use extptr (kind of incorrectly) as a "general pointer".
-            const funPtr: *align(1) const RawValue = @ptrCast(&ptrAndfunType.ptr); // and later get the address, so we can do the .<correct-type>
-            const funType = ptrAndfunType.fty;
-
-            switch (funType) {
-                .ExternalFunction => {
-                    // INCORRECT. check https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf
-                    //  (also just ask an LLM, this time it seems to know what it's talking about.)
-                    //    Depending on the data, return values are returned differently (like, floats are returned in XMM registers, so currently it wont work.)
-                    //   We can have a function type for each case, then beat it for it to make sense for our types.
-                    //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
-                    //   Nah, I should just use inline assembly in this case.
-                    // EDIT: OR LIBFFI.
-                    const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(funPtr.extptr);
-
-                    // const MaxExtArgs = 8;
-                    // if (c.args.len > MaxExtArgs) unreachable;
-
-                    // var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
-                    // inline for (0..MaxExtArgs) |i| {
-                    //     if (i < c.args.len) {
-                    //         const av = try self.expr(c.args[i]);
-                    //         interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(av.ref)))).*;
-                    //     }
-                    // }
-
-                    // const ret = @call(.auto, castFun, interopArgs);
-
-                    // return try self.intValue(ret);
-                    const funTys = self.typeContext.getType(c.callee.t).Fun;
-
-                    var func: ffi.Function = undefined;
-                    const paramFFITypes = try self.arena.alloc(*ffi.Type, funTys.args.len);
-                    // defer self.arena.free(paramFFITypes); // lifetime signature
-
-                    const args = try self.arena.alloc(*anyopaque, funTys.args.len);
-                    // defer self.arena.free(args); // lifetime signature
-
-                    for (args, paramFFITypes, c.args) |*arg, *param, exp| {
-                        const v = try self.expr(exp);
-                        arg.* = @ptrCast(v.ref);
-                        param.* = self.sizeOfFFI(exp.t);
-                    }
-
-                    try func.prepare(ffi.Abi.default, @intCast(args.len), paramFFITypes.ptr, self.sizeOfFFI(funTys.ret));
-
-                    const result = try self.allocSpaceForVariable(self.sizeOf(funTys.ret).size);
-
-                    func.call(castFun, args.ptr, result.ref);
-
-                    return result;
-                },
-
-                .LocalFunction => {
-                    const args = try self.exprs(c.args);
-                    return self.function(funPtr.fun, args);
-                },
-
-                .ConstructorFunction => {
-                    return self.initRecord(funPtr.confun, c.args, e.t);
-                },
-
-                .Lambda => {
-                    const lamAndEnv = funPtr.lam;
-
-                    // begin new scope
-                    const oldScope = self.scope;
-                    var scope = Scope.init(oldScope, self.arena);
-                    self.scope = &scope;
-                    defer self.scope = oldScope;
-
-                    // also, don't forget the new tymap!
-                    const env = lamAndEnv.env;
-
-                    // this is also copypasta :)
-                    std.debug.assert(env.lastPtr.* == null); // lambda CANNOT recurse like a function, so lastPtr should always be null.
-                    const oldTyMap = self.tymap;
-                    env.lastPtr.* = self.tymap;
-                    self.tymap = env.tymaps;
-                    defer {
-                        self.tymap = oldTyMap;
-                        env.lastPtr.* = null;
-                    }
-
-                    // COPYPASTA WARNING
-                    const lam = lamAndEnv.lam;
-                    for (env.vars) |ee| {
-                        switch (ee) {
-                            .Snap => |eee| try self.putRef(eee.v, eee.vv),
-                            .AssocID => |id| {
-                                const efun = self.tymap.tryGetFunctionByID(id).?;
-                                const efunv = try self.initFunction(efun.fun, efun.m);
-                                try self.putRef(efun.fun.name, efunv.ref);
-                            },
-                        }
-                    }
-
-                    const args = try self.exprs(c.args);
-                    for (lam.params, args) |decon, a| {
-                        if (!try self.tryDeconstruct(decon.d, a.ref)) {
-                            return error.CaseNotMatched;
-                        }
-                    }
-
-                    switch (lam.body) {
-                        .Expr => |exp| {
-                            const ret = try self.expr(exp);
-
-                            // BUG(return-decon-ref): Remember to copy the value before returning - when returning a deconstructed value, it's possible to return a ref - in this case, we must copy it.
-                            return try self.copyValueMeta(ret, exp.t);
-                        },
-                        .Body => |bod| {
-                            // COPYPASTA
-                            self.stmts(bod.stmts) catch |err| switch (err) {
-                                error.Return => {
-                                    return self.returnValue;
-                                },
-                                error.Break => {
-                                    std.debug.print("TRIED TO BREAK OUT OF LAMBDA FUNCTION\n", .{});
-                                    return error.Bruh;
-                                },
-                                else => return err,
-                            };
-
-                            // return statements
-
-                            unreachable;
-                        },
-                    }
-                },
-
-                .None => unreachable,
-            }
+            const args = try self.exprs(c.args);
+            return try self.call(fun, args, c.callee.t);
         },
         .Con => |con| {
             if (con.tys.len == 0) {
@@ -1164,6 +1052,149 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
     unreachable;
 }
 
+const TypeVal = struct {
+    t: ast.Type,
+    v: ValueMeta,
+};
+fn call(self: *Self, fun: ValueMeta, cargs: []TypeVal, cfunTy: ast.Type) !ValueMeta {
+    const ptrAndfunType = nunbox(fun.ref.extptr); // funny, but in this case we *know* the inner value is a pointer, which just don't know what to. So, we use extptr (kind of incorrectly) as a "general pointer".
+    const funPtr: *align(1) const RawValue = @ptrCast(&ptrAndfunType.ptr); // and later get the address, so we can do the .<correct-type>
+    const funType = ptrAndfunType.fty;
+
+    switch (funType) {
+        .ExternalFunction => {
+            // INCORRECT. check https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf
+            //  (also just ask an LLM, this time it seems to know what it's talking about.)
+            //    Depending on the data, return values are returned differently (like, floats are returned in XMM registers, so currently it wont work.)
+            //   We can have a function type for each case, then beat it for it to make sense for our types.
+            //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
+            //   Nah, I should just use inline assembly in this case.
+            // EDIT: OR LIBFFI.
+            const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(funPtr.extptr);
+
+            // const MaxExtArgs = 8;
+            // if (c.args.len > MaxExtArgs) unreachable;
+
+            // var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
+            // inline for (0..MaxExtArgs) |i| {
+            //     if (i < c.args.len) {
+            //         const av = try self.expr(c.args[i]);
+            //         interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(av.ref)))).*;
+            //     }
+            // }
+
+            // const ret = @call(.auto, castFun, interopArgs);
+
+            // return try self.intValue(ret);
+            const funTys = self.typeContext.getType(cfunTy).Fun;
+
+            var func: ffi.Function = undefined;
+            const paramFFITypes = try self.arena.alloc(*ffi.Type, funTys.args.len);
+            // defer self.arena.free(paramFFITypes); // lifetime signature
+
+            const args = try self.arena.alloc(*anyopaque, funTys.args.len);
+            // defer self.arena.free(args); // lifetime signature
+
+            for (args, paramFFITypes, cargs) |*arg, *param, exp| {
+                const v = exp.v;
+                arg.* = @ptrCast(v.ref);
+                param.* = self.sizeOfFFI(exp.t);
+            }
+
+            try func.prepare(ffi.Abi.default, @intCast(args.len), paramFFITypes.ptr, self.sizeOfFFI(funTys.ret));
+
+            const result = try self.allocSpaceForVariable(self.sizeOf(funTys.ret).size);
+
+            func.call(castFun, args.ptr, result.ref);
+
+            return result;
+        },
+
+        .LocalFunction => {
+            return try self.function_(funPtr.fun, TypeVal, cargs, struct {
+                fn mapFn(ref: TypeVal) ValueMeta {
+                    return ref.v;
+                }
+            }.mapFn);
+        },
+
+        .ConstructorFunction => {
+            const cretTy = self.getType(cfunTy).Fun.ret;
+            return self.initRecord(funPtr.confun, cargs, cretTy);
+        },
+
+        .Lambda => {
+            const lamAndEnv = funPtr.lam;
+
+            // begin new scope
+            const oldScope = self.scope;
+            var scope = Scope.init(oldScope, self.arena);
+            self.scope = &scope;
+            defer self.scope = oldScope;
+
+            // also, don't forget the new tymap!
+            const env = lamAndEnv.env;
+
+            // this is also copypasta :)
+            std.debug.assert(env.lastPtr.* == null); // lambda CANNOT recurse like a function, so lastPtr should always be null.
+            const oldTyMap = self.tymap;
+            env.lastPtr.* = self.tymap;
+            self.tymap = env.tymaps;
+            defer {
+                self.tymap = oldTyMap;
+                env.lastPtr.* = null;
+            }
+
+            // COPYPASTA WARNING
+            const lam = lamAndEnv.lam;
+            for (env.vars) |ee| {
+                switch (ee) {
+                    .Snap => |eee| try self.putRef(eee.v, eee.vv),
+                    .AssocID => |id| {
+                        const efun = self.tymap.tryGetFunctionByID(id).?;
+                        const efunv = try self.initFunction(efun.fun, efun.m);
+                        try self.putRef(efun.fun.name, efunv.ref);
+                    },
+                }
+            }
+
+            for (lam.params, cargs) |decon, a| {
+                if (!try self.tryDeconstruct(decon.d, a.v.ref)) {
+                    return error.CaseNotMatched;
+                }
+            }
+
+            switch (lam.body) {
+                .Expr => |exp| {
+                    const ret = try self.expr(exp);
+
+                    // BUG(return-decon-ref): Remember to copy the value before returning - when returning a deconstructed value, it's possible to return a ref - in this case, we must copy it.
+                    return try self.copyValueMeta(ret, exp.t);
+                },
+                .Body => |bod| {
+                    // COPYPASTA
+                    self.stmts(bod.stmts) catch |err| switch (err) {
+                        error.Return => {
+                            return self.returnValue;
+                        },
+                        error.Break => {
+                            std.debug.print("TRIED TO BREAK OUT OF LAMBDA FUNCTION\n", .{});
+                            return error.Bruh;
+                        },
+                        else => return err,
+                    };
+
+                    // return statements
+
+                    unreachable;
+                },
+            }
+        },
+
+        .None => unreachable,
+    }
+}
+
 fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValueRef {
     switch (self.getType(t)) {
         .Anon => |fields| {
@@ -1291,6 +1322,9 @@ fn initFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) !ValueMeta
 }
 
 fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueMeta {
+    return try self.function_(funAndEnv, ValueMeta, args, common.id(ValueMeta));
+}
+fn function_(self: *Self, funAndEnv: *RawValue.Fun, comptime Arg: type, args: []Arg, comptime mapFun: fn (Arg) ValueMeta) Err!ValueMeta {
     // begin new scope
     const oldScope = self.scope;
     var scope = Scope.init(oldScope, self.arena);
@@ -1333,7 +1367,8 @@ fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueM
         }
     }
 
-    for (fun.params, args) |decon, a| {
+    for (fun.params, args) |decon, ar| {
+        const a = mapFun(ar);
         const av = try self.copyValue(a.ref, decon.d.t); // we can pass in a "ref", so make sure to copy the actual value.
         if (!try self.tryDeconstruct(decon.d, av)) {
             return error.CaseNotMatched;
@@ -1537,7 +1572,7 @@ fn val(self: *const Self, v: RawValue, size: usize) !ValueMeta {
     };
 }
 
-fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !ValueMeta {
+fn initRecord(self: *Self, c: *ast.Con, args: []TypeVal, t: ast.Type) !ValueMeta {
     // alignment:
     // https://youtu.be/E0QhZ6tNoR  <= "alignment" is actually a place where values can live.
     // I get it, but why (in the video example) the trailing padding is aligned to 8? because of last member?
@@ -1556,7 +1591,7 @@ fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !ValueMe
 
     // remember: check bytes written with `w.context.items.len`
     for (args) |a| {
-        const alignment = try self.writeExpr(w, a);
+        const alignment = try self.writeVal(w, a);
 
         maxAlignment = @max(maxAlignment, alignment);
     }
@@ -1569,10 +1604,14 @@ fn initRecord(self: *Self, c: *ast.Con, args: []*ast.Expr, t: ast.Type) !ValueMe
 }
 
 fn writeExpr(self: *Self, w: anytype, a: *ast.Expr) !usize {
+    return try self.writeVal(w, .{ .v = try self.expr(a), .t = a.t });
+}
+
+fn writeVal(self: *Self, w: anytype, a: TypeVal) !usize {
     const ty = a.t;
-    const v = try self.expr(a);
     const sz = self.sizeOf(ty);
     try pad(w, sz.alignment);
+    const v = a.v;
     try w.writeAll(v.ref.slice(sz.size));
 
     return sz.alignment;
@@ -1921,6 +1960,32 @@ const Scope = struct {
     }
 };
 
+fn registerSignal(self: *Self, sig: i32, fun: ValueMeta, funty: ast.Type) !void {
+    try self.signalHandlers.put(sig, .{
+        .funty = funty,
+        .funval = fun,
+    });
+    try posix.sigaction(@intCast(sig), &.{
+        .handler = .{ .handler = sighandler },
+        .mask = posix.empty_sigset,
+        .flags = 0,
+    }, null);
+}
+
+fn sighandler(sig: c_int) callconv(.C) void {
+    const self = sigself.?;
+    const fun = self.signalHandlers.get(sig).?;
+    const argty = self.getType(fun.funty).Fun.args[0];
+    var sigparamval = RawValue{ .int = sig };
+    const sigparamref = ValueMeta{ .ref = &sigparamval };
+    const sigval: TypeVal = .{ .t = argty, .v = sigparamref };
+    var params = [_]TypeVal{sigval};
+
+    // NOTE: this is bad - we should not be allocating here, because it's on a separate thread and might break.
+    // this problem is similar to how can I present threads n shii.
+    _ = self.call(fun.funval, &params, fun.funty) catch unreachable;
+}
+
 const DyLibLoader = struct {
     // also cache functions yo.
     libs: LibCache,
@@ -2010,7 +2075,7 @@ const RealErr = error{
     OutOfMemory,
 
     Bruh,
-} || std.DynLib.Error || ffi.Error;
+} || std.DynLib.Error || ffi.Error || error{OperationNotSupported};
 const Runtime = error{
     Return,
     Break, // unused right now, just here to show ya.

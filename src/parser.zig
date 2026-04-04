@@ -2407,6 +2407,20 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
                 .errno => try self.definedType(.I32),
 
+                .@"register-signal" => b: {
+                    const sigty = try self.definedType(.I32);
+                    const unit = try self.definedType(.Unit);
+                    try self.typeContext.unify(args.items[0].t, sigty, &.{ .l = l });
+
+                    const funty = try self.makeType(.{ .Fun = .{
+                        .args = [_]AST.Type{sigty},
+                        .ret = unit,
+                    } });
+                    try self.typeContext.unify(funty, self.modules.signalFunTy, &.{ .l = l });
+                    try self.typeContext.unify(args.items[1].t, funty, &.{ .l = l });
+                    break :b unit;
+                },
+
                 .@"i64-f64" => b: {
                     try self.typeContext.unify(args.items[0].t, try self.definedType(.I64), &.{ .l = l });
                     break :b try self.definedType(.F64);
