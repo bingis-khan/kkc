@@ -31,7 +31,7 @@ fn f() -> I32 -> I32
         d (x I32) -> I32
             return x + sumtin   # captures sumtin
 
-    return d   # function escapes — sumtin travels with it
+    return d   # function escapes - sumtin travels with it
 
 println(f()(69))   # prints 489
 ```
@@ -46,13 +46,13 @@ I'm maximizing expressiveness but adhering to the constraints of a low level lan
 - **Single-pass compilation** - already faster than C#'s compiler :)
 - **Typeclasses** - ad-hoc polymorphism and local typeclass instances
 - **ADTs** - algebraic data types
-- **Expressive Pattern Matching** - deconstruct ADTs, records, lists(!); match on integers and strings too.
-- **Operator overloading** - add new number types, add indexing (`[]`) operator to custom lists and hash maps.
+- **Expressive Pattern Matching** - deconstruct ADTs, records, lists(!); match on integers and strings too
+- **Operator overloading** - add new number types, add indexing (`[]`) operator to custom lists and hash maps
 - **String interpolation** - staticically allocated interpolation: `'\(x) with \(y)'`
 - **Anonymous records** - structural record types without named types
 - **Integers in types** - type-level integer parameters for static arrays and typed array/matrix dimensions.
-- **Postfix calls** - for function chaining, like `map-filter-reduce` style code.
-- **A modern standard library** - written in kkc itself from the [ground up](std/Slice.kkc). I want to provide everything from an HTTP server to [graphical libraries](std/Tui.kkc)
+- **Postfix calls** - for function chaining, like `map-filter-reduce` style code
+- **A complete standard library** - written in kkc itself from the [ground up](std/Slice.kkc). I dislike anemic standard libraries of other languages. My plan is to provide everything from an HTTP server, [graphical libraries](std/Tui.kkc) to ELF and machine code generation. The more I continue to learn about stuff, the more things will be implemented.
 
 
 ## Select Samples
