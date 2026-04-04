@@ -105,6 +105,20 @@ inst Str I32
 	chars (self I32):
 		IntStrIter { int: self, len: self count-digits() }
 
+inst Str U32
+	print-str (self U32) -> Unit
+		Cnile.printf1('%u', self)
+
+	chars (self U32):
+		IntStrIter { int: self, len: self count-digits() }
+
+inst Str U8
+	print-str (self U8) -> Unit
+		Cnile.printf1('%d', Mem.u8-i32(self))
+
+	chars (self U8):
+		IntStrIter { int: self, len: self count-digits() }
+
 inst Str I64
 	print-str (self I64) -> Unit
 		Cnile.printf1('%ld', self)
@@ -334,6 +348,8 @@ fn eq(l, r)
 fn streq(l, r): eq(l, r)
 fn char-i32(c Char) -> I32:
 	Mem.cast-on-zeroed(c)
+fn char-u8(c Char) -> U8:
+	Mem.cast(c)
 fn i32-char(i I32) -> Char:
 	Mem.cast(i)
 
@@ -353,3 +369,6 @@ fn print-as-list(it)
 
 inst Eq ConstStr
 	eq (l, r): Cnile.strcmp(l, r) == 0
+
+inst Ord Char
+	cmp (l, r): cmp(char-i32(l), char-i32(r))

@@ -1762,6 +1762,20 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
                 try self.caseExpr(self.mode.Multiline.prev, case.caseExpr, self.loc(optok));
             },
         }
+
+        switch (self.mode) {
+            .Simple => |ml| {
+                switch (ml) {
+                    .CountIndent => |ci| {
+                        if (ci.indent == 0) {
+                            return left;
+                        }
+                    },
+                    else => {},
+                }
+            },
+            else => {},
+        }
         optok = self.peek();
     }
 
@@ -2414,6 +2428,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .@"u32-sub",
                 .@"u32-mul",
                 .@"u32-div",
+                .@"u8-add",
+                .@"u8-sub",
+                .@"u8-mul",
+                .@"u8-div",
                 .@"size-add",
                 .@"size-sub",
                 .@"size-mul",
@@ -2427,6 +2445,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => try self.definedType(.I64),
                         .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => try self.definedType(.I32),
                         .@"u32-add", .@"u32-sub", .@"u32-mul", .@"u32-div" => try self.definedType(.U32),
+                        .@"u8-add", .@"u8-sub", .@"u8-mul", .@"u8-div" => try self.definedType(.U8),
                         .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => try self.definedType(.F64),
                         .@"size-add", .@"size-sub", .@"size-mul", .@"size-div" => try self.definedType(.Size),
 
@@ -2440,6 +2459,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .@"i64-cmp",
                 .@"i32-cmp",
                 .@"u32-cmp",
+                .@"u8-cmp",
                 .@"f64-cmp",
                 .@"size-cmp",
                 => b: {
@@ -2449,6 +2469,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .@"u32-cmp" => self.definedType(.U32),
                         .@"f64-cmp" => self.definedType(.F64),
                         .@"size-cmp" => self.definedType(.Size),
+                        .@"u8-cmp" => self.definedType(.U8),
                         else => unreachable,
                     };
                     const ordTy = try self.definedType(.Ordering);
@@ -2684,6 +2705,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 fn multilineLambda(self: *Self, tempLoc: Loc) !void {
     const lamMode = self.mode.Multiline;
     self.scope.restoreScope(lamMode.this.Lambda.scope);
+    self.env = .{ .env = lamMode.this.Lambda.env, .fun = null };
 
     // CRAP CODE!!!
     const ret = try self.typeContext.fresh();
@@ -2706,7 +2728,7 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
 
     const bod = try self.body();
     var stmts = bod.stmts;
-    self.endScope();
+    self.endScope(); // this also assigns self.env.
 
     try self.finishBodyAndInferReturnType(&stmts, bod.returnStatus, tempLoc); // TEMP. I should return the location of the last statement (but I don''t have locations in statements yet.')
 
@@ -2727,7 +2749,12 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
 
     self.mode = .{ .Simple = switch (lamMode.prev) {
         .Normal => .Normal,
-        .CountIndent => |i| .{ .CountIndent = .{ .indent = i.indent, .hadMultiline = true } },
+        .CountIndent => |i| .{
+            .CountIndent = .{
+                .indent = i.indent,
+                .hadMultiline = true,
+            },
+        },
     } };
 }
 
@@ -5353,11 +5380,11 @@ fn finishFold(self: *Self, mode: ParsingMode) !void {
 
 fn expect(self: *Self, tt: TokenType) !Token {
     return self.consume(tt) orelse {
-        unreachable;
-        // try self.parseError(.{ .UnexpectedToken = .{
-        //     .got = self.currentToken,
-        //     .expected = tt,
-        // } });
+        // unreachable;
+        try self.parseError(.{ .UnexpectedToken = .{
+            .got = self.currentToken,
+            .expected = tt,
+        } });
     };
 }
 
@@ -5434,7 +5461,7 @@ const ParsingMode = union(enum) {
 
             fn dedent(self: *@This()) void {
                 self.indent -= 1;
-                self.hadMultiline = false;
+                // self.hadMultiline = true;
             }
         },
     };

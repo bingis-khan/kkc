@@ -936,6 +936,13 @@ pub const Expr = struct {
             self.env.print(c);
             c.print(self.body);
         }
+
+        pub fn returnType(self: *const @This()) Type {
+            return switch (self.body) {
+                .Body => |bod| bod.ret,
+                .Expr => |expr| expr.t,
+            };
+        }
     };
 
     pub const Field = struct {

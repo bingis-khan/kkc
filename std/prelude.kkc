@@ -214,6 +214,9 @@ inst FromIntegral U32
 inst FromIntegral I8
 	from-integral (x): @cast(x)
 
+inst FromIntegral U8
+	from-integral (x): @cast(x)
+
 inst FromIntegral Size
 	from-integral (x): @cast(x)
 
@@ -226,6 +229,12 @@ inst Eq I64
 	eq (l, r): @memeq(l, r)
 
 inst Eq I32
+	eq (l, r): @memeq(l, r)
+
+inst Eq U32
+	eq (l, r): @memeq(l, r)
+
+inst Eq U8
 	eq (l, r): @memeq(l, r)
 
 inst Eq Size
@@ -264,6 +273,12 @@ inst Ord Size
 
 inst Ord I32
 	cmp (l, r): @i32-cmp(l, r)
+
+inst Ord U32
+	cmp (l, r): @u32-cmp(l, r)
+
+inst Ord U8
+	cmp (l, r): @u8-cmp(l, r)
 
 # ops
 
@@ -316,6 +331,21 @@ inst Multiplication U32
 
 inst Division U32
 	op-div (l, r): @u32-div(l, r)
+
+
+# U8
+
+inst Addition U8
+	op-add (l, r): @u8-add(l, r)
+
+inst Subtraction U8
+	op-sub (l, r): @u8-sub(l, r)
+
+inst Multiplication U8
+	op-mul (l, r): @u8-mul(l, r)
+
+inst Division U8
+	op-div (l, r): @u8-div(l, r)
 
 
 ## Size

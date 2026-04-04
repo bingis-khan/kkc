@@ -1071,27 +1071,27 @@ const Stmt = struct {
             },
             .Intrinsic => |intr| {
                 switch (intr.intr.ty) {
-                    .@"u32-add", .@"i64-add", .@"i32-add", .@"size-add" => {
+                    .@"u32-add", .@"u8-add", .@"i64-add", .@"i32-add", .@"size-add" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("+");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-sub", .@"i64-sub", .@"i32-sub", .@"size-sub" => {
+                    .@"u32-sub", .@"u8-sub", .@"i64-sub", .@"i32-sub", .@"size-sub" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("-");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-mul", .@"i64-mul", .@"i32-mul", .@"size-mul" => {
+                    .@"u32-mul", .@"u8-mul", .@"i64-mul", .@"i32-mul", .@"size-mul" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("*");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-div", .@"i64-div", .@"i32-div", .@"size-div" => {
+                    .@"u32-div", .@"u8-div", .@"i64-div", .@"i32-div", .@"size-div" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("/");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-cmp", .@"i64-cmp", .@"i32-cmp", .@"size-cmp" => {
+                    .@"u32-cmp", .@"u8-cmp", .@"i64-cmp", .@"i32-cmp", .@"size-cmp" => {
                         // CRINGE
                         const it = intr.intr.ty;
                         const cmp = switch (it) {
@@ -1300,10 +1300,7 @@ const Stmt = struct {
                 }
             },
             .Lam => |lam| {
-                const nuId = (try genFunctionForReal(stmt.ctx, "lam", lam.params, switch (lam.body) {
-                    .Expr => |lamexpr| lamexpr.t,
-                    .Body => |bod| bod.ret,
-                }, lam.env, null, switch (lam.body) {
+                const nuId = (try genFunctionForReal(stmt.ctx, "lam", lam.params, lam.returnType(), lam.env, null, switch (lam.body) {
                     .Expr => |lamexpr| .{ .Expr = lamexpr },
                     .Body => |bod| .{ .Body = bod.stmts },
                 })).id;
@@ -1317,7 +1314,7 @@ const Stmt = struct {
                     for (lam.params, args) |param, *arg| {
                         arg.* = try stmt.ctx.typeContext.mapType(stmt.ctx.tymap.match, param.d.t);
                     }
-                    try genEnvInst(stmt.ctx, args, try stmt.ctx.typeContext.mapType(stmt.ctx.tymap.match, lam.body.Expr.t), nuId);
+                    try genEnvInst(stmt.ctx, args, try stmt.ctx.typeContext.mapType(stmt.ctx.tymap.match, lam.returnType()), nuId);
 
                     try stmt.p(.{"(struct"});
                     try stmt.j(.{

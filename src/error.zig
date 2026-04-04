@@ -408,11 +408,11 @@ fn errorAtLocation(module: ModuleInfo, c: ast.Ctx, loc: Loc, labels: anytype) vo
 
     var lineBeginIndex = loc.from;
     while (true) {
-        if (lineBeginIndex == 0) break;
         if (loc.module.source[lineBeginIndex] == '\n') {
             lineBeginIndex += 1;
             break;
         }
+        if (lineBeginIndex == 0) break;
         lineBeginIndex -= 1;
     }
 

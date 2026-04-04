@@ -1,0 +1,31 @@
+use Str
+	char-u8
+use Mem
+	u8-i64
+use Iter
+	map
+	reduce
+use Error
+	or-fail
+use Into
+
+
+# TODO: check actual digit sizes.
+fn from-octal(arr): arr
+	Iter.reduce(0, fn(elem, b): b * 8 + elem)
+
+fn hex-digit(c Char)
+	if c >= '0' and c <= '9'
+		return Just(char-u8(c) - char-u8('0'))
+
+	if c >= 'a' and c <= 'f'
+		return Just(char-u8(c) - char-u8('a') + 10)
+
+	if c >= 'A' and c <= 'F'
+		return Just(char-u8(c) - char-u8('A') + 10)
+
+	return None
+
+fn from-hex(arr): arr
+	map(fn c: c hex-digit() or-fail('"\(c)" is not a hex digit.') u8-i64() from-integral())
+	reduce(0, fn(elem, b): b * 16 + elem)

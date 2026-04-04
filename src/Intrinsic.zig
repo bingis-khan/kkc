@@ -53,7 +53,7 @@ pub fn findByName(name: Str) ?Self {
     return finder.get(name);
 }
 
-const NumberTypes = [_][]const u8{ "i32", "u32", "i64", "f64", "size" };
+const NumberTypes = [_][]const u8{ "u8", "i32", "u32", "i64", "f64", "size" };
 const NumberOps = [_][]const u8{ "add", "sub", "mul", "div", "cmp" };
 
 // https://kihlander.net/post/extending-an-enum-in-zig/

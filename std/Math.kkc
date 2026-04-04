@@ -30,7 +30,3 @@ fn sqrt(f F64):
 	Cnile.sqrt(f)  # geeeeeeg
 
 fn floor(f F64): @f64-i64-floor(f)
-
-# TODO: check actual digit sizes.
-fn from-octal(arr): arr
-	Iter.reduce(0, fn(elem, b): b * 8 + elem)
