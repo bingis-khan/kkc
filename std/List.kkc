@@ -34,6 +34,11 @@ fn get-ptr (list Ptr (List alloc a), i Idx) -> Ptr a
 fn get (list Ptr (List alloc a), i Idx) -> a:
 	list get-ptr(i)&
 
+fn try-get (list Ptr (List alloc a), i Idx) -> Maybe a
+	if i >= list&.count
+		return None
+	return list get(i) Just()
+
 fn set (list Ptr (List alloc a), i Idx, elem a) -> Unit
 	if i < 0 or i >= list&.count
 		panic('Tried setting a list element at index \(i) (count: \(list&.count))')

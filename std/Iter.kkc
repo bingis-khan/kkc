@@ -218,12 +218,16 @@ fn zip(left, right)
 FlattenIter it it'
 	super it
 	inner it'
+	empty Bool # hack for empty iterators.
 
 inst IntoIter FlattenIter
 	into-iter (self): self
 
 inst Iter FlattenIter
 	next (self)
+		if self&.empty
+			return None
+
 		while True
 			case next(&self&.inner)
 				Just(x)
@@ -240,9 +244,11 @@ fn flatten (it)
 	it = it into-iter()
 	case next(&it)
 		Just(inner)
-			return FlattenIter { super: it, inner: inner into-iter() }
+			return FlattenIter { super: it, inner: inner into-iter(), empty: False }
 
 		# should handle empty iterators!
+		None
+			return FlattenIter { super: it, inner: @undefined, empty: True }
 
 
 fn cartesian (lit, rit): lit

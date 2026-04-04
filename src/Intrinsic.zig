@@ -7,6 +7,7 @@ args: u8,
 pub const Type: type = addNumericEnums(enum {
     undefined,
     cast,
+    panic,
     @"offset-ptr",
     @"size-of",
     argv,
@@ -28,6 +29,7 @@ pub const Type: type = addNumericEnums(enum {
 const List = [_]Self{
     .{ .ty = .undefined, .args = 0 },
     .{ .ty = .cast, .args = 1 },
+    .{ .ty = .panic, .args = 1 },
     .{ .ty = .@"offset-ptr", .args = 2 },
     .{ .ty = .@"size-of", .args = 1 },
     .{ .ty = .argv, .args = 0 },

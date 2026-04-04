@@ -92,3 +92,5 @@ use Misc
 	id
 	fst
 	snd
+	and-maybe
+	fmap-maybe

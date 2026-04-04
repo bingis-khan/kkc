@@ -8,6 +8,8 @@ use Iter
 	cons
 use Math
 	mod
+use Misc
+	fmap-maybe
 use Hashable
 	Hashable
 	hash
@@ -109,13 +111,6 @@ fn resize-if-needed (self Ptr (Hash Allocator k v)) <= Eq k, Hashable k
 	self&.allocator Alloc.free(old-bucket-arr)
 	self <&= nu-hash&
 
-
-fn fmap-maybe (x Maybe a, fun a -> b) -> Maybe b
-	case x
-		None
-			return None
-		Just(y)
-			return Just(fun(y))
 
 fn get-bucket-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr (Bucket k v)) <= Eq k, Hashable k
 	h = k hash()

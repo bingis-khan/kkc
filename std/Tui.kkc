@@ -20,6 +20,7 @@ use Mem
 	u32-size
 	u32-i32
 	i64-i32
+	size-i32
 	size-i64
 	size-u32
 use Misc
@@ -494,15 +495,22 @@ fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
 		rs <&.x= x
 		rs <&.y= y
 
+	# preprocess some stuff - handle disallowed chars.
+	char = c&.c
+	bg = c&.bg
+	if char == '\t' or char == '\r' or char == '\n'
+		char <= ' '
+		bg <= Term.Color8(Term.Red8)
+
 	if rs&.fg /= c&.fg
 		Term.set-fg(c&.fg)
 		rs <&.fg= c&.fg
 
-	if rs&.bg /= c&.bg
-		Term.set-bg(c&.bg)
-		rs <&.bg= c&.bg
+	if rs&.bg /= bg
+		Term.set-bg(bg)
+		rs <&.bg= bg
 
-	Str.print-str(c&.c)
+	Str.print-str(char)
 	rs <&.x = rs&.x + 1
 
 fn render-screen(screen Ptr (Screen Allocator))
@@ -549,32 +557,42 @@ fn set-screen-fg (screen Ptr (Screen Allocator), c Color)
 fn set-screen-bg (screen Ptr (Screen Allocator), c Color)
 	screen <&.default-bg= c
 
+fn get-cell-ptr (screen Ptr (Screen Allocator), x I32, y I32) -> Maybe (Ptr Cell)
+	w = screen&.tui&.width u32-i32()
+	if x < 0 or x >= w
+		return None
+	if y < 0 or y >= screen&.tui&.height u32-i32()
+		return None
+
+	i = (y * w + x) i32-size()
+	return Just(Slice.get-ptr(screen&.current, i))
 
 # non-wrapping drawing thing.
-fn put-char (screen Ptr (Screen Allocator), c Char, x U32, y U32)
-	w = screen&.tui&.width
-	if x >= w or y >= screen&.tui&.height
+fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
+	w = screen&.tui&.width u32-i32()
+	if x >= w or y >= screen&.tui&.height u32-i32()
 		return
-	i = (y * w + x) u32-size()
+	i = (y * w + x) i32-size()
 	fg = screen&.default-fg
 	bg = screen&.default-bg
+	c = c
 	screen&.current Slice.set(i, Cell { c, fg, bg })
 
-fn draw-str (screen Ptr (Screen Allocator), s Str, x U32, y U32)
-	if y >= screen&.tui&.height
+fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
+	if y >= screen&.tui&.height u32-i32()
 		return
-	w = screen&.tui&.width
-	i = (y * w + x) u32-size()
+	w = screen&.tui&.width u32-i32()
+	i = (y * w + x) i32-size()
 	x = Math.min(x, w)  # clamp the result to bounds
-	max-len = (w - x) u32-size()
+	max-len = (w - x) i32-size()
 	fg = screen&.default-fg
 	bg = screen&.default-bg
 
 	s chars() zip(from(0)) for-each(fn((c, xx)))
 		Slice.set(screen&.current, i + xx i32-size(), Cell { c, fg, bg })
 
-fn draw-str-right(screen Ptr (Screen Allocator), s Str, x U32, y U32)
-	slen = s chars() count() size-u32()
-	w = screen&.tui&.width
+fn draw-str-right(screen Ptr (Screen Allocator), s Str, x I32, y I32)
+	slen = s chars() count() size-i32()
+	w = screen&.tui&.width u32-i32()
 	x = w - x - slen
 	screen draw-str(s, x, y)

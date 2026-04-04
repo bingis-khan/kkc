@@ -2390,6 +2390,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
             const t = switch (intr.ty) {
                 .cast => try self.typeContext.fresh(),
+                .panic => b: {
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.ConstStr), &.{ .l = args.items[0].l });
+                    break :b try self.definedType(.Unit);
+                },
                 .undefined => try self.typeContext.fresh(),
                 .@"size-of" => try self.definedType(.Size),
                 .@"offset-ptr" => b: {

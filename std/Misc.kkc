@@ -1,3 +1,21 @@
 fn id(x): x
 fn fst(Tuple2(l, _)): l
 fn snd(Tuple2(_, r)): r
+fn and-maybe(m Maybe a, fun a -> Maybe b) -> Maybe b
+	case m
+		None
+			return None
+		Just(x)
+			return fun(x)
+
+fn fmap-maybe (x Maybe a, fun a -> b) -> Maybe b
+	case x
+		None
+			return None
+		Just(y)
+			return Just(fun(y))
+
+fn maybe (x Maybe a, fun a -> b, default b) -> b:
+	(case x)
+		Just(y): fun(y)
+		_: default

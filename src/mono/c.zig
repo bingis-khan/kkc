@@ -1242,6 +1242,11 @@ const Stmt = struct {
 
                         try stmt.p(.{t});
                     },
+                    .panic => {
+                        const s = try stmt.tempExpr(intr.args[0]);
+                        try genPanic(stmt.ctx, s);
+                        try stmt.unitValue();
+                    },
                     .argv => {
                         try stmt.p("_global_argv");
                     },
@@ -1355,13 +1360,8 @@ const Stmt = struct {
 
                                     // this is actually called in code, so return unit.
                                     var retln = startLine(self);
-                                    const unit = self.prelude.defined(.Unit);
                                     try retln.p(.{"return"});
-                                    try retln.constructor(&unit.stuff.cons[0], .{
-                                        .type = unit,
-                                        .application = &ast.Match.Empty,
-                                        .outerApplication = &.{},
-                                    });
+                                    try retln.unitValue();
                                     try retln.finishStmt();
                                 }
                                 try endBodyAndFinish(self);
@@ -1654,6 +1654,11 @@ const Stmt = struct {
                         },
                         .Case => unreachable,
                     }
+                } else {
+                    // in case we haven't broken out of it, it means that the this case might be un
+                    // in this case, generate panic code.
+                    // try genInlinePanic(stmt, "case not matched!", caseexpr.cases[0]);
+                    unreachable; // currently, will cause an error in C - what should we return?
                 }
 
                 try stmt.p(";");
@@ -1951,6 +1956,15 @@ const Stmt = struct {
         } else {
             try self.p(.{v.v});
         }
+    }
+
+    fn unitValue(self: *@This()) !void {
+        const unit = self.ctx.prelude.defined(.Unit);
+        try self.constructor(&unit.stuff.cons[0], .{
+            .type = unit,
+            .application = &ast.Match.Empty,
+            .outerApplication = &.{},
+        });
     }
 
     /////////////////////
@@ -2907,17 +2921,31 @@ fn genRecordConstructor(self: *Self, nuId: Unique, con: *const ast.Con, comptime
     try endBodyAndFinishStmt(self);
 }
 
-fn genPanic(self: *Self, s: Str) !void {
+fn genPanic(self: *Self, s: anytype) !void {
     try self.backend.imports.insert("stdlib.h");
     try self.backend.imports.insert("stdio.h");
 
     var l = startLine(self);
-    try l.j(.{ "printf", "(", "\"%s\\n\", \"", s, "\")" });
+    if (@TypeOf(s) == Temp) {
+        try l.j(.{ "printf", "(", "\"%s\\n\", ", s, ")" });
+    } else {
+        try l.j(.{ "printf", "(", "\"%s\\n\", \"", s, "\")" });
+    }
     try l.finishStmt();
 
     var e = startLine(self);
     try e.p(.{ "exit", "(", 1, ")" });
     try e.finishStmt();
+}
+
+fn genInlinePanic(self: *Stmt, s: Str) !void {
+    try self.ctx.backend.imports.insert("stdlib.h");
+    try self.ctx.backend.imports.insert("stdio.h");
+
+    try self.p("({");
+    try self.j(.{ "printf", "(", "\"%s\\n\", \"", s, "\");" });
+    try self.p(.{ "exit", "(", 1, ");" });
+    try self.p("})");
 }
 
 const FunInst = ast.TypeF(ast.Type).Fun;

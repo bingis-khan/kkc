@@ -500,6 +500,15 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     };
                     return emptyValue;
                 },
+                .panic => {
+                    const sval = try self.expr(intr.args[0]);
+                    const cstr = sval.ref.cstr;
+                    const len = std.mem.len(cstr);
+                    var s: []u8 = undefined;
+                    s.ptr = cstr;
+                    s.len = len;
+                    @panic(s);
+                },
                 .@"size-of" => {
                     return try self.intValue(@intCast(self.sizeOf(intr.args[0].t).size));
                 },
@@ -1445,6 +1454,7 @@ const RawValue = extern union {
         tag: u32,
         data: Flexible,
     },
+    cstr: [*:0]u8,
 
     const Lam = struct {
         lam: *const ast.Expr.Lam,

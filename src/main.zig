@@ -124,7 +124,9 @@ pub fn main() !void {
                         .Exited => |code| {
                             std.debug.print("program exited with code {}\n", .{code});
                         },
-                        else => unreachable,
+                        else => |code| {
+                            std.debug.print("unexpected STOP ({})\n", .{code});
+                        },
                     }
                 }
             },
