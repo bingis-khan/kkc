@@ -67,3 +67,7 @@ fn drop-while'(it, pred)
 - it seems like I didn't add record updates ????
 - it seems like I didn't add `Joltage { first, second }` deconstruction syntax??
 - OOM when function has no body
+
+# Tests - split base/std?
+
+split into `base` and `std`. in the first. only the prelude is loaded. in the second, it assumes a working std implementation to test more complicated behaviors.

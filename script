@@ -14,6 +14,7 @@ running = True
 counter = 0 as U32
 x = 0 as I32
 y = 0 as I32
+changes = 0
 while running
 	for ev in Iter.from-function(Tui.read-key)
 		case ev
@@ -41,21 +42,26 @@ while running
 
 	screen Tui.resize-screen-if-needed()
 
+
 	x <= x Math.clamp(0, (tui&.width - 1) u32-i32())
 	y <= y Math.clamp(0, (tui&.height - 1) u32-i32())
-	screen Tui.clear-screen()
-	screen Tui.put-char('a', 0, 0, Tui.Color8(Term.Red8), Tui.ColorDefault)
-	screen Tui.put-char('b', 1, 1, Tui.Color8(Term.Red8), Tui.ColorDefault)
-	screen Tui.draw-str('abcdef', 0, 2, Tui.Color8(Term.Red8), Tui.ColorDefault)
-	screen Tui.draw-str('abcdef', 1, 3, Tui.Color8(Term.Red8), Tui.ColorDefault)
-	screen Tui.draw-str-right('(\(tui&.width), \(tui&.height))', 0, 0, Tui.Color8(Term.Red8), Tui.ColorDefault)
-	screen Tui.draw-str-right('FPS: \(tui&.actual-fps)', 0, 1, Tui.Color8(Term.Red8), Tui.ColorDefault)
-	screen Tui.put-char('@', x i32-u32(), y i32-u32(), Tui.Color8(Term.Red8), Tui.ColorDefault)
 
-	screen Tui.render-screen()
+	screen Tui.clear-screen()
+	screen Tui.set-screen-fg(Term.Color8(Term.Blue8))
+	screen Tui.set-screen-bg(Term.Color8(Term.Green8))
+	screen Tui.put-char('a', 0, 0)
+	screen Tui.put-char('b', 1, 1)
+	screen Tui.draw-str('abcdef', 0, 2)
+	screen Tui.draw-str('abcdef', 1, 3)
+	screen Tui.draw-str-right('(\(tui&.width), \(tui&.height))', 0, 0)
+	screen Tui.draw-str-right('FPS: \(tui&.actual-fps)', 0, 1)
+	screen Tui.draw-str('Changes: \(changes)', 0, 0)
+	screen Tui.draw-str('Count: \(counter)', 0, 1)
+	screen Tui.put-char('@', x i32-u32(), y i32-u32())
+
+	changes <= screen Tui.render-screen()
 	Tui.sync(tui)
 	counter <= counter + 1
-
 
 
 screen Tui.free-screen()

@@ -281,6 +281,54 @@ fn set-fg-rgb(c RGB)
 fn set-bg-rgb(c RGB)
 	print-str('\x1b[48;2;\(c.r);\(c.g);\(c.b)m')
 
+
+# Unifying color thing
+Color
+	ColorDefault
+	Color8 Color8
+	Color16 Color16
+	Color256 U8
+	ColorRGB RGB
+
+inst Eq Color
+	eq (l, r)
+		return
+			(case (l, r))
+				(ColorDefault, ColorDefault): True
+				(Color8(lc), Color8(rc)): lc == rc
+				(Color16(lc), Color16(rc)): lc == rc
+				(Color256(lc), Color256(rc)): lc == rc
+				(ColorRGB(lc), ColorRGB(rc)): lc == rc
+				_: False
+
+fn set-fg (c Color)
+	case c
+		ColorDefault
+			set-default-fg()
+		Color8(c8)
+			set-fg8(c8)
+		Color16(c16)
+			set-fg16(c16)
+		Color256(c256)
+			set-fg256(c256)
+		ColorRGB(crgb)
+			set-fg-rgb(crgb)
+
+fn set-bg (c Color)
+	case c
+		ColorDefault
+			set-default-bg()
+		Color8(c8)
+			set-bg8(c8)
+		Color16(c16)
+			set-bg16(c16)
+		Color256(c256)
+			set-bg256(c256)
+		ColorRGB(crgb)
+			set-bg-rgb(crgb)
+
+
+
 fn cprintln-rgb(s, fg RGB, bg RGB)
 	set-fg-rgb(fg)
 	set-bg-rgb(bg)
@@ -305,6 +353,13 @@ fn cprintln8(s, fg Color8, bg Color8)
 fn cprintln16(s, fg Color16, bg Color16)
 	set-fg16(fg)
 	set-bg16(bg)
+	print-str(s)
+	reset-colors()
+	print-str('\n')
+
+fn cprintln(s, fg Color, bg Color)
+	set-fg(fg)
+	set-bg(bg)
 	print-str(s)
 	reset-colors()
 	print-str('\n')

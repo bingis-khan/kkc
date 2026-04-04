@@ -30,6 +30,7 @@ use Term
 	Color8
 	Color16
 	RGB
+	Color
 use Alloc
 	Allocator
 use Slice
@@ -50,9 +51,6 @@ use Str
 	Str
 	chars
 
-
-#[backend 'c']
-pass
 
 # there should be a global termios for signal handlers.
 # orig-termios = @undefined
@@ -112,7 +110,7 @@ fn read-byte(timeout-ms I32) -> Maybe Cnile.Char
 	if Cnile.poll(Mem.cast-ptr(&pfd), 1, timeout-ms) <= 0
 		return None
 	c = Mem.zeroed() as Cnile.Char
-	if Cnile.read(0, (&c) cast-ptr(), 1) <= 0
+	if Cnile.read(Cnile.stdin-fileno(), (&c) cast-ptr(), 1) <= 0
 		return None
 	return Just(c)
 
@@ -413,7 +411,7 @@ fn read-key() -> Maybe InputEvent
 
 fn update-dimensions (tui Ptr Tui)
 	if not should-resize&
-		return
+		return False
 
 	should-resize <&= False
 	dim = Term.get-dimensions()
@@ -422,53 +420,11 @@ fn update-dimensions (tui Ptr Tui)
 
 	tui <&.width= w
 	tui <&.height= h
+	return True
 
 
 ### SCREEN
 
-Color
-	ColorDefault
-	Color8 Color8
-	Color16 Color16
-	Color256 U8
-	ColorRGB RGB
-
-inst Eq Color
-	eq (l, r)
-		return
-			(case (l, r))
-				(Color8(lc), Color8(rc)): lc == rc
-				(Color16(lc), Color16(rc)): lc == rc
-				(Color256(lc), Color256(rc)): lc == rc
-				(ColorRGB(lc), ColorRGB(rc)): lc == rc
-				_: False
-
-# TODO: put Color and set-fg/bg in Term?
-fn set-fg (c Color)
-	case c
-		ColorDefault
-			Term.set-default-fg()
-		Color8(c8)
-			Term.set-fg8(c8)
-		Color16(c16)
-			Term.set-fg16(c16)
-		Color256(c256)
-			Term.set-fg256(c256)
-		ColorRGB(crgb)
-			Term.set-fg-rgb(crgb)
-
-fn set-bg (c Color)
-	case c
-		ColorDefault
-			Term.set-default-bg()
-		Color8(c8)
-			Term.set-bg8(c8)
-		Color16(c16)
-			Term.set-bg16(c16)
-		Color256(c256)
-			Term.set-bg256(c256)
-		ColorRGB(crgb)
-			Term.set-bg-rgb(crgb)
 
 Cell
 	c Char
@@ -495,20 +451,26 @@ Screen
 	tui Ptr Tui
 	current Slice Cell
 	previous Slice Cell
-	# todo: add fg and bg here, because calling them every time is annoying.
+	requires-full-redraw Bool
+
+	default-fg Color
+	default-bg Color
 
 fn mk-screen(tui Ptr Tui, al Allocator)
 	cur = al Alloc.allocate((tui&.width * tui&.height) u32-size())
-	cur Slice.map(fn _: Cell { c: ' ', fg: ColorDefault, bg: ColorDefault })
+	cur Slice.map(fn _: Cell { c: ' ', fg: Term.ColorDefault, bg: Term.ColorDefault })
 
 	prev = al Alloc.allocate((tui&.width * tui&.height) u32-size())
-	prev Slice.map(fn _: Cell { c: ' ', fg: ColorDefault, bg: ColorDefault })
+	prev Slice.map(fn _: Cell { c: ' ', fg: Term.ColorDefault, bg: Term.ColorDefault })
 
 	return Screen
 		{ current: cur
 		, previous: prev
 		, al: al
 		, tui: tui
+		, requires-full-redraw: False
+		, default-fg: Term.ColorDefault
+		, default-bg: Term.ColorDefault
 		}
 
 fn free-screen(screen Ptr (Screen Allocator))  # TODO: the parameter is not defined in the declaration, so it should be HIDDEN
@@ -517,13 +479,14 @@ fn free-screen(screen Ptr (Screen Allocator))  # TODO: the parameter is not defi
 	al Alloc.free(screen&.previous)
 
 fn clear-screen(screen Ptr (Screen Allocator))
-	screen&.current Slice.map(fn _: Cell { c: ' ', fg: ColorDefault, bg: ColorDefault })
+	screen&.current Slice.map(fn _: Cell { c: ' ', fg: Term.ColorDefault, bg: Term.ColorDefault })
 
 RenderState
 	x U32
 	y U32
 	fg Color
 	bg Color
+	changes U32
 
 fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
 	if x /= rs&.x or y /= rs&.y
@@ -532,11 +495,11 @@ fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
 		rs <&.y= y
 
 	if rs&.fg /= c&.fg
-		set-fg(c&.fg)
+		Term.set-fg(c&.fg)
 		rs <&.fg= c&.fg
 
 	if rs&.bg /= c&.bg
-		set-bg(c&.bg)
+		Term.set-bg(c&.bg)
 		rs <&.bg= c&.bg
 
 	Str.print-str(c&.c)
@@ -545,24 +508,30 @@ fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
 fn render-screen(screen Ptr (Screen Allocator))
 	w = screen&.tui&.width u32-i32()
 	h = screen&.tui&.height u32-i32()
-	rs =& RenderState { x: 0, y: 0, fg: ColorDefault, bg: ColorDefault }
+	rs =& RenderState { x: 0, y: 0, fg: Term.ColorDefault, bg: Term.ColorDefault, changes: 0 }
 	Term.move-cursor-to(0, 0)
 	for y in 0 to (h - 1)
 		for x in 0 to (w - 1)
 			i = (y * w + x) i32-size()
 			cur = Slice.get-ptr(screen&.current, i)
 			prev = Slice.get-ptr(screen&.previous, i)
-			if cur /= prev
+			if cur /= prev or screen&.requires-full-redraw
+				rs <&.changes= rs&.changes + 1
 				emit-cell(rs, cur, x i32-u32(), y i32-u32())
 				prev <&= cur&
+
+	screen <&.requires-full-redraw= False
 	Term.reset-colors()
 	flush-stdout()
+	return rs&.changes
 
 # calls update-dimensions() anyway.
 fn resize-screen-if-needed(screen Ptr (Screen Allocator))
 	tui = screen&.tui
-	tui update-dimensions()
+	if not tui update-dimensions()
+		return
 
+	screen <&.requires-full-redraw = True
 	w = screen&.tui&.width
 	h = screen&.tui&.height
 
@@ -574,28 +543,38 @@ fn resize-screen-if-needed(screen Ptr (Screen Allocator))
 	screen <&.current= nuscreen.current
 	screen <&.previous= nuscreen.previous
 
+fn set-screen-fg (screen Ptr (Screen Allocator), c Color)
+	screen <&.default-fg= c
+
+fn set-screen-bg (screen Ptr (Screen Allocator), c Color)
+	screen <&.default-bg= c
+
 
 # non-wrapping drawing thing.
-fn put-char (screen Ptr (Screen Allocator), c Char, x U32, y U32, fg Color, bg Color)
+fn put-char (screen Ptr (Screen Allocator), c Char, x U32, y U32)
 	w = screen&.tui&.width
 	if x >= w or y >= screen&.tui&.height
 		return
 	i = (y * w + x) u32-size()
+	fg = screen&.default-fg
+	bg = screen&.default-bg
 	screen&.current Slice.set(i, Cell { c, fg, bg })
 
-fn draw-str (screen Ptr (Screen Allocator), s Str, x U32, y U32, fg Color, bg Color)
+fn draw-str (screen Ptr (Screen Allocator), s Str, x U32, y U32)
 	if y >= screen&.tui&.height
 		return
 	w = screen&.tui&.width
 	i = (y * w + x) u32-size()
 	x = Math.min(x, w)  # clamp the result to bounds
 	max-len = (w - x) u32-size()
+	fg = screen&.default-fg
+	bg = screen&.default-bg
 
 	s chars() zip(from(0)) for-each(fn((c, xx)))
 		Slice.set(screen&.current, i + xx i32-size(), Cell { c, fg, bg })
 
-fn draw-str-right(screen Ptr (Screen Allocator), s Str, x U32, y U32, fg Color, bg Color)
+fn draw-str-right(screen Ptr (Screen Allocator), s Str, x U32, y U32)
 	slen = s chars() count() size-u32()
 	w = screen&.tui&.width
 	x = w - x - slen
-	screen draw-str(s, x, y, fg, bg)
+	screen draw-str(s, x, y)

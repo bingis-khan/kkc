@@ -23,7 +23,7 @@ We don't need it for matching strings, because we can just make the compiler use
 Also, we might as well allow string interpolation.
 
 
-# Reference variables in `case` statement
+# (?) Reference variables in `case` statement
 
 eg.
 
@@ -35,6 +35,12 @@ eg.
 ```
 
 We want to use `some-int` from outer scope, so we mark it, so that instead of creating a new variable, it compares it.
+
+---
+
+currently, any variable deconstructions are treated as references. this may change. we will also be able to check if the references make sence  (eg.  they went through a pointer,  not allowing  list deconstruction references)
+
+# `if`s in case deconstruction
 
 Alternatively / additionally, maybe we can add tactical `if`s?
 ```
@@ -107,7 +113,8 @@ I guess we might also remove the `while` loop and replace it with `loop` and the
 I found this pretty nice in zig. Duplicate this behavior? I'll wait until I need it in real code.
 
 
-# Provide a typeclass for general Int/UInt (which *may be* called `Int`/`UInt`).
+
+# (I) Provide a typeclass for general Int/UInt (which *may be* called `Int`/`UInt`).
 
 ```
 class UInt  # or maybe IntoSize
