@@ -1,73 +1,33 @@
-# Features
+# TODO
 
-- I/UXX integers + appropriate typeclasses
+- [ ] exports
+- [ ] string matching in deconstruction.
+- [ ] polymorphic number matching (use a combination of FromIntegral + Eq)
+- [ ] mutual recursion
+- [ ] recursive datatypes (incl Ptr which breaks depth checking).
+- [ ] hidden tvars
+- [ ] simpler/rethink Str instance (separate printing from char gen)
+- [ ] better occurs check (iirc we init an FTV struct which is pretty slow, make a dedicated function for this)
+- [ ] utf8 support (my own, inbuilt support!)
+- [ ] crappy code - separate tvars into tvars and tnums
+- [ ] reevaluate type defaulting (currently, the first encountered class default gets defaulted, which makes the process effectively stochastic)
+- [ ] review the architecture of the type checker. (connected with "numbers in type parameters")
+- [ ] apostrophe in string interpolation breaks it (actually tokenize string interpolation? allow actual expressions? or just track parens?)
+
+
+# Finished
+
+- [V] I/UXX integers + appropriate typeclasses
 - [V] type synonyms (paramterized type synonyms!)
 - [V] expression if
 - [.] expression case
 	- in case of case, it doesn't have to fit into every expression, just after assignment or mutation, but not in `if` statement for example
 	- nah, ive made it fit everywhere, just like lambda! which means it's kinda bugged right now, but it's noted and the implementation is there.
-- recursive datatypes + checking with the help of Ptr.
-- (fast!) occurs check
-- [?] recursive functions!!!
-	- [ ] basics work, but there are more complicated versions. (we should be able to do mutual recursion with one outer function)
-- [?] chars
-	- not fully - type defaulting is kinda spaghetti (but behavior seems to be correct).
+- [V] chars
 - [V] array literals
 	- [V] FromList typeclass.
-	- add nice errors (currently unreachable + "TODO: errors")
-	- smol cleanup (decide if I want to factor out the array allocation / sizing code)
-- [.] numbers in type parameters
-	- crappy code - separate tvars into tvars and tnums
+	- [V] smol cleanup (decide if I want to factor out the array allocation / sizing code)
+- [V] numbers in type parameters
 	- [V] parse ^identifier together: `^  identifier` would become invalid.
 - [V] put typeclasses in place of types and it just works
-	- but we generate a lot of slop constraints then. I think we shouldn't do that + it unnecessarily slows down the compiler when the user defines types for a function.
-	- maybe make a special place for them? (see typechecker architecture review)
-- [ ] review the architecture of the type checker. (connected with "numers in type parameters")
-	- rethink "slop" constraints? We can split them into actionable and non-actionable constraints. One other non-actionable constraint is checking if integer fits in the inferred range! (this constraint must also be propagated further.)
-	- Maybe it would be better if constraints were associated with tyvars (like fields)?
-	- + constraints are automatically applied on demand.
-	- + gathering constraints in generalization is easy: just do it while FTV-ing.
-	- - we cannot track how many constraints are left module-wise? same problem with us not knowing how many free type variables are left. We at least need to track them to unify with a Unit.
-- utf8 support (my own, inbuilt support!)
-- basic type parameter number ops
-	- +
-	- -
-	- *
-	- /
-
-
-# I need a place for all the funny errors
-
-- empty function (without last pass) produces a compiler error
-- undefined class in inst declaration produces a compiler error
-- undefined type in inst declaration produces a compiler error
-- loops forever
-```
-fn drop-while'(it, pred)
-	it-copy = it
-	while True
-		case next(&it-copy)
-			None
-				return it
-
-			Just(x)
-				if not pred(x)
-					return it
-
-    # if we change it and it-copy, same thing
-    # probably an infinite type
-    # if we specify the type, no loop
-		it <= it-copy  # loops due to this
-
-	return @undefined
-```
-- writing `Tuple2(iter, Whatever iter)` in type declaration produces a compiler error.
-- functions which were imported by name now visible outside (eg. it's possible to do Iter.Char, because it's defined in prelude, but it should be an error)
-- apostrophe in string interpolation breaks it (actually tokenize string interpolation? allow actual expressions? or just track parens?)
-- it seems like I didn't add record updates ????
-- it seems like I didn't add `Joltage { first, second }` deconstruction syntax??
-- OOM when function has no body
-
-# Tests - split base/std?
-
-split into `base` and `std`. in the first. only the prelude is loaded. in the second, it assumes a working std implementation to test more complicated behaviors.
+- [V] basic type parameter number ops

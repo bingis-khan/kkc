@@ -1,6 +1,6 @@
-# kkc
+# kkc - Kinda Kinda C
 
-A statically-typed procedural language that is a mix of C, Python and Haskell. It compiles via a C backend or can be run directly as a script.
+A statically-typed procedural language that is a mix of C, Haskell and Python. It compiles via a C backend or can be run directly as a script.
 
 ```
 reminders = filename
@@ -18,7 +18,7 @@ reminders = filename
 The most unique feature of the language is the handling of function environments. This allows for Python/dynamic language-esque function nesting without needing an allocator.
 
 In most languages you either allocate closures on the heap (Haskell, Python) or pass context explicitly (C, Zig) or have a very limited ability to use functions with environments (Rust's `Fn..<>` traits).
-In case of typeclasses, languages forbid local instances entirely (Haskell's global-instance coherence requirement, Rust's impl blocks).
+In case of typeclasses, languages forbid local instances entirely (Haskell's global-instance coherence requirement, Rust's `impl` blocks).
 
 Here, in kkc, I try to maximize expressiveness without depending on any external system for allocation. Because the type system tracks environments through inference, the compiler always knows the full shape of a function's captured state at compile time.
 
@@ -166,3 +166,10 @@ The core is finished, so now I'm polishing up all the rough edges:
 - Interpreter
 	- No caching in the interpreter.
 	- No freeing memory in the interpreter (should replace with []u8 stack machine)
+
+---
+
+- [todo list](./TODO.md)
+- [experiments](./EXPERIMENTS.md)
+- [previous compiler written in Haskell](https://github.com/bingis-khan/KindaC)
+
