@@ -246,7 +246,7 @@ fn flatten (it)
 
 
 fn cartesian (lit, rit): lit
-	map(fn x: rit map(fn y: Tuple2(x, y)))
+	map(fn x: rit map(fn y: (x, y)))
 	flatten()
 
 

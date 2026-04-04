@@ -7,6 +7,7 @@ use Mem
 	cast
 
 tui =& Tui.mk()
+# tui <&.target-fps= 1
 al = Alloc.idc()
 screen =& tui Tui.mk-screen(al)
 running = True
