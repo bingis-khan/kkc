@@ -36,23 +36,23 @@ fn f() -> I32 -> I32
 println(f()(69))   # prints 489
 ```
 
-I'm maximizing expressiveness but keeping to the constraints of a low level language, theoretically making kkc very portable while not compromising on any of its features.
+I'm maximizing expressiveness but adhering to the constraints of a low level language, theoretically making kkc very portable while not compromising on any of its features.
 
 
 ## Features
 
-- **First class functions** — pass functions and lambdas around without worrying about memory allocation
+- **First class functions** - pass functions and lambdas around without worrying about memory allocation
 - **No hidden allocations(TM)** - instead, custom allocators are passed explicitly
 - **Single-pass compilation** - already faster than C#'s compiler :)
-- **Typeclasses** — ad-hoc polymorphism and local typeclass instances
-- **ADTs** — algebraic data types
+- **Typeclasses** - ad-hoc polymorphism and local typeclass instances
+- **ADTs** - algebraic data types
 - **Expressive Pattern Matching** - deconstruct ADTs, records, lists(!); match on integers and strings too.
-- **Operator overloading** — add new number types, add indexing (`[]`) operator to custom lists and hash maps.
+- **Operator overloading** - add new number types, add indexing (`[]`) operator to custom lists and hash maps.
 - **String interpolation** - staticically allocated interpolation: `'\(x) with \(y)'`
-- **Anonymous records** — structural record types without named types
-- **Integers in types** — type-level integer parameters for static arrays and typed array/matrix dimensions.
+- **Anonymous records** - structural record types without named types
+- **Integers in types** - type-level integer parameters for static arrays and typed array/matrix dimensions.
 - **Postfix calls** - for function chaining, like `map-filter-reduce` style code.
-- **A modern standard library** — written in kkc itself from the [ground up](std/Slice.kkc). I want to provide everything from an HTTP server to [graphical libraries](std/Tui.kkc)
+- **A modern standard library** - written in kkc itself from the [ground up](std/Slice.kkc). I want to provide everything from an HTTP server to [graphical libraries](std/Tui.kkc)
 
 
 ## Select Samples
