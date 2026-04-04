@@ -2725,7 +2725,10 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
     };
     lamMode.this.Lambda.lamExpr.e.Lam.env = lamenv;
 
-    self.mode = .{ .Simple = lamMode.prev };
+    self.mode = .{ .Simple = switch (lamMode.prev) {
+        .Normal => .Normal,
+        .CountIndent => |i| .{ .CountIndent = .{ .indent = i.indent, .hadMultiline = true } },
+    } };
 }
 
 // NOTE: this is seriously unfinished!
@@ -5325,7 +5328,9 @@ fn definedClass(self: *Self, predefinedType: Prelude.PremadeClass) !*AST.Class {
 // parser zone
 fn foldFromHere(self: *Self) ParsingMode {
     const old = self.mode;
-    self.mode = .{ .Simple = .{ .CountIndent = 0 } };
+    self.mode = .{ .Simple = .{ .CountIndent = .{
+        .indent = 0,
+    } } };
     return old;
 }
 
@@ -5334,9 +5339,9 @@ fn finishFold(self: *Self, mode: ParsingMode) !void {
         .Simple => |*nmode| switch (nmode.*) {
             .Normal => unreachable,
             .CountIndent => |i| {
-                if (i == 1) {
+                if (i.indent == 1) {
                     try self.devour(.DEDENT); // maybe make not consuming it `unreachable`? since this might not even be possible.
-                } else if (i == 0) {
+                } else if (i.indent == 0 and !i.hadMultiline) {
                     try self.endStmt();
                 }
             },
@@ -5347,10 +5352,13 @@ fn finishFold(self: *Self, mode: ParsingMode) !void {
 }
 
 fn expect(self: *Self, tt: TokenType) !Token {
-    return self.consume(tt) orelse try self.parseError(.{ .UnexpectedToken = .{
-        .got = self.currentToken,
-        .expected = tt,
-    } });
+    return self.consume(tt) orelse {
+        unreachable;
+        // try self.parseError(.{ .UnexpectedToken = .{
+        //     .got = self.currentToken,
+        //     .expected = tt,
+        // } });
+    };
 }
 
 fn devour(self: *Self, tt: TokenType) !void {
@@ -5368,11 +5376,11 @@ fn peek(self: *Self) Token {
             .Normal => {},
             .CountIndent => |*ind| while (true) {
                 if (!self.currentToken.isWhitespace()) break;
-                if (self.currentToken.type == .STMT_SEP and ind.* == 0) break;
-                if (self.currentToken.type == .INDENT) ind.* += 1;
+                if (self.currentToken.type == .STMT_SEP and ind.indent == 0) break;
+                if (self.currentToken.type == .INDENT) ind.indent += 1;
                 if (self.currentToken.type == .DEDENT) {
-                    if (ind.* <= 1) break;
-                    ind.* -= 1;
+                    if (ind.indent <= 1) break;
+                    ind.dedent();
                 }
                 self.skip();
             },
@@ -5389,11 +5397,11 @@ fn consume(self: *Self, tt: TokenType) ?Token {
             .Normal => {},
             .CountIndent => |*ind| while (tok.isWhitespace()) {
                 // TODO: COPYPASTA!
-                if (tok.type == .STMT_SEP and ind.* == 0) break;
-                if (tok.type == .INDENT) ind.* += 1;
+                if (tok.type == .STMT_SEP and ind.indent == 0) break;
+                if (tok.type == .INDENT) ind.indent += 1;
                 if (tok.type == .DEDENT) {
-                    if (ind.* <= 1) break;
-                    ind.* -= 1;
+                    if (ind.indent <= 1) break;
+                    ind.dedent();
                 }
                 self.skip();
                 tok = self.currentToken;
@@ -5420,7 +5428,15 @@ fn skip(self: *Self) void {
 const ParsingMode = union(enum) {
     const Simple = union(enum) {
         Normal,
-        CountIndent: u32,
+        CountIndent: struct {
+            indent: u32,
+            hadMultiline: bool = false,
+
+            fn dedent(self: *@This()) void {
+                self.indent -= 1;
+                self.hadMultiline = false;
+            }
+        },
     };
     Simple: Simple,
     Multiline: struct {

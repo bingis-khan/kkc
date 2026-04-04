@@ -1,8 +1,6 @@
 
-al = Alloc.idc()
-h =& Hash.mk(al)
-h Hash.insert('a' as Char, 420)
-h Hash.insert('b' as Char, 1337)
-h['a'] println()
-h['b'] println()
-h['c'] println()
+0 to (10) for-each(fn(x))
+	println(x)
+
+30 to (40) for-each(fn(x))
+	println(x)

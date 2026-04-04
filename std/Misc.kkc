@@ -1,0 +1,3 @@
+fn id(x): x
+fn fst(Tuple2(l, _)): l
+fn snd(Tuple2(_, r)): r

@@ -88,3 +88,7 @@ use CnileInst
 use Into
 use Hash
 	Hash
+use Misc
+	id
+	fst
+	snd
