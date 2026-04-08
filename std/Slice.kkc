@@ -1,7 +1,8 @@
-use Term
 use Mem
 	offset-ptr
 	TypeSize
+	size-i32
+	i32-size
 use Error
 	or-fail
 	panic
@@ -10,6 +11,7 @@ use Iter
 	Iter
 	for-each
 	from
+	to
 	zip
 use Str
 	Str
@@ -69,6 +71,7 @@ fn subslice (slice Slice a, from Idx, to Idx) -> Slice a
 fn zero-initialize (s Slice a) -> ()
 	sz = (Mem.get-typesize() as TypeSize a).size
 	Cnile.memset(Mem.cast-ptr(s.ptr), 0, sz * s.count)
+
 
 
 SliceIter a
@@ -168,3 +171,8 @@ inst ListDecon Slice
 				xptr <&= self
 					subslice(lc, self.count - rc)
 				return True
+
+
+fn map (s Slice a, fun a -> a)
+	0 to ((s.count - 1) size-i32()) for-each(fn i: s set(i i32-size(), fun(s[i i32-size()])))
+

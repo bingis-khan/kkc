@@ -1,1 +1,62 @@
-'ff' Convert.from-hex() println()
+use Tui
+	Color
+	Color8
+use Mem
+	u32-i32
+	i32-u32
+	cast
+
+tui =& Tui.mk()
+al = Alloc.idc()
+screen =& tui Tui.mk-screen(al)
+running = True
+
+counter = 0 as U32
+x = 0 as I32
+y = 0 as I32
+while running
+	for ev in Iter.from-function(Tui.read-key)
+		case ev
+			Tui.Key(k)
+				case k
+					Tui.Char(c)
+						code = c cast() Mem.u8-i32()
+						if c == 'q'
+							running <= False
+
+						if c == 'k'
+							y <= y - 1
+						if c == 'j'
+							y <= y + 1
+						if c == 'h'
+							x <= x - 1
+						if c == 'l'
+							x <= x + 1
+					Tui.Escape
+						running <= False
+					_
+						pass
+			_
+				pass
+
+	x <= x Math.clamp(0, (tui&.width - 1) u32-i32())
+	y <= y Math.clamp(0, (tui&.height - 1) u32-i32())
+	screen Tui.clear-screen()
+	screen Tui.put-char('a', 0, 0, Tui.Color8(Term.Red8), Tui.ColorDefault)
+	screen Tui.put-char('b', 1, 1, Tui.Color8(Term.Red8), Tui.ColorDefault)
+	screen Tui.draw-str('abcdef', 0, 2, Tui.Color8(Term.Red8), Tui.ColorDefault)
+	screen Tui.draw-str('abcdef', 1, 3, Tui.Color8(Term.Red8), Tui.ColorDefault)
+	screen Tui.draw-str-right('(\(tui&.width), \(tui&.height))', 0, 0, Tui.Color8(Term.Red8), Tui.ColorDefault)
+	screen Tui.draw-str-right('FPS: \(tui&.actual-fps)', 0, 1, Tui.Color8(Term.Red8), Tui.ColorDefault)
+	screen Tui.put-char('@', x i32-u32(), y i32-u32(), Tui.Color8(Term.Red8), Tui.ColorDefault)
+
+	screen Tui.render-screen()
+	Tui.sync(tui)
+	counter <= counter + 1
+
+
+
+screen Tui.free-screen()
+tui Tui.deinit()
+
+

@@ -171,7 +171,10 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                     break;
                 }
 
-                const justValue = valFromRef(@ptrCast(&nextVal.ref.adt.data));
+                var off: usize = @sizeOf(RawValue.Tag);
+                const sz = self.sizeOf(forl.decon.d.t);
+                off += calculatePadding(off, sz.alignment);
+                const justValue = ValueMeta{ .ref = nextVal.ref.offset(off) };
 
                 if (try self.tryDeconstruct(forl.decon.d, justValue.ref)) {
                     self.stmts(forl.body) catch |err| switch (err) {
@@ -530,6 +533,21 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .@"i32-i64" => {
                     const i = (try self.expr(intr.args[0])).ref.i32;
                     return try self.intValue(@intCast(i));
+                },
+
+                .@"u32-bit-and" => {
+                    const l = (try self.expr(intr.args[0])).ref.u32;
+                    const r = (try self.expr(intr.args[1])).ref.u32;
+                    return try self.intValue(@intCast(l & r));
+                },
+                .@"u32-bit-or" => {
+                    const l = (try self.expr(intr.args[0])).ref.u32;
+                    const r = (try self.expr(intr.args[1])).ref.u32;
+                    return try self.intValue(@intCast(l | r));
+                },
+                .@"u32-bit-neg" => {
+                    const i = (try self.expr(intr.args[0])).ref.u32;
+                    return try self.intValue(@intCast(~i));
                 },
 
                 .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => {
@@ -1016,7 +1034,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     switch (cons.type.stuff) {
                         .recs => |fields| {
                             // order fields according to type (SLOW)
-                            for (fields) |field| {
+                            for (fields) |afield| {
+                                const field = afield.rec;
                                 for (recs) |rec| {
                                     if (common.streq(field.field, rec.field)) {
                                         _ = try self.writeExpr(w, rec.value);
@@ -1064,7 +1083,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
             const fields = nrec.data.stuff.recs;
 
             // order fields according to type (SLOW)
-            for (fields) |field| {
+            for (fields) |afield| {
+                const field = afield.rec;
                 for (nrec.fields) |rec| {
                     if (common.streq(field.field, rec.field)) {
                         _ = try self.writeExpr(w, rec.value);
@@ -1216,7 +1236,7 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
             defer self.tymap = oldTyMap;
 
             switch (con.type.stuff) {
-                .recs => |recs| return self.getFieldFromFields(v, recs, mem),
+                .recs => |recs| return self.getFieldFromFields_(v, ast.Data.DecRecord, recs, mem, ast.Data.DecRecord.mapRecord),
                 .cons => unreachable,
             }
         },
@@ -1226,8 +1246,13 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
 }
 
 fn getFieldFromFields(self: *Self, v: RawValueRef, fields: []ast.Record, mem: Str) RawValueRef {
+    return self.getFieldFromFields_(v, ast.Record, fields, mem, common.id(ast.Record));
+}
+
+fn getFieldFromFields_(self: *Self, v: RawValueRef, comptime T: type, fields: []T, mem: Str, comptime acc: fn (T) ast.Record) RawValueRef {
     var size: usize = 0;
-    for (fields) |field| {
+    for (fields) |afield| {
+        const field = acc(afield);
         const sz = self.sizeOf(field.t);
         size += calculatePadding(size, sz.alignment);
         if (common.streq(field.field, mem)) {
@@ -1753,7 +1778,7 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                 .RecordLike => {
                     return switch (c.type.stuff) {
                         .cons => |cons| self.sizeOfCon(&cons[0], 0),
-                        .recs => |recs| self.sizeOfRecord(recs, 0),
+                        .recs => |recs| self.sizeOfRecord_(ast.Data.DecRecord, recs, 0, ast.Data.DecRecord.mapRecord),
                     };
                 },
                 .ADT => {
@@ -1824,11 +1849,15 @@ fn sizeOfCon(self: *Self, con: *const ast.Con, beginOff: usize) Sizes {
 }
 
 // stupid copy
-fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field, beginOff: usize) Sizes {
+fn sizeOfRecord(self: *Self, fields: []ast.Record, beginOff: usize) Sizes {
+    return self.sizeOfRecord_(ast.Record, fields, beginOff, common.id(ast.Record));
+}
+fn sizeOfRecord_(self: *Self, comptime T: type, fields: []T, beginOff: usize, comptime acc: fn (T) ast.Record) Sizes {
     var off = beginOff;
     // SMELL: duplicate logic with initRecord
     var maxAlignment: usize = 1;
-    for (fields) |field| {
+    for (fields) |afield| {
+        const field = acc(afield);
         const ty = field.t;
         const sz = self.sizeOf(ty);
         const padding = calculatePadding(off, sz.alignment);

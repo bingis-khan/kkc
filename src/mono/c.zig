@@ -34,6 +34,8 @@ tempgen: UniqueGen,
 aux: struct { // RETARDED
     i64cmp: bool = false,
     i32cmp: bool = false,
+    u32cmp: bool = false,
+    u8cmp: bool = false,
     sizecmp: bool = false,
 },
 
@@ -446,7 +448,7 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
             for (vm.accessors) |acc| {
                 switch (acc.acc) {
                     .Deref => try s.p(")"),
-                    .Access => |field| try s.j(.{ ".", "f_", sanitize(field) }),
+                    .Access => |field| try s.j(.{ ".", try genField(self, field, acc.tBefore) }),
                 }
             }
             try s.p("=");
@@ -628,7 +630,97 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
                 },
             }
         },
-        else => unreachable,
+        .For => |forstmt| {
+            var condStmt = startLine(self);
+            const tv = condStmt.ctx.backend.temp();
+            try condStmt.definition(forstmt.iterTy, tv);
+            try condStmt.p("=");
+            try condStmt.instFun(forstmt.intoIterFun);
+            try condStmt.j(.{"("});
+            try condStmt.genExpr(forstmt.iter);
+            try condStmt.j(.{")"});
+            try condStmt.finishStmt();
+
+            var whileLoop = startLine(self);
+            try whileLoop.p(.{ "while", "(true)" });
+            try whileLoop.beginBody();
+            {
+                const condvar = ast.Var{ .name = "_cond", .uid = self.backend.temp().id };
+
+                {
+                    var checkLine = startLine(self);
+                    try checkLine.definition(forstmt.condTy, condvar);
+                    try checkLine.p("=");
+                    try checkLine.instFun(forstmt.nextFun);
+                    try checkLine.j(.{ "(", "&", tv, ")" });
+                    try checkLine.finishStmt();
+
+                    var checkln = startLine(self);
+                    try checkln.p(.{ "if", "(", condvar, ".tag", "==", "0", ")" });
+                    try checkln.beginBody();
+                    {
+                        var breakln = startLine(self);
+                        try breakln.p("break");
+                        try breakln.finishStmt();
+                    }
+                    try endBodyAndFinish(self);
+                }
+
+                {
+                    // deconstruct from Maybe
+                    {
+                        var assln = startLine(self);
+                        try assln.definition(forstmt.decon.d.t, switch (forstmt.decon.d.d) {
+                            .Var => |v| v,
+                            else => forstmt.decon.refvar,
+                        });
+                        try assln.p("=");
+                        const rvdp = ast.Decon.PathM{ .Tip = .{
+                            .t = forstmt.condTy,
+                            .v = condvar,
+                        } };
+                        const condTy = try getTypeMapped(self, forstmt.condTy);
+                        const accdp = ast.Decon.PathM{ .Concat = .{
+                            .next = &rvdp,
+                            .path = .{
+                                .Con = .{
+                                    .con = &condTy.Con.type.stuff.cons[1],
+                                    .field = 0,
+                                    .t = (try datatype(self, condTy.Con)).Application.id,
+                                },
+                            },
+                        } };
+                        try assln.p(.{&accdp});
+                        try assln.finishStmt();
+                    }
+
+                    // exit if condition not matched
+                    {
+                        var deconln = startLine(self);
+                        try deconln.p(.{ "if", "(!(" });
+                        var hadCondition = false;
+
+                        const dp = ast.Decon.PathM{ .Tip = .{
+                            .t = forstmt.decon.d.t,
+                            .v = forstmt.decon.refvar,
+                        } };
+                        try deconln.deconCondition_(&hadCondition, forstmt.decon.d, &dp);
+                        if (hadCondition) {
+                            try deconln.p("))");
+                            try deconln.beginBody();
+                            {
+                                // case failed.
+                                try genPanic(self, "pattern not matched to enter for loop");
+                            }
+                            try endBodyAndFinish(self);
+                        }
+                    }
+
+                    try self.monoScope(forstmt.body);
+                }
+            }
+            try endBodyAndFinish(self);
+        },
     }
 }
 
@@ -709,7 +801,7 @@ fn deconPathTyEnd(dt: anytype, self: ast.Decon.PathF(dt).Type, stmt: *Stmt) !voi
     switch (self) {
         .Ptr => try stmt.p(")"),
         .None => {},
-        .Field => |field| try stmt.j(.{ ".", "f_", field }),
+        .Field => |field| try stmt.j(.{ ".", try genField(stmt.ctx, field.rec, field.t) }),
         .Con => |con| {
             const dataType = con.con.data.structureType();
             std.debug.assert(dataType != .Opaque);
@@ -1097,6 +1189,8 @@ const Stmt = struct {
                         const cmp = switch (it) {
                             .@"i64-cmp" => &stmt.ctx.backend.aux.i64cmp,
                             .@"i32-cmp" => &stmt.ctx.backend.aux.i32cmp,
+                            .@"u32-cmp" => &stmt.ctx.backend.aux.u32cmp,
+                            .@"u8-cmp" => &stmt.ctx.backend.aux.u8cmp,
                             .@"size-cmp" => &stmt.ctx.backend.aux.sizecmp,
                             else => unreachable,
                         };
@@ -1104,6 +1198,8 @@ const Stmt = struct {
                             .@"i64-cmp" => .I64,
                             .@"i32-cmp" => .I32,
                             .@"size-cmp" => .Size,
+                            .@"u8-cmp" => .U8,
+                            .@"u32-cmp" => .U32,
                             else => unreachable,
                         }).annotations, "ctype").?.params[0];
 
@@ -1180,6 +1276,20 @@ const Stmt = struct {
                         try stmt.j(.{ "(", expr.t, ")" });
                         try stmt.genExpr(intr.args[0]);
                     },
+                    .@"u32-bit-and" => {
+                        try stmt.genExpr(intr.args[0]);
+                        try stmt.p("&");
+                        try stmt.genExpr(intr.args[1]);
+                    },
+                    .@"u32-bit-or" => {
+                        try stmt.genExpr(intr.args[0]);
+                        try stmt.p("|");
+                        try stmt.genExpr(intr.args[1]);
+                    },
+                    .@"u32-bit-neg" => {
+                        try stmt.p("~");
+                        try stmt.genExpr(intr.args[0]);
+                    },
                     else => unreachable,
                 }
             },
@@ -1194,7 +1304,7 @@ const Stmt = struct {
                     if (i != 0) {
                         try stmt.j(",");
                     }
-                    try stmt.j(.{ ".", "f_", sanitize(field.field) });
+                    try stmt.j(.{ ".", try genField(stmt.ctx, field.field, expr.t) });
                     try stmt.p("=");
                     try stmt.genExpr(field.value);
                 }
@@ -1204,7 +1314,7 @@ const Stmt = struct {
                 switch (unop.op) {
                     .Access => |mem| {
                         try stmt.genExpr(unop.e);
-                        try stmt.j(.{ ".", "f_", sanitize(mem) });
+                        try stmt.j(.{ ".", try genField(stmt.ctx, mem, unop.e.t) });
                     },
                     .As => {
                         try stmt.genExpr(unop.e);
@@ -1339,7 +1449,7 @@ const Stmt = struct {
                             if (i != 0) {
                                 try stmt.j(",");
                             }
-                            try stmt.j(.{ ".", "f_", sanitize(field.field) });
+                            try stmt.j(.{ ".", try genField(stmt.ctx, field.field, expr.t) });
                             try stmt.p("=");
                             try stmt.genExpr(field.value);
                         }
@@ -1390,6 +1500,39 @@ const Stmt = struct {
                     try stmt.p(":");
                 }
                 try stmt.genExpr(ifelse.ifFalse);
+            },
+            .CaseExpr => |caseexpr| {
+                // GCC statement expression: ( { T refvar = switchOn; ternary_chain; } )
+                // The outer ( ) are added by genExpr, so we emit { ... } inline.
+                try stmt.p("{");
+                try stmt.definition(caseexpr.switchOn.t, caseexpr.refvar);
+                try stmt.p("=");
+                try stmt.genExpr(caseexpr.switchOn);
+                try stmt.p(";");
+
+                for (caseexpr.cases) |case| {
+                    switch (case) {
+                        .Expr => |ec| {
+                            switch (ec.decon.d) {
+                                .None, .Var => {
+                                    // Wildcard — final expression, no condition needed
+                                    try stmt.genExpr(ec.expr);
+                                    break; // stop generating, rest are unreachable.
+                                },
+                                else => {
+                                    _ = try stmt.deconCondition(ec.decon, caseexpr.refvar);
+                                    try stmt.p("?");
+                                    try stmt.genExpr(ec.expr);
+                                    try stmt.p(":");
+                                },
+                            }
+                        },
+                        .Case => unreachable,
+                    }
+                }
+
+                try stmt.p(";");
+                try stmt.p("}");
             },
             else => unreachable,
         }
@@ -1575,7 +1718,10 @@ const Stmt = struct {
         switch (decon.d) {
             .None => return,
             .Var => return,
-            .Num => unreachable,
+            .Num => |num| {
+                try self.deconConnect(hadCondition);
+                try self.p(.{ dp, "==", num });
+            },
             .Con => |con| {
                 if (con.con.data.isPointer()) {
                     const ptrdp = ast.Decon.PathM{ .Concat = .{ .path = .Ptr, .next = dp } };
@@ -1653,7 +1799,7 @@ const Stmt = struct {
                     const nextDP = ast.Decon.PathM{
                         .Concat = .{
                             .path = .{
-                                .Field = field.field,
+                                .Field = .{ .rec = field.field, .t = decon.t },
                             },
                             .next = dp,
                         },
@@ -1847,6 +1993,40 @@ const Stmt = struct {
         }
     }
 };
+
+const FieldName = union(enum) {
+    Custom: Str,
+    Normal: Str,
+
+    pub fn write(s: @This(), stmt: *Stmt) anyerror!void {
+        try switch (s) {
+            .Normal => |f| stmt.j(.{ "f_", sanitize(f) }),
+            .Custom => |f| stmt.j(f),
+        };
+    }
+};
+fn genField(self: *Self, mem: Str, t: ast.Type) !FieldName {
+    const ty = try getTypeMapped(self, t);
+    switch (ty) {
+        .Con => |con| {
+            switch (con.type.stuff) {
+                .recs => |rs| {
+                    for (rs) |r| {
+                        if (common.streq(mem, r.rec.field)) {
+                            if (ast.Annotation.find(r.anns, "cfield")) |ann| {
+                                return .{ .Custom = ann.params[0] };
+                            }
+                        }
+                    } else {
+                        return .{ .Normal = mem };
+                    }
+                },
+                .cons => return .{ .Normal = mem },
+            }
+        },
+        else => return .{ .Normal = mem },
+    }
+}
 
 fn isLValue(expr: *const ast.Expr) bool {
     var curexpr = expr;
@@ -2491,7 +2671,8 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             try e.j(.{ sanitize(data.name), "_", nuId });
             try e.beginBody();
 
-            for (fields) |field| {
+            for (fields) |afield| {
+                const field = afield.rec;
                 var i = startLine(self);
                 try i.definition(field.t, Join(.{ "f_", sanitize(field.field) }));
                 try i.finishStmt();

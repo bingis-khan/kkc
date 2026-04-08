@@ -1,0 +1,569 @@
+use Cnile
+	Timespec
+use Array  # SmolArray Iter instance
+use Math
+	u32-and
+	u32-ors
+	u32-or
+	u32-neg
+use Error
+	unreachable
+	panic'
+	todo
+	assert
+use Mem
+	cast
+	cast-ptr
+	undefined
+	i32-size
+	i32-u32
+	u32-size
+	u32-i32
+	i64-i32
+	size-i64
+	size-u32
+use Misc
+	fst
+	snd
+use Term
+	ColorPalette
+	Color8
+	Color16
+	RGB
+use Alloc
+	Allocator
+use Slice
+	Slice
+use DynStr
+	DynStr
+use Scan
+use Iter
+	next
+	to
+	for-each
+	cartesian
+	take
+	zip
+	from
+	count
+use Str
+	Str
+	chars
+
+
+#[backend 'c']
+pass
+
+# there should be a global termios for signal handlers.
+# orig-termios = @undefined
+# but right now, idc.
+# orig-termios-p = &orig-termios
+
+fn enable-raw-mode () -> Cnile.Termios
+	orig-termios =& undefined()
+	Cnile.tcgetattr(Cnile.stdin-fileno(), orig-termios cast-ptr())
+
+	raw = orig-termios&
+	raw <.c-lflag= raw.c-lflag u32-and(u32-ors(
+		[ Cnile.echo()
+		, Cnile.icanon()
+		, Cnile.isig()
+		, Cnile.iexten() as U32
+		]) u32-neg())
+	raw <.c-iflag= raw.c-iflag u32-and(u32-ors(
+		[ Cnile.brkint()
+		, Cnile.icrnl()
+		, Cnile.inpck()
+		, Cnile.istrip()
+		, Cnile.ixon() as U32
+		]) u32-neg())
+	raw <.c-oflag= raw.c-oflag u32-and(u32-ors(
+		[ Cnile.opost() as U32
+		]) u32-neg())
+	raw <.c-cflag= raw.c-cflag u32-or(Cnile.cs8())
+	Array.set(&raw.c-cc, Cnile.vmin(), 0)
+	Array.set(&raw.c-cc, Cnile.vtime(), 0)
+
+	Cnile.tcsetattr(Cnile.stdin-fileno(), Cnile.tcsa-flush(), cast-ptr(&raw))
+	return orig-termios&
+
+
+fn disable-raw-mode(og-termios Ptr Cnile.Termios)
+	Cnile.tcsetattr(Cnile.stdin-fileno(), Cnile.tcsa-flush(), og-termios cast-ptr())
+
+
+Tui
+	width U32
+	height U32
+	target-fps U32
+
+	actual-fps U32
+
+	palette ColorPalette
+
+	last-sync Timespec
+	fps-ts Timespec
+	fps-count U32
+	orig-termios Cnile.Termios
+
+
+fn read-byte(timeout-ms I32) -> Maybe Cnile.Char
+	pfd = Cnile.Pollfd { fd: 0, events: 1, revents: 0 }
+	if Cnile.poll(Mem.cast-ptr(&pfd), 1, timeout-ms) <= 0
+		return None
+	c = Mem.zeroed() as Cnile.Char
+	if Cnile.read(0, (&c) cast-ptr(), 1) <= 0
+		return None
+	return Just(c)
+
+
+fn flush-stdout()
+	# Cnile.fflush((Cnile.stdout-fileno() as Size) cast())
+	# i don't have access to stdout, so we flush all
+	Cnile.fflush(Mem.null-ptr())
+
+
+fn enable-mouse()
+    Str.print-str('\x1b[?1000h\x1b[?1006h')
+
+fn disable-mouse()
+    Str.print-str('\x1b[?1000l\x1b[?1006l')
+
+
+fn mk() -> Tui
+	og-termios = enable-raw-mode()
+	Term.hide-cursor()
+	Term.reset-colors()
+	Term.clear-screen()
+	enable-mouse()
+	flush-stdout()
+	palette = Term.query-palette()
+
+	dims = Term.get-dimensions()
+	fps = 60
+	last-sync = @undefined
+	Cnile.clock-gettime(Cnile.clock-monotonic(), &last-sync)
+
+	return Tui
+		{ width: dims fst()
+		, height: dims snd()
+		, target-fps: fps
+		, actual-fps: 0
+		, last-sync: last-sync
+		, fps-ts: last-sync
+		, fps-count: 0
+		, orig-termios: og-termios
+		, palette: palette
+		}
+
+fn sync(tui Ptr Tui)
+	if tui&.target-fps == 0
+		return
+
+	frame-ns = 1000000000 / (tui&.target-fps u32-size() size-i64())
+
+	now =& Mem.undefined()
+	Cnile.clock-gettime(Cnile.clock-monotonic(), now)
+
+	elapsed-ns = (now&.tv-sec - tui&.last-sync.tv-sec) * 1000000000
+	           + (now&.tv-nsec - tui&.last-sync.tv-nsec)
+	sleep-ns = frame-ns - elapsed-ns
+
+	if sleep-ns > 0
+		ts =& Timespec { tv-sec: 0, tv-nsec: sleep-ns }
+		Cnile.nanosleep(ts, Mem.null-ptr())
+
+	last-sync =& Mem.undefined()
+	Cnile.clock-gettime(Cnile.clock-monotonic(), last-sync)
+	tui <&.last-sync= last-sync&
+
+	tui <&.fps-count= tui&.fps-count + 1
+	fps-elapsed-ms = (tui&.last-sync.tv-sec  - tui&.fps-ts.tv-sec)  * 1000
+	               + (tui&.last-sync.tv-nsec - tui&.fps-ts.tv-nsec) / 1000000
+	if fps-elapsed-ms >= 1000
+		tui <&.actual-fps= tui&.fps-count
+		tui <&.fps-count= 0
+		tui <&.fps-ts= tui&.last-sync
+
+
+fn deinit(tui Ptr Tui)
+	disable-mouse()
+	Term.show-cursor()
+	Term.reset-colors()
+	Term.clear-screen()
+	Term.reset-cursor-position()
+	disable-raw-mode(&tui&.orig-termios)
+	flush-stdout()
+
+
+### INPUT
+
+MouseButton
+	MouseLeft
+	MouseMiddle
+	MouseRight
+	ScrollUp
+	ScrollDown
+
+MouseEvent
+	button  MouseButton
+	x       I32
+	y       I32
+	pressed Bool
+
+Key
+	Escape
+	Enter
+	Tab
+	Backspace
+	Char Cnile.Char
+	Up
+	Down
+	Left
+	Right
+	Home
+	End
+	PageUp
+	PageDown
+	Delete
+	Insert
+	F1
+	F2
+	F3
+	F4
+	F5
+	F6
+	F7
+	F8
+	F9
+	F10
+	F11
+	F12
+
+InputEvent
+	Key Key
+	Mouse MouseEvent
+
+
+fn btn-to-mouse-button (btn I64):
+	(case i64-i32(btn))
+		0: MouseLeft
+		1: MouseMiddle
+		2: MouseRight
+		64: ScrollUp
+		65: ScrollDown
+		_: panic'('incorrect mouse button')
+
+
+fn parse-ss3(c Cnile.Char) -> Maybe Key
+	if c == 'A'
+		return Just(Up)
+	if c == 'B'
+		return Just(Down)
+	if c == 'C'
+		return Just(Right)
+	if c == 'D'
+		return Just(Left)
+	if c == 'H'
+		return Just(Home)
+	if c == 'F'
+		return Just(End)
+	if c == 'P'
+		return Just(F1)
+	if c == 'Q'
+		return Just(F2)
+	if c == 'R'
+		return Just(F3)
+	if c == 'S'
+		return Just(F4)
+	return None
+
+
+fn parse-csi(seq DynStr) -> Maybe InputEvent
+	if seq.contents.count == 0
+		return None
+
+	last = seq.contents[seq.contents.count - 1]
+
+	if seq.contents[0] == '<' and (last == 'M' or last == 'm')
+		sc =& Scan.mk(DynStr.substr(seq, 1, seq.contents.count))
+		case Scan.scan-int(sc)
+			None
+				return None
+			Just(btn)
+				next(sc)  # skip ';'
+				case Scan.scan-int(sc)
+					None
+						return None
+					Just(mx)
+						next(sc)  # skip ';'
+						case Scan.scan-int(sc)
+							None
+								return None
+							Just(my)
+								return Just(Mouse(MouseEvent
+									{ button: btn-to-mouse-button(btn)
+									, x: mx i64-i32() - 1
+									, y: my i64-i32() - 1
+									, pressed: last == 'M'
+									}))
+
+	if seq.contents.count == 1
+		if last == 'A'
+			return Just(Key(Up))
+		if last == 'B'
+			return Just(Key(Down))
+		if last == 'C'
+			return Just(Key(Right))
+		if last == 'D'
+			return Just(Key(Left))
+		if last == 'H'
+			return Just(Key(Home))
+		if last == 'F'
+			return Just(Key(End))
+		return None
+
+	if last == '~'
+		sc =& Scan.mk(seq)
+		case Scan.scan-int(sc)
+			None
+				return None
+			Just(n)
+				return
+					(case i64-i32(n))
+						1:  Just(Key(Home))
+						2:  Just(Key(Insert))
+						3:  Just(Key(Delete))
+						4:  Just(Key(End))
+						5:  Just(Key(PageUp))
+						6:  Just(Key(PageDown))
+						15: Just(Key(F5))
+						17: Just(Key(F6))
+						18: Just(Key(F7))
+						19: Just(Key(F8))
+						20: Just(Key(F9))
+						21: Just(Key(F10))
+						23: Just(Key(F11))
+						24: Just(Key(F12))
+						_:  None
+
+	return None
+
+
+fn read-key() -> Maybe InputEvent
+	ch =& Mem.undefined()
+	case read-byte(0)
+		None
+			return None
+		Just(x)
+			ch <&= x
+
+	# normalize (and just map?)
+	if Str.char-u8(ch&) == 13
+		return Just(Key(Enter))
+	if Str.char-u8(ch&) == 9
+		return Just(Key(Tab))
+	if Str.char-u8(ch&) == 127
+		return Just(Key(Backspace))
+	if Str.char-u8(ch&) /= 27
+		return Just(Key(Char(ch&)))
+
+	ch2 =& Mem.undefined()
+	case read-byte(50)
+		None
+			return Just(Key(Escape))
+		Just(x)
+			ch2 <&= x
+
+	if ch2& == '['
+		seq =& Mem.zeroed() as Array 32 Cnile.Char
+		slen = 0
+		while slen < 31
+			sc =& Mem.undefined()
+			case read-byte(50)
+				None
+					break
+				Just(x)
+					sc <&= x
+			Array.set(seq, Mem.i32-size(slen), sc&)
+			slen <= slen + 1
+			if Str.char-u8(sc&) >= 64 and Str.char-u8(sc&) <= 126
+				break
+		return parse-csi(DynStr { contents: Array.as-slice(seq) Slice.subslice(0, Mem.i32-size(slen)) })
+
+	if ch2& == 'O'
+		sc =& Mem.undefined()
+		case read-byte(50)
+			None
+				return Just(Key(Escape))
+			Just(x)
+				sc <&= x
+		case parse-ss3(sc&)
+			None
+				return None
+			Just(k)
+				return Just(Key(k))
+
+	return Just(Key(Escape))
+
+
+### SCREEN
+
+Color
+	ColorDefault
+	Color8 Color8
+	Color16 Color16
+	Color256 U8
+	ColorRGB RGB
+
+inst Eq Color
+	eq (l, r)
+		return
+			(case (l, r))
+				(Color8(lc), Color8(rc)): lc == rc
+				(Color16(lc), Color16(rc)): lc == rc
+				(Color256(lc), Color256(rc)): lc == rc
+				(ColorRGB(lc), ColorRGB(rc)): lc == rc
+				_: False
+
+# TODO: put Color and set-fg/bg in Term?
+fn set-fg (c Color)
+	case c
+		ColorDefault
+			Term.set-default-fg()
+		Color8(c8)
+			Term.set-fg8(c8)
+		Color16(c16)
+			Term.set-fg16(c16)
+		Color256(c256)
+			Term.set-fg256(c256)
+		ColorRGB(crgb)
+			Term.set-fg-rgb(crgb)
+
+fn set-bg (c Color)
+	case c
+		ColorDefault
+			Term.set-default-bg()
+		Color8(c8)
+			Term.set-bg8(c8)
+		Color16(c16)
+			Term.set-bg16(c16)
+		Color256(c256)
+			Term.set-bg256(c256)
+		ColorRGB(crgb)
+			Term.set-bg-rgb(crgb)
+
+Cell
+	c Char
+	fg Color
+	bg Color
+	# todo: transparent?
+
+inst Eq Cell
+	eq (l, r)
+		if l.c /= r.c
+			return False
+
+		if l.fg /= r.fg
+			return False
+
+		if l.bg /= r.bg
+			return False
+
+		return True
+
+
+Screen
+	al Allocator
+	tui Ptr Tui
+	current Slice Cell
+	previous Slice Cell
+	# todo: add fg and bg here, because calling them every time is annoying.
+
+fn mk-screen(tui Ptr Tui, al Allocator)
+	cur = al Alloc.allocate((tui&.width * tui&.height) u32-size())
+	cur Slice.map(fn _: Cell { c: ' ', fg: ColorDefault, bg: ColorDefault })
+
+	prev = al Alloc.allocate((tui&.width * tui&.height) u32-size())
+	prev Slice.map(fn _: Cell { c: ' ', fg: ColorDefault, bg: ColorDefault })
+
+	return Screen
+		{ current: cur
+		, previous: prev
+		, al: al
+		, tui: tui
+		}
+
+fn free-screen(screen Ptr (Screen Allocator))  # TODO: the parameter is not defined in the declaration, so it should be HIDDEN
+	al = screen&.al
+	al Alloc.free(screen&.current)
+	al Alloc.free(screen&.previous)
+
+fn clear-screen(screen Ptr (Screen Allocator))
+	screen&.current Slice.map(fn _: Cell { c: ' ', fg: ColorDefault, bg: ColorDefault })
+
+RenderState
+	x U32
+	y U32
+	fg Color
+	bg Color
+
+fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
+	if x /= rs&.x or y /= rs&.y
+		Term.move-cursor-to(x, y)
+		rs <&.x= x
+		rs <&.y= y
+
+	if rs&.fg /= c&.fg
+		set-fg(c&.fg)
+		rs <&.fg= c&.fg
+
+	if rs&.bg /= c&.bg
+		set-bg(c&.bg)
+		rs <&.bg= c&.bg
+
+	Str.print-str(c&.c)
+	rs <&.x = rs&.x + 1
+
+fn render-screen(screen Ptr (Screen Allocator))
+
+	w = screen&.tui&.width u32-i32()
+	h = screen&.tui&.height u32-i32()
+	rs =& RenderState { x: 0, y: 0, fg: ColorDefault, bg: ColorDefault }
+	Term.move-cursor-to(0, 0)
+	for y in 0 to (h - 1)
+		for x in 0 to (w - 1)
+			i = (y * w + x) i32-size()
+			cur = Slice.get-ptr(screen&.current, i)
+			prev = Slice.get-ptr(screen&.previous, i)
+			if cur /= prev
+				emit-cell(rs, cur, x i32-u32(), y i32-u32())
+				prev <&= cur&
+	Term.reset-colors()
+	flush-stdout()
+
+
+# non-wrapping drawing thing.
+fn put-char (screen Ptr (Screen Allocator), c Char, x U32, y U32, fg Color, bg Color)
+	w = screen&.tui&.width
+	if x >= w or y >= screen&.tui&.height
+		return
+	i = (y * w + x) u32-size()
+	screen&.current Slice.set(i, Cell { c, fg, bg })
+
+fn draw-str (screen Ptr (Screen Allocator), s Str, x U32, y U32, fg Color, bg Color)
+	if y >= screen&.tui&.height
+		return
+	w = screen&.tui&.width
+	i = (y * w + x) u32-size()
+	x = Math.min(x, w)  # clamp the result to bounds
+	max-len = (w - x) u32-size()
+
+	s chars() zip(from(0)) for-each(fn((c, xx)))
+		Slice.set(screen&.current, i + xx i32-size(), Cell { c, fg, bg })
+
+fn draw-str-right(screen Ptr (Screen Allocator), s Str, x U32, y U32, fg Color, bg Color)
+	slen = s chars() count() size-u32()
+	w = screen&.tui&.width
+	x = w - x - slen
+	screen draw-str(s, x, y, fg, bg)

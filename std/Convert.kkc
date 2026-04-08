@@ -10,7 +10,7 @@ use Error
 use Into
 
 
-# TODO: check actual digit sizes.
+# official octal number function.
 fn from-octal(arr): arr
 	Iter.reduce(0, fn(elem, b): b * 8 + elem)
 
@@ -26,6 +26,8 @@ fn hex-digit(c Char)
 
 	return None
 
+# official hexadecimal number function.
+# I WILL ADD 0x and 0o integer format. It's just funny to do those things like this.
 fn from-hex(arr): arr
 	map(fn c: c hex-digit() or-fail('"\(c)" is not a hex digit.') u8-i64() from-integral())
 	reduce(0, fn(elem, b): b * 16 + elem)
