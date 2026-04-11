@@ -3763,6 +3763,7 @@ const Type = struct {
                                     .binding = this.binding(),
                                     .inferred = false,
                                     .fields = &.{},
+                                    .fieldsTotal = false,
                                 };
                                 try data.assocs.append(.{
                                     .depends = tv,
@@ -4672,6 +4673,7 @@ fn newTVar(self: *@This(), tvname: Str, binding: ?AST.Binding) !AST.TVar {
         .binding = binding,
         .inferred = false,
         .fields = &.{},
+        .fieldsTotal = false,
     };
     try self.scope.currentScope().tvars.put(tvname, .{ .TVar = tv });
     return tv;
@@ -4889,9 +4891,18 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
     for (scheme.tvars, tvars) |tvOrNum, tyv| {
         switch (tvOrNum) {
             .TVar => |tv| {
-                for (tv.fields) |field| {
-                    const fieldTy = try self.typeContext.field(tyv.Type, field.field, null);
-                    try self.typeContext.unify(fieldTy, try self.typeContext.mapType(tvarMatch, field.t), null);
+                if (!tv.fieldsTotal) {
+                    for (tv.fields) |field| {
+                        const fieldTy = try self.typeContext.field(tyv.Type, field.field, null);
+                        try self.typeContext.unify(fieldTy, try self.typeContext.mapType(tvarMatch, field.t), null);
+                    }
+                } else {
+                    const mappedFields = try self.arena.alloc(AST.Record, tv.fields.len);
+                    for (mappedFields, tv.fields) |*mfield, field| {
+                        mfield.* = .{ .field = field.field, .t = try self.typeContext.mapType(tvarMatch, field.t) };
+                    }
+                    const anonTy = try self.typeContext.newAnon(mappedFields);
+                    try self.typeContext.unify(tyv.Type, anonTy, null);
                 }
             },
 
@@ -4977,12 +4988,14 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             else => continue,
         }
         const name = try std.fmt.allocPrint(self.arena, "'{}", .{e.tyv.uid});
+        const fields = self.typeContext.getFieldsForTVar(e.tyv);
         const tv = AST.TVar{
             .name = name,
             .uid = self.gen.tvars.newUnique(),
             .binding = expectedBinding,
             .inferred = true,
-            .fields = if (self.typeContext.getFieldsForTVar(e.tyv)) |tyvs| tyvs.fields else &.{},
+            .fields = if (fields) |tyvs| tyvs.fields else &.{},
+            .fieldsTotal = if (fields) |tyvs| tyvs.total else false,
         };
         try tvars.append(.{ .TVar = tv });
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
@@ -5050,12 +5063,14 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         var assocFTVIt = assocFTVs.tyvars.iterator();
                         while (assocFTVIt.next()) |tyv| {
                             const name = try std.fmt.allocPrint(self.arena, "'{}", .{tyv.tyv.uid});
+                            const fields = self.typeContext.getFieldsForTVar(tyv.tyv);
                             const tv = AST.TVar{
                                 .name = name,
                                 .uid = self.gen.tvars.newUnique(),
                                 .binding = .{ .Function = functionId },
                                 .inferred = true,
-                                .fields = if (self.typeContext.getFieldsForTVar(tyv.tyv)) |tyvs| tyvs.fields else &.{},
+                                .fields = if (fields) |tyvs| tyvs.fields else &.{},
+                                .fieldsTotal = if (fields) |tyvs| tyvs.total else false,
                             };
                             try tvars.append(.{ .TVar = tv });
                             const tvt = try self.typeContext.newType(.{ .TVar = tv });

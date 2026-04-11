@@ -313,5 +313,6 @@ pub fn cloneWithAllocator(self: *const Self, al: std.mem.Allocator) !Self {
         .gen = self.gen.clone(),
         .opts = self.opts,
         .roots = try self.roots.clone(),
+        .signalFunTy = undefined, // TODO: how do we transfer types between type contexts????? (hard with pointers (ast.TyRefPointer), easy with offsets (!ast.TyRefPointer))
     };
 }

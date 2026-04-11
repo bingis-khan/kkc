@@ -369,8 +369,11 @@ fn read-key() -> Maybe InputEvent
 	# 	return Just(Key(Tab))
 	if Str.char-u8(ch&) == 127
 		return Just(Key(Backspace))
-	if Str.char-u8(ch&) /= 27
-		return Just(Key(Char(ch&)))
+	if Str.char-u8(ch&) /= 27  # ESCAPE
+		if Str.char-u8(ch&) > 127  # IGNORE UTF-8 FOR NOW.
+			return read-key()
+		else
+			return Just(Key(Char(ch&)))
 
 	ch2 =& Mem.undefined()
 	case read-byte(50)
@@ -535,10 +538,10 @@ fn render-screen(screen Ptr (Screen Allocator))
 	return rs&.changes
 
 # calls update-dimensions() anyway.
-fn resize-screen-if-needed(screen Ptr (Screen Allocator))
+fn resize-screen-if-needed(screen Ptr (Screen Allocator)) -> Bool
 	tui = screen&.tui
 	if not tui update-dimensions()
-		return
+		return False
 
 	screen <&.requires-full-redraw = True
 	w = screen&.tui&.width
@@ -546,11 +549,12 @@ fn resize-screen-if-needed(screen Ptr (Screen Allocator))
 
 	nusz = u32-size(w * h)
 	if nusz <= screen&.current.count
-		return
+		return True
 
 	nuscreen = tui mk-screen(screen&.al)
 	screen <&.current= nuscreen.current
 	screen <&.previous= nuscreen.previous
+	return True
 
 fn set-screen-fg (screen Ptr (Screen Allocator), c Color)
 	screen <&.default-fg= c

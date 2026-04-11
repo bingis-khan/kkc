@@ -1809,7 +1809,15 @@ const Stmt = struct {
             },
             .TVar => unreachable,
             .TyVar => |tyv| {
-                if (stmt.ctx.typeContext.getFieldsForTVar(tyv) != null) unreachable;
+                if (stmt.ctx.typeContext.getFieldsForTVar(tyv)) |tyvs| {
+                    if (!tyvs.total) unreachable;
+
+                    // here, it should actually be an Anon struct. (like in interp.)
+                    const nuId = try anonRecord(stmt.ctx, tyvs.fields);
+                    try stmt.p(.{"struct"});
+                    try stmt.j(.{ "anon_", nuId });
+                    return;
+                }
 
                 try stmt.p(.{try datatype(stmt.ctx, .{
                     .type = stmt.ctx.typeContext.prelude.?.defined(.Unit),

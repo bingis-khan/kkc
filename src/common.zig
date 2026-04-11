@@ -89,3 +89,11 @@ pub fn id(comptime T: type) fn (T) T {
         }
     }.idfn;
 }
+
+pub fn mapSlice(al: std.mem.Allocator, comptime From: type, comptime To: type, comptime fun: fn (From) To, slice: []From) ![]To {
+    const nuslice = try al.alloc(To, slice.len);
+    for (0..nuslice.len) |i| {
+        nuslice[i] = fun(slice[i]);
+    }
+    return nuslice;
+}

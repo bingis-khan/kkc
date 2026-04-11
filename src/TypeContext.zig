@@ -237,6 +237,9 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                     const t2f = try self.field(t2, f.field, locs);
                     try self.unify_(t2f, f.t, locs, fullTys);
                 }
+                if (!tyvspecs.total) {} else {
+                    try self.ensureExactFields(tyvspecs.fields, t1, t2, locs, fullTys);
+                }
             }
             try self.setType(t1, t2, locs, false);
             return;
@@ -250,6 +253,9 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                         for (tvs.fields) |f| {
                             const t1f = try self.field(t1, f.field, locs);
                             try self.unify_(t1f, f.t, locs, fullTys);
+                        }
+                        if (!tvs.total) {} else {
+                            try self.ensureExactFields(tvs.fields, t2, t1, locs, fullTys);
                         }
                     }
                     try self.setType(t2, t1, locs, true);
@@ -326,6 +332,47 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
                 else => try self.errMismatch(t1, t2, locs, fullTys),
             }
         }, // TODO
+    }
+}
+
+fn ensureExactFields(self: *Self, fields: []ast.TypeF(ast.Type).Field, t: ast.Type, ot: ast.Type, locs: Locs, fullTys: Full) !void {
+    switch (self.getType(ot)) {
+        .Con => |con| {
+            switch (con.type.stuff) {
+                .recs => |recs| {
+                    const mrecs = try common.mapSlice(self.arena, ast.Data.DecRecord, ast.Record, ast.Data.DecRecord.mapRecord, recs);
+                    defer self.arena.free(mrecs);
+                    // SMELL: PARTIALLY COPIED FROM fn field(). SAME, NON OBIOUS LOGIC. SUSSY.
+                    for (mrecs, recs) |*mrec, rec| {
+                        const outerMatch = ast.Match.fromOuterTVars(con.type.outerTVars, con.outerApplication);
+                        mrec.* = .{ .field = rec.rec.field, .t = try self.mapType(con.application, try self.mapType(&outerMatch, rec.rec.t)) };
+                    }
+                    try self.matchFields(.{ .t = t, .fields = fields }, .{ .t = ot, .fields = mrecs }, locs, fullTys);
+                },
+                .cons => unreachable, // error! (make it more specialized, explain that this constructor does not have fields)
+            }
+        },
+        .Anon => unreachable,
+        .TyVar => |tyv| {
+            const mofields = self.getFieldsForTVar(tyv);
+            if (mofields) |ofields| {
+                try self.matchFields(.{ .t = t, .fields = fields }, .{ .t = ot, .fields = ofields.fields }, locs, fullTys);
+            } else {
+                // in case it has no fields, "transfer them"
+                for (fields) |f| {
+                    const ft = try self.field(ot, f.field, locs);
+                    try self.unify_(ft, f.t, locs, fullTys);
+                }
+            }
+
+            // at the end, MUST SET THE fields total FLAG.
+            self.tyvarFields.getPtr(tyv).?.areFieldsLockedIn = true; // possibility of null when we add no fields doe. IN THE FUTURE, IF THE NULLCHECK TRIPS, ADD THE INITIALIZATION TOO.
+        },
+        .TVar => |tv| {
+            // here, we don't care about tv.fieldsTotal, because we are not going to be extending tvars fields bruh. they must match exactly either way.
+            try self.matchFields(.{ .t = t, .fields = tv.fields }, .{ .t = ot, .fields = fields }, locs, fullTys);
+        },
+        else => unreachable,
     }
 }
 

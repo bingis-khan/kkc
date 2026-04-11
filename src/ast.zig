@@ -1319,6 +1319,7 @@ pub const TyVar = struct {
         if (mFields) |tvs| {
             std.debug.assert(tvs.fields.len > 0);
             c.encloseSepBy(tvs.fields, ", ", " { ", " }");
+            c.print(if (tvs.total) "T" else "");
         }
     }
 
@@ -1342,6 +1343,7 @@ pub const TVar = struct {
     binding: ?Binding, // null value for placeholder values.
     inferred: bool, // funny. it means if this tvar was made from a tyvar.
     fields: []Record,
+    fieldsTotal: bool,
 
     pub fn comparator() type {
         return struct {
@@ -1362,7 +1364,7 @@ pub const TVar = struct {
     }
 
     pub fn print(self: @This(), c: Ctx) void {
-        c.sp("{s}#{}", .{ self.name, self.uid });
+        c.sp("{s}#{}{s}", .{ self.name, self.uid, if (self.fieldsTotal) "T" else "" });
         if (self.fields.len > 0) {
             c.encloseSepBy(self.fields, ", ", " {", "}");
         }

@@ -1,0 +1,12 @@
+#$ Information that the anon struct is "total" propagates through TVars.
+# 420
+# 424
+
+pad = 2
+fn left-offset (mx I32) -> { max-digits: I32, total-offset: I32 }
+	max-digits = mx
+	return { max-digits, total-offset: pad + max-digits + pad }
+
+a = left-offset(420)
+println(a.max-digits)
+println(a.total-offset)
