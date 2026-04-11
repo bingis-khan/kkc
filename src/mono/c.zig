@@ -1596,6 +1596,24 @@ const Stmt = struct {
                         try stmt.p("}");
                     },
 
+                    .TyVar => |tyv| {
+                        const fields = stmt.ctx.typeContext.getFieldsForTVar(tyv).?.fields;
+
+                        // COPYPASTA
+                        const nuId = try anonRecord(stmt.ctx, fields);
+                        try stmt.j(.{ "(", "struct anon_", nuId, ")" });
+                        try stmt.p("{");
+                        for (rec, 0..) |field, i| {
+                            if (i != 0) {
+                                try stmt.j(",");
+                            }
+                            try stmt.j(.{ ".", "f_", sanitize(field.field) });
+                            try stmt.p("=");
+                            try stmt.genExpr(field.value);
+                        }
+                        try stmt.p("}");
+                    },
+
                     else => unreachable,
                 }
             },

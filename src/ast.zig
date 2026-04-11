@@ -1216,7 +1216,36 @@ pub const TyRef = struct {
                 }
             },
             .TyVar => |tyv| {
-                if (tyc.getFieldsForTVar(tyv) != null) unreachable; // if has any fields, should not happen yo.
+                // since we're not yet unifying lone Anons, treat the thing as an "Anon" struct.
+                if (tyc.getFieldsForTVar(tyv)) |tyvs1| {
+                    std.debug.assert(tyvs1.fields.len > 0);
+
+                    switch (tyc.getType(r)) {
+                        .TyVar => |tyv2| {
+                            if (tyc.getFieldsForTVar(tyv2)) |tyvs2| {
+                                std.debug.assert(tyvs2.fields.len > 0);
+
+                                if (tyvs1.fields.len != tyvs2.fields.len) return false;
+                                for (tyvs1.fields) |f1| {
+                                    for (tyvs2.fields) |f2| {
+                                        if (common.streq(f1.field, f2.field)) {
+                                            break;
+                                        }
+                                    } else {
+                                        // if break not triggered, meaning no field matched.
+                                        return false;
+                                    }
+                                }
+
+                                return true;
+                            } else {
+                                return false;
+                            }
+                        },
+                        .Anon => unreachable, // TODO
+                        else => return false,
+                    }
+                }
 
                 // assume Unit if a simple tyvar
                 switch (tyc.getType(r)) {
@@ -1225,11 +1254,11 @@ pub const TyRef = struct {
                         return con.type == unitData;
                     },
                     .TyVar => |tyv2| {
-                        if (tyc.getFieldsForTVar(tyv2) != null) unreachable; // if has any fields, should not happen yo.
+                        if (tyc.getFieldsForTVar(tyv2) != null) return false; // if has any fields, should not happen yo.
 
                         return true;
                     },
-                    else => unreachable,
+                    else => return false,
                 }
             },
         };
