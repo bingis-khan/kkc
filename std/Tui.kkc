@@ -364,8 +364,9 @@ fn read-key() -> Maybe InputEvent
 	# normalize (and just map?)
 	if Str.char-u8(ch&) == 13
 		return Just(Key(Enter))
-	if Str.char-u8(ch&) == 9
-		return Just(Key(Tab))
+	# actually, keep tabs as chars bruh.
+	# if Str.char-u8(ch&) == 9
+	# 	return Just(Key(Tab))
 	if Str.char-u8(ch&) == 127
 		return Just(Key(Backspace))
 	if Str.char-u8(ch&) /= 27

@@ -85,18 +85,17 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
                 },
             }
         } else {
+            // we also include the program name for argc/argv C compat.
+            try progArgs.append(arg);
+
             if (filename == null) {
                 filename = arg;
-            } else {
-                // each subsequent option is treated as an argument to the program
-                try progArgs.append(arg);
             }
         }
     }
 
     if (filename) |realAssFilename| {
         opts.filename = realAssFilename;
-        try progArgs.insert(0, realAssFilename); // remember to insert the filename at the beginning of program args to match the C stuff.
         opts.programArgs = progArgs.items;
         return opts;
     } else {

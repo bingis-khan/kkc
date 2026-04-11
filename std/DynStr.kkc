@@ -27,3 +27,7 @@ inst IntoIter DynStr
 # i want to do substrings differently later.
 fn substr (s DynStr, from Size, to Size):
 	DynStr { contents: s.contents subslice(from, to) }
+
+fn from-const-str (s ConstStr)
+	len = Str.const-str-len(s)
+	return DynStr { contents: Slice { ptr: s Mem.cast(), count: len } }

@@ -13,6 +13,7 @@ use Iter
 	TakeWhile
 	drop
 	AppendIter
+	count
 use Mem
 use Math
 
@@ -128,7 +129,7 @@ inst Str I64
 
 inst Str Size
 	print-str (self Size) -> Unit
-		Cnile.printf1('%ld', self)
+		Cnile.printf1('%lu', self)
 
 	chars (self Size):
 		IntStrIter { int: self, len: self count-digits() }
@@ -377,6 +378,8 @@ fn print-as-list(it)
 	it drop(1) for-each(fn x: ', \(x)' print-str())
 	print-str(']')
 
+fn const-str-len (s ConstStr):
+	s chars() count()  # SIKE. Im using iterators.
 
 ###### Other Instances #####
 

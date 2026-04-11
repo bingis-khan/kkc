@@ -61,6 +61,7 @@ use Error  # imports instances of failable.
 	or-fail
 
 	todo
+	todo'
 	unreachable
 	panic
 	assert

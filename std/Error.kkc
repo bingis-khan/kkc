@@ -1,9 +1,15 @@
 use Cnile
 use Mem
 use Str
+	Str
 
 fn todo() -> a
 	Str.print-str('todo\n')
+	Cnile.exit(1)
+	return Mem.undefined()
+
+fn todo'(s Str) -> a
+	Str.print-str('todo: \(s)\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 

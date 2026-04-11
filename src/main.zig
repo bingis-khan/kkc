@@ -112,7 +112,17 @@ pub fn main() !void {
                     try stdoutbuf.flush();
 
                     const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });
-                    var child = std.process.Child.init(&.{exe_name}, aa);
+
+                    // prepare prog with args.
+                    var proc_params = std.ArrayList([]const u8).init(aa);
+                    try proc_params.append(exe_name);
+                    for (opts.programArgs[1..]) |ztArg| {
+                        var arg: []const u8 = undefined;
+                        arg.ptr = ztArg;
+                        arg.len = std.mem.len(ztArg);
+                        try proc_params.append(arg);
+                    }
+                    var child = std.process.Child.init(proc_params.items, aa);
                     child.stdin_behavior = .Inherit;
                     child.stdout_behavior = .Inherit;
                     child.stderr_behavior = .Inherit;

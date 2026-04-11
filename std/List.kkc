@@ -1,6 +1,5 @@
 use Slice
 	Slice
-	subslice
 use Error
 	panic
 use Iter
@@ -53,7 +52,7 @@ inst IntoIter List
 		self.elements
 
 		# just create a subslice with the required capacity and iterate.
-		subslice(0, self.count)
+		Slice.subslice(0, self.count)
 		into-iter()
 
 
@@ -97,6 +96,10 @@ fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
 fn insert (list Ptr (List alloc a), i Idx, elem a) -> Unit <= Allocator alloc
 	if i < 0 or i > list&.count
 		panic('Insertion at list index \(i) (count: \(list&.count))')
+
+	if list&.count == 0
+		list add(elem)
+		return
 
 	list grow-if-full()
 	# move elements back
@@ -170,12 +173,16 @@ fn top (list)
 fn add-all(list, it)
 	it for-each(fn x: list add(x))
 
+# for now, don't shrink, since I'm using it in kd
+fn trim(l Ptr (List al a), new-count)
+	l <&.count= new-count
+
 fn to-list(it, al)
 	l =& mk(al)
 	l add-all(it)
 	return l&
 
-fn to-slice(l)
+fn to-slice(l List al a) -> Slice a
 	ptr = l.elements.ptr
 	return Slice { ptr, count: l.count  }
 
