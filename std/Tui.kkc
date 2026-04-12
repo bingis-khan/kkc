@@ -221,6 +221,7 @@ Key
 	Tab
 	Backspace
 	Char Cnile.Char
+	Ctrl Cnile.Char
 	Up
 	Down
 	Left
@@ -370,6 +371,9 @@ fn read-key() -> Maybe InputEvent
 	# 	return Just(Key(Tab))
 	if Str.char-u8(ch&) == 127
 		return Just(Key(Backspace))
+	if Str.char-u8(ch&) < 27 and Str.char-u8(ch&) /= 9  # Ctrl codes (Tab stays as Char)
+		letter = ch& Str.char-i32() i32-u32() u32-or(Convert.from-hex('60')) u32-i32() Str.i32-char()
+		return Just(Key(Ctrl(letter)))
 	if Str.char-u8(ch&) /= 27  # ESCAPE
 		if Str.char-u8(ch&) > 127  # IGNORE UTF-8 FOR NOW.
 			return read-key()

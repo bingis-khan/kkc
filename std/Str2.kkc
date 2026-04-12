@@ -99,7 +99,7 @@ fn allocate-str (s, al) -> ConstStr
 
 fn newline() -> Char: '\n'
 
-fn is-whitespace (c):
+fn is-whitespace (c Char):
 	c == ' ' or c == '\n' or c == '\t'
 
 fn is-not-whitespace (c): not is-whitespace(c)
