@@ -107,6 +107,14 @@ pub fn parse(self: *Self) !Module {
     while (self.consume(.EOF) == null) {
         const dec = self.statement() catch |e| {
             std.debug.print("Err {s}.\n", .{self.name});
+            // TEMP
+            var fakeNewline: bool = undefined;
+            const fakeHackCtx = AST.Ctx.init(&fakeNewline, self.typeContext);
+            fakeNewline = false; // SIKE (but obv. temporary)
+
+            for (self.modules.errors.items) |err| {
+                err.err.print(fakeHackCtx, err.module);
+            }
             return e;
         };
 
@@ -3554,7 +3562,6 @@ const Type = struct {
             var fields = std.ArrayList(AST.TypeF(AST.Type).Field).init(self.arena);
             while (true) {
                 const field = try self.expect(.IDENTIFIER);
-                try self.devour(.COLON);
                 const t = try this.sepTyo();
                 try fields.append(.{
                     .t = t.e,

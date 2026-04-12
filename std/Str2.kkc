@@ -102,6 +102,8 @@ fn newline() -> Char: '\n'
 fn is-whitespace (c):
 	c == ' ' or c == '\n' or c == '\t'
 
+fn is-not-whitespace (c): not is-whitespace(c)
+
 fn is-blank (s): s
 	chars()
 	all(is-whitespace)
@@ -190,4 +192,9 @@ fn parse-int(s)
 					Just(xe)
 						return Just(x * 10 + Mem.i32-i64(xe))
 
-	return s chars() reduce(Just(0), sequence-maybe)
+	cs = s chars()
+	case cs head()
+		Just(x)
+			return cs reduce(Just(0), sequence-maybe)
+		None
+			return None

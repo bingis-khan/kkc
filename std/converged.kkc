@@ -9,6 +9,9 @@ use Str2
 	is-digit
 	parse-int
 	as-if-list
+	is-whitespace
+	is-not-whitespace
+
 
 use Iter
 	Range
@@ -95,3 +98,4 @@ use Misc
 	snd
 	and-maybe
 	fmap-maybe
+	is-just

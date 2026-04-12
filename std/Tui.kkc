@@ -11,6 +11,7 @@ use Error
 	panic'
 	todo
 	assert
+	or-fail
 use Mem
 	cast
 	cast-ptr
@@ -51,6 +52,7 @@ use Iter
 use Str
 	Str
 	chars
+use Time
 
 
 # there should be a global termios for signal handlers.
@@ -141,8 +143,7 @@ fn mk() -> Tui
 
 	dims = Term.get-dimensions()
 	fps = 60
-	last-sync = @undefined
-	Cnile.clock-gettime(Cnile.clock-monotonic(), &last-sync)
+	last-sync = Time.now()
 
 	@register-signal(28, fn (_))
 		should-resize <&= True
@@ -451,6 +452,11 @@ inst Eq Cell
 		return True
 
 
+fn invert-cell-colors (cell Ptr Cell)
+	fg = cell&.fg
+	cell <&.fg = cell&.bg
+	cell <&.bg = fg
+
 Screen
 	al Allocator
 	tui Ptr Tui
@@ -562,6 +568,11 @@ fn set-screen-fg (screen Ptr (Screen Allocator), c Color)
 fn set-screen-bg (screen Ptr (Screen Allocator), c Color)
 	screen <&.default-bg= c
 
+fn invert-screen-colors (screen Ptr (Screen Allocator))
+	fg = screen&.default-fg
+	screen <&.default-fg = screen&.default-bg
+	screen <&.default-bg = fg
+
 fn get-cell-ptr (screen Ptr (Screen Allocator), x I32, y I32) -> Maybe (Ptr Cell)
 	w = screen&.tui&.width u32-i32()
 	if x < 0 or x >= w
@@ -571,6 +582,13 @@ fn get-cell-ptr (screen Ptr (Screen Allocator), x I32, y I32) -> Maybe (Ptr Cell
 
 	i = (y * w + x) i32-size()
 	return Just(Slice.get-ptr(screen&.current, i))
+
+fn fill-default(screen Ptr (Screen Allocator))
+	# NOTE: a faster way would be to just memcpy! this is correct, but slower.
+	for y in 0 to (screen&.tui&.height u32-i32() - 1)
+		for x in 0 to (screen&.tui&.width u32-i32() - 1)
+			cell = screen get-cell-ptr(x, y) or-fail('no cell??')
+			cell <&.bg= screen&.default-bg
 
 # non-wrapping drawing thing.
 fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)

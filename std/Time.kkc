@@ -1,0 +1,53 @@
+use Mem
+
+fn now() -> Cnile.Timespec
+	t =& Mem.undefined()
+	Cnile.clock-gettime(Cnile.clock-monotonic(), t)
+	return t&
+
+Duration
+	secs I64
+	nsecs I64
+
+inst Ord Duration
+	cmp (l, r)
+		scmp = l.secs cmp (r.secs)
+		if scmp /= EQ
+			return scmp
+
+		return l.nsecs cmp (r.nsecs)
+
+
+fn diff (l Cnile.Timespec, r Cnile.Timespec) -> Duration
+	secdiff = l.tv-sec - r.tv-sec
+	nsdiff = l.tv-nsec - r.tv-nsec
+	ns-in-secs = 1000000000
+	if nsdiff < 0
+		if secdiff < 0
+			return { secs: secdiff, nsecs: (-nsdiff) }
+		elif secdiff == 0
+			return { secs: 0, nsecs: nsdiff }
+		else
+			return { secs: secdiff - 1, nsecs: ns-in-secs + nsdiff }
+	else
+		if secdiff >= 0
+			return { secs: secdiff, nsecs: nsdiff }
+		else
+			return { secs: secdiff - 1, nsecs: ns-in-secs - nsdiff }
+			
+
+fn duration-from-ns (ns) -> Duration
+	ns-in-secs = 1000000000
+	return { secs: ns / ns-in-secs, nsecs: Math.mod(ns, ns-in-secs) }
+
+fn duration-from-s (secs) -> Duration:
+	{ secs, nsecs: 0 }
+
+fn duration-from-s' (fsecs F64) -> Duration
+	ns-in-secs = 1000000000
+	nsecs = (fsecs * ns-in-secs) Math.floor()
+	return duration-from-ns(nsecs)
+
+fn duration-to-ns (d Duration)
+	ns-in-secs = 1000000000
+	return d.secs * ns-in-secs + d.nsecs

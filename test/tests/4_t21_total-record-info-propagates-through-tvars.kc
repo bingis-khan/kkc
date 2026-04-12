@@ -3,7 +3,7 @@
 # 424
 
 pad = 2
-fn left-offset (mx I32) -> { max-digits: I32, total-offset: I32 }
+fn left-offset (mx I32) -> { max-digits I32, total-offset I32 }
 	max-digits = mx
 	return { max-digits, total-offset: pad + max-digits + pad }
 

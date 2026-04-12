@@ -240,10 +240,10 @@ inst Iter StrCaseIter
 inst IntoIter StrCase
 	into-iter (self)
 		case self
-			StrCase1(c)
-				return StrCaseIter1(c chars())
-			StrCase2(c)
-				return StrCaseIter2(c chars())
+			StrCase1(c1)
+				return StrCaseIter1(c1 chars())
+			StrCase2(c2)
+				return StrCaseIter2(c2 chars())
 inst Str StrCase
 	print-str (self)
 		case self

@@ -30,6 +30,10 @@ fn write-char (builder Ptr (StrBuilder alloc), c Char) -> Unit <= Allocator allo
 fn writeln (builder, s):
 	builder write('\(s)\n')
 
+fn pop (sb Ptr (StrBuilder alloc)) <= Allocator alloc: List.pop(&sb&.chars)
+
+fn count(sb Ptr (StrBuilder alloc)): sb&.chars.count
+
 fn mk (al alloc) -> StrBuilder alloc <= Allocator alloc
 	return StrBuilder { chars: List.mk(al) }
 

@@ -9,5 +9,5 @@ fn what(r)
 	uni(r, { x: 1 })
 	return r
 
-m = what({ x: 420 }) as { x: I32 }
+m = what({ x: 420 }) as { x I32 }
 m.x println()

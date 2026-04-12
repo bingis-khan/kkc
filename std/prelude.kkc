@@ -229,6 +229,9 @@ inst FromIntegral U64
 inst FromIntegral Size
 	from-integral (x): @cast(x)
 
+inst FromIntegral F64
+	from-integral (x): @i64-f64(x)
+
 # Eq
 
 inst Eq Unit

@@ -30,6 +30,11 @@ fn get-ptr (list Ptr (List alloc a), i Idx) -> Ptr a
 
 	return Slice.get-ptr(list&.elements, i)
 
+fn try-get-ptr (list Ptr (List alloc a), i Idx) -> Maybe (Ptr a)
+	if i >= list&.count
+		return None
+	return list get-ptr(i) Just()
+
 fn get (list Ptr (List alloc a), i Idx) -> a:
 	list get-ptr(i)&
 
@@ -163,7 +168,11 @@ fn first (list)
 	else
 		return list get(0) Just()
 
-fn pop (list): remove(list, list&.count - 1)
+fn pop (list)
+	if list&.count == 0
+		panic('List.pop() called on empty list.')
+	return remove(list, list&.count - 1)
+
 fn top (list)
 	if list&.count == 0
 		return None
@@ -189,3 +198,5 @@ fn to-slice(l List al a) -> Slice a
 fn addresses (l): l
 	to-slice()
 	Slice.addresses()
+
+fn size (l Ptr (List al a)): l&.count
