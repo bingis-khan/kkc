@@ -434,7 +434,12 @@ fn any(it, fun): it
 
 fn head(it): (&it into-iter()) next()
 
-fn null(it): it head() == None
+fn null(it)
+	case it head()
+		None
+			return True
+		_
+			return False
 
 
 

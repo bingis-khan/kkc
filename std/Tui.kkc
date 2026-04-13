@@ -572,6 +572,10 @@ fn set-screen-fg (screen Ptr (Screen Allocator), c Color)
 fn set-screen-bg (screen Ptr (Screen Allocator), c Color)
 	screen <&.default-bg= c
 
+fn set-screen-colors (screen Ptr (Screen Allocator), fg Color, bg Color)
+	screen <&.default-fg= fg
+	screen <&.default-bg= bg
+
 fn invert-screen-colors (screen Ptr (Screen Allocator))
 	fg = screen&.default-fg
 	screen <&.default-fg = screen&.default-bg

@@ -34,6 +34,12 @@ fn max(l, r)
 	else
 		return r
 
+fn between(c, l, r)
+	from = min(l, r)
+	to = max(l, r)
+	return from <= c and c <= to
+	
+
 fn sqrt(f F64):
 	Cnile.sqrt(f)  # geeeeeeg
 
