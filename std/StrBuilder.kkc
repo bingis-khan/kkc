@@ -17,12 +17,17 @@ use Slice
 use DynStr
 	DynStr
 use Mem
+use Slice
+	Slice
 
 StrBuilder alloc
 	chars List alloc Char
 
 fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator alloc
 	s chars() for-each(fn c: List.add(&builder&.chars, c))
+
+fn write-slice (builder Ptr (StrBuilder alloc), s Slice Char) <= Allocator alloc
+	List.add-all(&builder&.chars, s)
 
 fn write-char (builder Ptr (StrBuilder alloc), c Char) -> Unit <= Allocator alloc
 	List.add(&builder&.chars, c)
@@ -41,6 +46,9 @@ fn mk (al alloc) -> StrBuilder alloc <= Allocator alloc
 fn as-str (builder Ptr (StrBuilder alloc)):
 	DynStr { contents: builder&.chars.elements subslice(0, builder&.chars.count) }
 
+fn as-char-slice (builder Ptr (StrBuilder alloc)):
+	builder&.chars List.to-slice()
+
 fn free (builder Ptr (StrBuilder alloc)) <= Allocator alloc
 	List.free(&builder&.chars)
 
@@ -58,9 +66,18 @@ inst IntoIter StrBuilder
 	into-iter (self): self chars()
 
 
-fn mk-const-str(s, al)
+fn mk-dyn-str(s, al)
 	sb =& mk(al)
 	sb write(s)
 	sb write-char(Str.nullchar())
+	dynstr =  sb as-str()  # freeing dynstr frees all memory of this sb
+	# hide nullchar
+	return DynStr { contents: Slice { ptr: dynstr.contents.ptr, count: dynstr.contents.count - 1 } }
 
-	return sb as-str().contents.ptr Mem.cast() as ConstStr
+fn mk-const-str(s, al):
+	s mk-dyn-str(al).contents.ptr Mem.cast() as ConstStr
+
+
+# in reality, shouldn't be here
+fn free-const-str (s ConstStr, al Allocator)
+	al Alloc.free(Slice{ ptr: @cast(s), count: 0 })

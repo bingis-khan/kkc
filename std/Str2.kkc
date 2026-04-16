@@ -25,6 +25,8 @@ use Mem
 use DynStr
 	DynStr
 	substr
+use Math
+	between
 
 
 ##### F64 crap yooo
@@ -108,6 +110,17 @@ fn is-blank (s): s
 	chars()
 	all(is-whitespace)
 
+
+fn is-alpha (c Char):
+	c between('a', 'z') or c between ('A', 'Z')
+
+fn is-digit (c Char):
+	c between('0', '9')
+
+fn is-alphanumeric(c Char):
+	c is-alpha() or c is-digit()
+
+
 #### Instances
 
 LineIter
@@ -129,11 +142,12 @@ inst Iter LineIter
 
 		# iterator is left after last encountered newline
 		i = self&.last
-		while not (self&.og.contents Slice.get(i) == newline() and i < self&.og.contents.count)
+		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= newline()
 			i <= i + 1
 
 		line = self&.og substr(self&.last, i)
-		i <= i + 1  # skip past the newline
+		if i < self&.og.contents.count # when i < slice.count, then we encountered a newline.
+			i <= i + 1  # skip past the newline
 
 		# modify the state
 		self <&.last= i

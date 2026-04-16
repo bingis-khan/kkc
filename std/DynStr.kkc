@@ -8,6 +8,8 @@ use Slice
 use Str
 	Str
 	print-str
+use Alloc
+	Allocator
 
 # should this have a separate module???
 DynStr
@@ -31,3 +33,6 @@ fn substr (s DynStr, from Size, to Size):
 fn from-const-str (s ConstStr)
 	len = Str.const-str-len(s)
 	return DynStr { contents: Slice { ptr: s Mem.cast(), count: len } }
+
+fn free (s DynStr, al Allocator)
+	al Alloc.free({ ptr: s.contents.ptr, count: 0 })

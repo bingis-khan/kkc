@@ -13,9 +13,12 @@ use Iter
 	from
 	to
 	zip
+	all
 use Str
 	Str
 	print-str
+use Misc
+	is-just
 
 
 Idx = Size
@@ -56,21 +59,24 @@ fn set (slice Slice a, i Idx, x a)
 
 
 fn subslice (slice Slice a, from Idx, to Idx) -> Slice a
-	if from > slice.count or to > slice.count
-		panic('tried to sublice [\(from):\(to)], but slice has \(slice.count) elements')
+	# just return an empty slice or trim it bruh.
+	# if from > slice.count or to > slice.count
+	# 	panic('tried to sublice [\(from):\(to)], but slice has \(slice.count) elements')
 	
-
 	begin-ptr = slice.ptr Mem.offset-ptr(Mem.size-i64(from))
-	count = to - from
-	if count < 0
-		count <= 0
+	if from >= to or from >= slice.count
+		return Slice { ptr: begin-ptr, count: 0 }
 
+	count = Math.min(to, slice.count) - from
 	return Slice { ptr: begin-ptr, count: count }
 
+fn from (slice Slice a, from Idx) -> Slice a:
+	slice subslice(from, slice.count)
 
 fn zero-initialize (s Slice a) -> ()
 	sz = (Mem.get-typesize() as TypeSize a).size
 	Cnile.memset(Mem.cast-ptr(s.ptr), 0, sz * s.count)
+
 
 
 
@@ -133,6 +139,14 @@ fn copy-to (src Slice a, dest Slice a) -> Unit
 
 	src zip(Iter.from(0)) for-each(fn Tuple2(elem, i): set(dest, Mem.i32-size(i), elem))
 
+
+inst Eq Slice
+	eq (l, r)
+		if l.count /= r.count
+			return False
+
+		return l zip(r) all(fn ((le, re)): le == re)
+
 inst Indexable Slice
 	elem-get (self, idx): get(self, idx)
 
@@ -176,3 +190,19 @@ inst ListDecon Slice
 fn map (s Slice a, fun a -> a)
 	0 to ((s.count - 1) size-i32()) for-each(fn i: s set(i i32-size(), fun(s[i i32-size()])))
 
+fn find-slice (haystack Slice a, needle Slice a) -> Maybe Idx <= Eq a
+	for i in 0 to (haystack.count size-i32() - needle.count size-i32())
+		if haystack subslice(i i32-size(), i i32-size() + needle.count) == needle
+			return Just(i i32-size())
+
+	return None
+
+fn find-last-occurence-of-slice (haystack Slice a, needle Slice a) -> Maybe Idx <= Eq a
+	occ = None
+	for i in 0 to (haystack.count size-i32() - needle.count size-i32())
+		if haystack subslice(i i32-size(), i i32-size() + needle.count) == needle
+			occ <= Just(i i32-size())
+
+	return occ
+
+fn contains-slice (haystack Slice a, needle Slice a) -> Bool <= Eq a: haystack find-slice(needle) is-just()

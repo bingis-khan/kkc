@@ -1,8 +1,10 @@
 # TODO
 
+- [ ] **unions** + typeclass-bound anonymous unions?
 - [ ] exports
 - [ ] string matching in deconstruction.
 - [ ] polymorphic number matching (use a combination of FromIntegral + Eq)
+- [ ] deconstruction on assignment
 - [ ] mutual recursion
 - [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] hidden tvars

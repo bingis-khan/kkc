@@ -309,6 +309,37 @@ inst Str Tuple4
 				print-str('(\(a), \(b), \(c), \(d))')
 
 
+PadZeroes
+	x I32
+	len U8
+
+inst IntoIter PadZeroes
+	into-iter(self): self
+
+inst Iter PadZeroes
+	next (self Ptr _) -> Maybe Cnile.Char
+		if self&.len <= 0
+			return None
+
+		trim-down = 10 Math.pow (self&.len Mem.u8-i32() - 1)
+		upper = self&.x / trim-down
+		upper-mask = (upper / 10) * 10
+		digit = upper - upper-mask
+
+		self <&.len= self&.len - 1
+
+		digit-char = Mem.cast(digit + 48)
+		return Just(digit-char)
+
+inst Str PadZeroes
+	print-str (pz)
+		@panic('todo')
+
+	chars (self PadZeroes): self
+
+fn pad-zeroes(x I32, num-zeroes U8, trim-larger Bool):
+	PadZeroes { x, len: if not trim-larger: num-zeroes else Math.max(num-zeroes, x count-digits() Mem.i32-u8())  }
+
 ##### Iterators (rn I've decided that treating strings as iterators should *just work* for strings(TM)) (this MIGHT CHANGE IN THE FUTURE)
 
 inst Str Take

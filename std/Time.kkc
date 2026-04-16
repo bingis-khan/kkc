@@ -9,6 +9,10 @@ Duration
 	secs I64
 	nsecs I64
 
+inst Eq Duration
+	eq (l, r):
+		l.secs == r.secs and l.nsecs == r.nsecs
+
 inst Ord Duration
 	cmp (l, r)
 		scmp = l.secs cmp (r.secs)

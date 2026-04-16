@@ -601,7 +601,7 @@ fn fill-default(screen Ptr (Screen Allocator))
 # non-wrapping drawing thing.
 fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	w = screen&.tui&.width u32-i32()
-	if x >= w or y >= screen&.tui&.height u32-i32()
+	if x >= w or y >= screen&.tui&.height u32-i32() or x < 0 or y < 0
 		return
 	i = (y * w + x) i32-size()
 	fg = screen&.default-fg
@@ -610,17 +610,15 @@ fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	screen&.current Slice.set(i, Cell { c, fg, bg })
 
 fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
-	if y >= screen&.tui&.height u32-i32()
-		return
 	w = screen&.tui&.width u32-i32()
-	i = (y * w + x) i32-size()
+	if y < 0 or y >= screen&.tui&.height u32-i32()
+		return
+	i = y * w + x
 	x = Math.min(x, w)  # clamp the result to bounds
 	max-len = (w - x) i32-size()
-	fg = screen&.default-fg
-	bg = screen&.default-bg
 
 	s chars() zip(from(0)) for-each(fn((c, xx)))
-		Slice.set(screen&.current, i + xx i32-size(), Cell { c, fg, bg })
+		screen put-char(c, x + xx, y)
 
 fn draw-str-right(screen Ptr (Screen Allocator), s Str, x I32, y I32)
 	slen = s chars() count() size-i32()
