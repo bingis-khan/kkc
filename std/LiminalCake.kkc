@@ -16,6 +16,9 @@ use Str
 	chars
 use Error
 	or-fail
+use Hashable
+	Hashable
+	hash
 
 # COLUMN MAJOR
 
@@ -26,6 +29,8 @@ inst ListLike Vector
 	from-listlike (arr):
 		Vector { backing: arr }
 
+inst Indexable Vector
+	elem-get (self, idx): Array.get(&self.backing, idx)
 
 Matrix ^col ^row a
 	backing Array col (SmolArray row a)
@@ -82,3 +87,11 @@ fn distance-to (v Vector a F64, v' Vector a F64):
 		reduce(0., fn (v, s): v + s)
 		Math.sqrt()
 
+fn map-vector (v Vector a b, fun b -> c) -> Vector a c:
+	{ backing: v.backing Array.map-array(fun) }
+
+inst Eq Vector
+	eq (l, r): l zip (r) Iter.all(fn ((l, r)): l == r)
+
+inst Hashable Vector
+	hash (self): self map(hash) Iter.sum()

@@ -189,6 +189,8 @@ external
 	
 
 #[dylib 'libm.so.6']
+#[cstdinclude 'math.h']
+#[coption '-lm']
 external
 	sqrt (f F64) -> F64
 

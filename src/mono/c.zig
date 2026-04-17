@@ -22,6 +22,7 @@ pub const Mono = Self;
 
 // out: Writer,
 imports: Set(Str, std.hash_map.StringContext),
+coptions: Set(Str, std.hash_map.StringContext),
 functionsGenerated: FunctionsGenerated,
 envsGenerated: EnvsGenerated,
 envInstsGenerated: EnvInstsGenerated,
@@ -37,6 +38,7 @@ aux: struct { // RETARDED
     u32cmp: bool = false,
     u8cmp: bool = false,
     sizecmp: bool = false,
+    f64cmp: bool = false,
 
     sighandler: bool = false,
 },
@@ -70,6 +72,7 @@ pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
         .cur = CW.init(al),
         .al = al,
         .imports = Set(Str, std.hash_map.StringContext).init(al),
+        .coptions = Set(Str, std.hash_map.StringContext).init(al),
         .functionsGenerated = FunctionsGenerated.initContext(al, .{ .typeContext = tc }),
         .envsGenerated = EnvsGenerated.initContext(al, .{ .typeContext = tc }),
         .envInstsGenerated = EnvInstsGenerated.init(al),
@@ -1112,6 +1115,10 @@ const Stmt = struct {
                     if (ast.Annotation.find(efn.anns, "cstdinclude")) |ann| {
                         try stmt.ctx.backend.imports.insert(ann.params[0]);
                     }
+
+                    if (ast.Annotation.find(efn.anns, "coption")) |ann| {
+                        try stmt.ctx.backend.coptions.insert(ann.params[0]);
+                    }
                 },
                 .ClassFun => |cfun| {
                     try stmt.instFun(cfun.ref);
@@ -1165,27 +1172,27 @@ const Stmt = struct {
             },
             .Intrinsic => |intr| {
                 switch (intr.intr.ty) {
-                    .@"u32-add", .@"u8-add", .@"i64-add", .@"i32-add", .@"size-add" => {
+                    .@"u32-add", .@"u8-add", .@"i64-add", .@"i32-add", .@"size-add", .@"f64-add" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("+");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-sub", .@"u8-sub", .@"i64-sub", .@"i32-sub", .@"size-sub" => {
+                    .@"u32-sub", .@"u8-sub", .@"i64-sub", .@"i32-sub", .@"size-sub", .@"f64-sub" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("-");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-mul", .@"u8-mul", .@"i64-mul", .@"i32-mul", .@"size-mul" => {
+                    .@"u32-mul", .@"u8-mul", .@"i64-mul", .@"i32-mul", .@"size-mul", .@"f64-mul" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("*");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-div", .@"u8-div", .@"i64-div", .@"i32-div", .@"size-div" => {
+                    .@"u32-div", .@"u8-div", .@"i64-div", .@"i32-div", .@"size-div", .@"f64-div" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("/");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-cmp", .@"u8-cmp", .@"i64-cmp", .@"i32-cmp", .@"size-cmp" => {
+                    .@"u32-cmp", .@"u8-cmp", .@"i64-cmp", .@"i32-cmp", .@"size-cmp", .@"f64-cmp" => {
                         // CRINGE
                         const it = intr.intr.ty;
                         const cmp = switch (it) {
@@ -1194,6 +1201,7 @@ const Stmt = struct {
                             .@"u32-cmp" => &stmt.ctx.backend.aux.u32cmp,
                             .@"u8-cmp" => &stmt.ctx.backend.aux.u8cmp,
                             .@"size-cmp" => &stmt.ctx.backend.aux.sizecmp,
+                            .@"f64-cmp" => &stmt.ctx.backend.aux.f64cmp,
                             else => unreachable,
                         };
                         const tyname = ast.Annotation.find(stmt.ctx.prelude.defined(switch (it) {
@@ -1202,6 +1210,7 @@ const Stmt = struct {
                             .@"size-cmp" => .Size,
                             .@"u8-cmp" => .U8,
                             .@"u32-cmp" => .U32,
+                            .@"f64-cmp" => .F64,
                             else => unreachable,
                         }).annotations, "ctype").?.params[0];
 
@@ -1415,7 +1424,11 @@ const Stmt = struct {
                         try stmt.p("~");
                         try stmt.genExpr(intr.args[0]);
                     },
-                    else => unreachable,
+                    .@"i64-f64" => {
+                        try stmt.p("(double)");
+                        try stmt.genExpr(intr.args[0]);
+                    },
+                    .@"f64-i64-floor" => unreachable,
                 }
             },
             .NamedRecord => |rec| {
@@ -1682,6 +1695,8 @@ const Stmt = struct {
                 try stmt.p(";");
                 try stmt.p("}");
             },
+            .Float => |fl| try stmt.p(fl),
+
             else => unreachable,
         }
         try stmt.p(")");

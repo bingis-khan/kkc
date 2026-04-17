@@ -3,11 +3,14 @@ use Iter
 	Iter
 	into-iter
 	next
+	to
 use Slice
 	Slice
 use Str
 	print-str
 	chars
+use Mem
+	i32-size
 
 fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
 	if i < 0 or i >= @cast(count)
@@ -28,6 +31,12 @@ fn set (arr Ptr (Array count a), i Size, e a)
 fn as-slice (arr Ptr (Array count a)) -> Slice a:
 	Slice { ptr: Mem.cast(arr), count: @cast(count) }
 
+fn map-array (arr Array count a, fun a -> b) -> Array count b
+	nuarr =& @undefined
+	for x in 0 to (count - 1)
+		x = x i32-size()
+		nuarr set(x, get(&arr, x) fun())
+	return nuarr&
 
 # ARRAY YAH
 # It's here, because why not. It's still imported by default.

@@ -75,7 +75,7 @@ fn insert-no-check (self Ptr (Hash Allocator k v), k k, v v) <= Eq k, Hashable k
 					first-free <= Just(i)
 				break
 
-		i <= i mod (self&.buckets.count)
+		i <= (i + 1) mod (self&.buckets.count)
 
 	insert-i = first-free or-fail('(insert-no-check): no free slot?')
 	self&.buckets Slice.set(insert-i, Taken((k, v)))
@@ -113,6 +113,9 @@ fn resize-if-needed (self Ptr (Hash Allocator k v)) <= Eq k, Hashable k
 
 
 fn get-bucket-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr (Bucket k v)) <= Eq k, Hashable k
+	if self&.buckets.count == 0
+		return None
+
 	h = k hash()
 	i = h mod (self&.buckets.count)
 	while True
@@ -128,7 +131,7 @@ fn get-bucket-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr (Bucket k v)) <= E
 			Ptr(Empty)
 				return None
 
-		i <= i mod (self&.buckets.count)
+		i <= (i + 1) mod (self&.buckets.count)
 
 
 ##### API

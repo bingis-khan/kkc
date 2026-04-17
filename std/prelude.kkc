@@ -295,6 +295,9 @@ inst Ord U32
 inst Ord U8
 	cmp (l, r): @u8-cmp(l, r)
 
+inst Ord F64
+	cmp (l, r): @f64-cmp(l, r)
+
 # ops
 
 ## Int

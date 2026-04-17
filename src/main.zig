@@ -90,7 +90,15 @@ pub fn main() !void {
                 try cbackend.writeTo(writer);
 
                 {
-                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = &.{ "cc", c_filename, "-o", outname } });
+                    var copts = std.ArrayList([]const u8).init(aa);
+                    try copts.appendSlice(&.{ "cc", c_filename, "-o", outname });
+
+                    var prog_c_opts = cbackend.coptions.iterator();
+                    while (prog_c_opts.next()) |copt| {
+                        try copts.append(copt.*);
+                    }
+
+                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = copts.items });
                     try stdout.writeAll(res.stdout);
                     try stdout.writeAll(res.stderr);
                     try stdoutbuf.flush();
