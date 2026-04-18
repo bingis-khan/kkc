@@ -2577,29 +2577,9 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                     gpr.value_ptr.* = nuId;
 
                     const oldTyMap = self.tymap;
-                    const outerTVScheme = ast.Scheme{
-                        .tvars = data.outerTVars,
-                        .envVars = &.{},
-                        .associations = &.{},
-                        .env = null,
-                    };
-                    const outerTVMatch = ast.Match{
-                        .tvars = tyApp.outerApplication,
-                        .envVars = &.{},
-                        .assocs = &.{},
-                        .scheme = outerTVScheme,
-                    };
-                    const outerTVMap = TypeMap{
-                        .prev = oldTyMap,
-                        .scheme = &outerTVScheme,
-                        .match = &outerTVMatch,
-                    };
-
-                    var tymap = TypeMap{
-                        .prev = &outerTVMap,
-                        .scheme = &data.scheme,
-                        .match = tyApp.application,
-                    };
+                    const outerTVMatch = ast.Match.fromOuterTVars(data.outerTVars, tyApp.outerApplication);
+                    const outerTVMap = TypeMap.init(&outerTVMatch, self.tymap);
+                    var tymap = TypeMap.init(tyApp.application, &outerTVMap);
                     self.tymap = &tymap;
                     defer self.tymap = oldTyMap;
 
@@ -2640,18 +2620,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                     gpr.value_ptr.* = nuId;
 
                     const oldTyMap = self.tymap;
-                    const outerTVScheme = ast.Scheme{
-                        .tvars = data.outerTVars,
-                        .envVars = &.{},
-                        .associations = &.{},
-                        .env = null,
-                    };
-                    const outerTVMatch = ast.Match{
-                        .tvars = tyApp.outerApplication,
-                        .envVars = &.{},
-                        .assocs = &.{},
-                        .scheme = outerTVScheme,
-                    };
+                    const outerTVMatch = ast.Match.fromOuterTVars(data.outerTVars, tyApp.outerApplication);
                     const outerTVMap = try TypeMap.initMap(&outerTVMatch, self.typeContext, self.tymap);
 
                     self.tymap = &try TypeMap.initMap(tyApp.application, self.typeContext, &outerTVMap);
@@ -2693,7 +2662,6 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         .tvars = data.outerTVars,
                         .envVars = &.{},
                         .associations = &.{},
-                        .env = null,
                     };
                     const outerTVMatch = ast.Match{
                         .tvars = tyApp.outerApplication,
@@ -2810,7 +2778,6 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                 .tvars = data.outerTVars,
                 .envVars = &.{},
                 .associations = &.{},
-                .env = null,
             };
             const outerTVMatch = ast.Match{
                 .tvars = tyApp.outerApplication,
@@ -2996,42 +2963,17 @@ pub const EnvApp = struct {
         const tymap = TypeMap.init(m, self.tymap);
 
         var mfe: ?ast.EnvFun = envfun;
+        if (env.monoLastScheme) |lastScheme| {
+            const match = try mapScheme(self, &tymap, &lastScheme.scheme);
+            ml = try MatchLink.link(al, match, ml);
+            mfe = lastScheme.lastEnv.outer;
+        }
+
         while (mfe) |fe| {
             defer mfe = fe.env.outer;
 
             if (fe.fun) |fun| {
-                const tvars = try al.alloc(ast.TypeOrNum, fun.scheme.tvars.len);
-                for (fun.scheme.tvars, tvars) |st, *t| {
-                    t.* = switch (st) {
-                        .TVar => |tv| ast.TypeOrNum{ .Type = tymap.mapTVar(tv).? },
-                        .TNum => |tn| ast.TypeOrNum{ .Num = tymap.mapTNum(tn).? },
-                    };
-                }
-
-                const envs = try al.alloc(ast.EnvRef, fun.scheme.envVars.len);
-                for (fun.scheme.envVars, envs) |se, *e| {
-                    const base = self.typeContext.getEnv(se).base;
-                    e.* = tymap.mapEnv(base).?;
-                }
-
-                const assocsStuff = try al.alloc(?ast.Match.AssocRef, fun.scheme.associations.len);
-                const assocs = try al.alloc(*?ast.Match.AssocRef, fun.scheme.associations.len);
-                for (fun.scheme.associations, assocs, assocsStuff) |sa, *a, *as| {
-                    if (sa.concrete) |_| {
-                        as.* = .{ .InstFun = tymap.tryGetFunctionByID(sa.uid).? };
-                    } else {
-                        as.* = null;
-                    }
-
-                    a.* = as;
-                }
-
-                const match = try common.allocOne(al, ast.Match{
-                    .tvars = tvars,
-                    .envVars = envs,
-                    .assocs = assocs,
-                    .scheme = fun.scheme,
-                });
+                const match = try mapScheme(self, &tymap, &fun.scheme);
                 ml = try MatchLink.link(al, match, ml);
             }
         }
@@ -3040,6 +2982,43 @@ pub const EnvApp = struct {
             .ml = ml,
             .env = env,
         };
+    }
+
+    fn mapScheme(self: *Self, tymap: *const TypeMap, scheme: *const ast.Scheme) !*ast.Match {
+        const al = self.backend.al;
+        const tvars = try al.alloc(ast.TypeOrNum, scheme.tvars.len);
+        for (scheme.tvars, tvars) |st, *t| {
+            t.* = switch (st) {
+                .TVar => |tv| ast.TypeOrNum{ .Type = tymap.mapTVar(tv).? },
+                .TNum => |tn| ast.TypeOrNum{ .Num = tymap.mapTNum(tn).? },
+            };
+        }
+
+        const envs = try al.alloc(ast.EnvRef, scheme.envVars.len);
+        for (scheme.envVars, envs) |se, *e| {
+            const base = self.typeContext.getEnv(se).base;
+            e.* = tymap.mapEnv(base).?;
+        }
+
+        const assocsStuff = try al.alloc(?ast.Match.AssocRef, scheme.associations.len);
+        const assocs = try al.alloc(*?ast.Match.AssocRef, scheme.associations.len);
+        for (scheme.associations, assocs, assocsStuff) |sa, *a, *as| {
+            if (sa.concrete) |_| {
+                as.* = .{ .InstFun = tymap.tryGetFunctionByID(sa.uid).? };
+            } else {
+                as.* = null;
+            }
+
+            a.* = as;
+        }
+
+        const match = try common.allocOne(al, ast.Match{
+            .tvars = tvars,
+            .envVars = envs,
+            .assocs = assocs,
+            .scheme = scheme.*,
+        });
+        return match;
     }
 
     pub const Comparator = struct {

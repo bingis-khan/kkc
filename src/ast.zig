@@ -326,6 +326,7 @@ pub const Function = struct {
         c.sepBy(self.params, ", ");
         c.s(")");
         // self.env.print(c); // TEMP
+        c.print(self.env.id);
         // c.encloseSepBy(self.temp__calls.items, ", ", "[", "]");
         c.s(" -> ");
         self.ret.print(c);
@@ -374,6 +375,10 @@ pub const Env = struct {
     level: usize,
     monoInsts: Mono, // TEMP/TODO: for now we will reuse this env struct for mono insts. We might need to remake the structure??
     monoFinished: bool = false,
+    monoLastScheme: ?struct {
+        scheme: Scheme, // this also contains env?
+        lastEnv: *Env,
+    } = null,
 
     outer: ?EnvFun,
 
@@ -1526,10 +1531,12 @@ pub fn TypeF(comptime a: ?type) type {
                 },
 
                 .Fun => |fun| {
+                    c.s("(");
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    fun.env.print(c); // TEMP
+                    // fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
+                    c.s(")");
                 },
 
                 .TyVar => |tyv| {
@@ -1690,7 +1697,6 @@ pub const Scheme = struct {
     envVars: []EnvRef, // like unions. same environments can appear in different places, and they need to be the same thing.
 
     associations: []Association,
-    env: ?*Env,
 
     pub const SchemeEnv = struct {
         ref: EnvRef,
@@ -1709,7 +1715,6 @@ pub const Scheme = struct {
             .tvars = &.{},
             .envVars = &.{},
             .associations = &.{},
-            .env = null,
         };
     }
 
@@ -1727,7 +1732,6 @@ pub const Scheme = struct {
                 self.associations,
                 scheme.associations,
             }),
-            .env = if (scheme.env) |env| env else scheme.env,
         };
     }
 
@@ -1858,21 +1862,7 @@ pub const Match = struct {
     };
 
     pub fn joinScheme(self: *const @This(), scheme: *const Scheme, tc: *TypeContext, al: std.mem.Allocator) !*const @This() {
-        const s = Scheme{
-            .tvars = try std.mem.concat(al, TVarOrNum, &.{
-                self.scheme.tvars,
-                scheme.tvars,
-            }),
-            .envVars = try std.mem.concat(al, EnvRef, &.{
-                self.scheme.envVars,
-                scheme.envVars,
-            }),
-            .associations = try std.mem.concat(al, Association, &.{
-                self.scheme.associations,
-                scheme.associations,
-            }),
-            .env = if (scheme.env) |env| env else scheme.env,
-        };
+        const s = try Scheme.joinScheme(&self.scheme, scheme, al);
 
         var tvars = std.ArrayList(TypeOrNum).init(al);
         try tvars.appendSlice(self.tvars);
@@ -1910,6 +1900,44 @@ pub const Match = struct {
 
         return try common.allocOne(al, @This(){
             .scheme = s,
+            .tvars = tvars.items,
+            .envVars = envVars.items,
+            .assocs = assocs,
+        });
+    }
+
+    // "Blank" means that we initialize "default values" for match, so that they could be mapped in case of scheme instantiation.
+    pub fn blankMatch(scheme: *const Scheme, tc: *TypeContext, al: std.mem.Allocator) !*const @This() {
+        var tvars = std.ArrayList(TypeOrNum).init(al);
+        for (scheme.tvars) |tom| {
+            switch (tom) {
+                .TVar => |tv| {
+                    try tvars.append(.{ .Type = try tc.newType(.{ .TVar = tv }) });
+                },
+                .TNum => |tnum| {
+                    try tvars.append(.{ .Num = try tc.newNum(.{ .TNum = tnum }) });
+                },
+            }
+        }
+
+        var envVars = std.ArrayList(EnvRef).init(al);
+        for (scheme.envVars) |ev| {
+            try envVars.append(ev);
+        }
+
+        var assocsStuff = try al.alloc(?AssocRef, scheme.associations.len);
+        var assocs = try al.alloc(*?AssocRef, scheme.associations.len);
+        for (scheme.associations, 0..) |assoc, i| {
+            if (assoc.concrete != null) {
+                assocsStuff[i] = .{ .Id = assoc.uid };
+            } else {
+                assocsStuff[i] = null;
+            }
+            assocs[i] = &assocsStuff[i];
+        }
+
+        return try common.allocOne(al, @This(){
+            .scheme = scheme.*,
             .tvars = tvars.items,
             .envVars = envVars.items,
             .assocs = assocs,
@@ -1961,7 +1989,6 @@ pub const Match = struct {
                 .tvars = outerTVars,
                 .envVars = &.{},
                 .associations = &.{},
-                .env = null,
             },
 
             .tvars = outerApplication,

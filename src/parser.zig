@@ -208,7 +208,6 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
                     .tvars = tvars.items,
                     .envVars = &.{},
                     .associations = &.{},
-                    .env = null,
                 },
                 .outerTVars = &.{},
                 .annotations = data.annotations,
@@ -284,7 +283,6 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
             .tvars = tvars.items,
             .envVars = envs.items,
             .associations = assocs.items,
-            .env = null, // Datatypes don't need an Env reference.
         };
 
         // outer tvars
@@ -348,7 +346,6 @@ fn typeSynonym(self: *Self, typename: Token, tvarToks: []Token, annotations: []A
                 .tvars = tvars.items,
                 .envVars = &.{},
                 .associations = assocs.items,
-                .env = null,
             },
             .t = t.e,
         });
@@ -1223,7 +1220,6 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
         .tvars = definedTVars.items,
         .associations = &.{},
         .envVars = &.{},
-        .env = null,
     };
 
     const extfun = try Common.allocOne(self.arena, AST.ExternalFunction{
@@ -1356,7 +1352,6 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
         .tvars = tvars.items,
         .envVars = &.{}, // TEMP
         .associations = assocs.items, // NOTE: this will change when class constraints are allowed on functions. EDIT: Or not??? We have no constraints to specify, because these constraints are not based on class function calls. Right now, I'll leave it alone because of our "broken" type system.
-        .env = null,
     };
 
     return try Common.allocOne(self.arena, AST.ClassFun{
@@ -5169,23 +5164,50 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     for (envs.items) |se| {
         const ref = self.typeContext.getEnv(se).env;
         if (ref.*) |ftvenv| {
-            if (env.level < ftvenv.env.level) {
-                // get those tvars.
-                var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
-                try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env);
+            if (env.level < ftvenv.level) {
+                const newMatch = b: {
+                    // NOTE about this whole thing: currently, we're most likely not handling variables correctly. If we assign the env to an outer variable, and then try to return that variable, it's gonna be real funny
+                    // (function schemes won't be properly assigned and when we return it, a scheme that will get assigned will miss all the schemes in between the env and the returning function).
+                    // should we also check if the env vars contain inner envs for that?
+                    if (ftvenv.env.monoLastScheme) |lastScheme| {
+                        const outerLevel = lastScheme.lastEnv.level;
+                        std.debug.assert(outerLevel >= env.level);
+                        if (outerLevel == env.level) {
+                            // NOTE/TODO: technically, this is pretty slow. We make a "blank" match, then map what we know.
+                            // It's supposed to yield the same result as match.joinScheme() after we create this env's scheme.
+                            // Except, I'm sure the first part of the Scheme (0..match.X.len) must be mapped, and the other one must be "blank".
+                            const blankMatch = try AST.Match.blankMatch(&lastScheme.scheme, self.typeContext, self.arena);
+                            const normalMatch = try self.typeContext.mapMatch(ftvenv.match, blankMatch);
+                            break :b normalMatch;
+                        } else {
+                            std.debug.assert(outerLevel > env.level);
+                            std.debug.assert(ftvenv.level == lastScheme.lastEnv.level);
 
-                // NOTE/TODO: we're gonna ignore tyvars here, because they already became tvars.
-                // should we do env intersection to?
+                            // TEMP? LITERALLY COPYPASTA
+                            // get those tvars.
+                            var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
+                            try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env);
 
-                // TODO: also, do we add assocs here??
+                            const scheme = try tvarStore.toScheme(&funftvs.envs, assocs.items);
 
-                // now we have scheme variables for this env here in paramenvftvs.
+                            const numatch = try ftvenv.match.joinScheme(&scheme, self.typeContext, self.arena); // joins a scheme to match with uninstantiated stuff from that scheme in the match.
+                            ftvenv.env.monoLastScheme = .{ .lastEnv = env, .scheme = scheme };
 
-                // ENV => TODO
+                            break :b numatch;
+                        }
+                    } else {
+                        // get those tvars.
+                        var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
+                        try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env);
 
-                const scheme = try tvarStore.toScheme(&funftvs.envs, assocs.items);
+                        const scheme = try tvarStore.toScheme(&funftvs.envs, assocs.items);
 
-                const newMatch = try ftvenv.match.joinScheme(&scheme, self.typeContext, self.arena); // joins a scheme to match with uninstantiated stuff from that scheme in the match.
+                        const numatch = try ftvenv.match.joinScheme(&scheme, self.typeContext, self.arena); // joins a scheme to match with uninstantiated stuff from that scheme in the match.
+                        ftvenv.env.monoLastScheme = .{ .lastEnv = env, .scheme = scheme };
+
+                        break :b numatch;
+                    }
+                };
 
                 ref.*.?.match = newMatch;
                 ref.*.?.level = env.level;
@@ -5197,7 +5219,6 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         .tvars = tvars.items,
         .envVars = envs.items,
         .associations = assocs.items,
-        .env = env,
     };
 }
 

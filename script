@@ -1,5 +1,12 @@
-inst ListLike SmolArray
-	from-listlike (arr Array n a): SmolArray { arr }
+class D
+    d (x _) -> _
 
-_ = [ 69 as U32 ]
-_ = [ 1 as U32, 2 ]
+fn f() -> I32 -> I32
+    sumtin = 420
+    inst D I32  # instance definition
+        d (x I32) -> I32
+            return x + sumtin   # captures sumtin
+
+    return d   # function escapes - sumtin travels with it
+
+println(f()(69))   # prints 489

@@ -1,0 +1,17 @@
+#$ instantiation and return the same function with two different instantiations.
+# 1
+# True
+# 1
+# ()
+fn a(x)
+	fn b(y)
+		println(x)
+		println(y)
+		return x
+	return (b, b)
+
+x = a(1)
+x1 = x fst()
+x1(True)
+x2 = x snd()
+x2(Unit)

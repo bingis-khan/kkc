@@ -1,0 +1,28 @@
+#$ instantiation and return the same function with two different instantiations. twice.
+## twice to check if some global type is not accidentally modified.
+# 1
+# True
+# 1
+# ()
+# ()
+# ()
+# ()
+# 420
+fn a(x)
+	fn b(y)
+		println(x)
+		println(y)
+		return x
+	return (b, b)
+
+x = a(1)
+x1 = x fst()
+x1(True)
+x2 = x snd()
+x2(Unit)
+
+x = a(Unit)
+x1 = x fst()
+x1(Unit)
+x2 = x snd()
+x2(420)

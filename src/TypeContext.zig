@@ -1076,7 +1076,6 @@ pub const AllStore = struct {
             .tvars = stvars.items,
             .envVars = stenvs.items,
             .associations = stassocs.items,
-            .env = null,
         };
     }
 
@@ -1090,12 +1089,13 @@ pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *AllStore, env
         // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
         // NOTE: but that's what I'm doing now??
         // NOTE(18.04.26): what? why whould I do that. Im gonna change it to instantiated types, since it seems that's what's needed.
+        try self.getTVars(binding, store, inst.t);
         switch (inst.v) {
             .TNum => {},
-            .Var => try self.getTVars(binding, store, inst.t),
+            .Var => {}, //try self.getTVars(binding, store, inst.t),
             .Fun => |fun| {
                 _ = fun;
-                try self.getTVarsFromMatch(binding, store, inst.m);
+                // try self.getTVarsFromMatch(binding, store, inst.m);
                 // for (fun.params) |p| {
                 //     try self.getTVars(binding, store, p.d.t);
                 // }
@@ -1114,7 +1114,7 @@ pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *AllStore, env
                 }
 
                 // NOTE: should I do it??
-                try self.getTVars(binding, store, inst.t);
+                // try self.getTVars(binding, store, inst.t);
                 // const cfun = vv.cfun;
                 // for (cfun.params) |p| {
                 //     try self.getTVars(binding, store, p.t);

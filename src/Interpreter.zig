@@ -1253,7 +1253,6 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
                 .tvars = con.type.outerTVars,
                 .envVars = &.{},
                 .associations = &.{},
-                .env = null,
             };
             const outerTVMatch = ast.Match{
                 .tvars = outerApplication,
@@ -1760,7 +1759,6 @@ fn sizeOf(self: *Self, t: ast.Type) Sizes {
                 .tvars = c.type.outerTVars,
                 .envVars = &.{},
                 .associations = &.{},
-                .env = null,
             };
             const outerTVMatch = ast.Match{
                 .tvars = outerApplication,
