@@ -16,7 +16,7 @@ fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
 	if i < 0 or i >= @cast(count)
 		Error.panic('Access to array at index \(i). (max: \(count))')
 
-	p = Mem.cast(arr) as Ptr a
+	p = Mem.cast-ptr(arr) as Ptr a
 	return Mem.offset-ptr(p, @cast(i))
 
 fn get (arr Ptr (Array count a), i Size) -> a:

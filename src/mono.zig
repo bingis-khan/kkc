@@ -11,7 +11,7 @@ const Gen = @import("UniqueGen.zig");
 const sizer = @import("sizer.zig");
 const TypeSize = sizer.TypeSize;
 
-pub const Debug = true;
+pub const Debug = false;
 
 pub const GenError = anyerror;
 pub fn Mono(Back: type) type {

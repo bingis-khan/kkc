@@ -920,7 +920,14 @@ pub fn ftvsFromMatch(self: *Self, store: *FTVs, m: *const ast.Match) !void {
             .Type => |t| {
                 try self.ftvs(store, t);
             },
-            .Num => {},
+            .Num => |tnum| {
+                switch (self.getNum(tnum)) {
+                    .Unknown => {
+                        try store.nums.insert(tnum);
+                    },
+                    else => {},
+                }
+            },
         }
     }
 
@@ -1443,12 +1450,15 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
                 },
                 .InstFun => |ifun| {
                     if (try self.mapMatch_(match, ifun.m)) |nuMatch| {
-                        moldAssoc.*.?.InstFun.m = nuMatch;
+                        const ar = try self.arena.create(?ast.Match.AssocRef);
+                        ar.* = ast.Match.AssocRef{ .InstFun = ifun };
+                        ar.*.?.InstFun.m = nuMatch;
+                        try assocs.append(ar);
+
                         changed = true;
                     } else {
-                        //
+                        try assocs.append(moldAssoc);
                     }
-                    try assocs.append(moldAssoc);
                     continue;
                 },
             }
