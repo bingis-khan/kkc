@@ -5186,7 +5186,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                             // TEMP? LITERALLY COPYPASTA
                             // get those tvars.
                             var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
-                            try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env);
+                            try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env, env.level);
 
                             const scheme = try tvarStore.toScheme(&funftvs.envs, assocs.items);
 
@@ -5198,7 +5198,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                     } else {
                         // get those tvars.
                         var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
-                        try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env);
+                        try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env, env.level);
 
                         const scheme = try tvarStore.toScheme(&funftvs.envs, assocs.items);
 

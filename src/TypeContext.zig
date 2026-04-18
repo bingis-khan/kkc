@@ -1084,7 +1084,7 @@ pub const AllStore = struct {
         self.envs.deinit();
     }
 };
-pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *AllStore, env: *ast.Env) !void {
+pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *AllStore, env: *ast.Env, minLevel: ast.Level) !void {
     for (env.insts.items) |inst| {
         // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
         // NOTE: but that's what I'm doing now??
@@ -1094,7 +1094,14 @@ pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *AllStore, env
             .TNum => {},
             .Var => {}, //try self.getTVars(binding, store, inst.t),
             .Fun => |fun| {
-                _ = fun;
+                if (fun.env.level > minLevel) {
+                    try self.getTVars(binding, store, fun.ret);
+                    for (fun.params) |param| {
+                        try self.getTVars(binding, store, param.d.t);
+                    }
+
+                    try self.getTVarsFromEnv(binding, store, fun.env, minLevel);
+                }
                 // try self.getTVarsFromMatch(binding, store, inst.m);
                 // for (fun.params) |p| {
                 //     try self.getTVars(binding, store, p.d.t);

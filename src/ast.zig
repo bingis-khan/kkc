@@ -325,8 +325,8 @@ pub const Function = struct {
         c.print(.{ self.name, " (" });
         c.sepBy(self.params, ", ");
         c.s(")");
-        // self.env.print(c); // TEMP
-        c.print(self.env.id);
+        self.env.print(c); // TEMP
+        // c.print(self.env.id);
         // c.encloseSepBy(self.temp__calls.items, ", ", "[", "]");
         c.s(" -> ");
         self.ret.print(c);
