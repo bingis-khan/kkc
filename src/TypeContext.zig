@@ -36,6 +36,10 @@ pub const Env = struct {
             .level = 0,
         };
     }
+
+    pub fn toEnvFun(self: *const @This()) ast.EnvFun {
+        return .{ .env = self.env, .fun = self.fun };
+    }
 };
 pub const MatchLink = struct {
     match: *const ast.Match,
@@ -608,7 +612,13 @@ pub fn unifyNum(self: *Self, l: NumRef, r: NumRef, locs: Locs, full: Full) !void
             },
             .Literal => |rl| {
                 if (ll != rl) {
-                    unreachable; // TODO: error
+                    try self.reportError(locs, .{ .MismatchingTNum = .{
+                        .l = ll,
+                        .lloc = locs.?.l,
+                        .r = rl,
+                        .rloc = locs.?.r,
+                    } });
+                    // unreachable;
                 }
             },
             .TNum => {
@@ -864,7 +874,7 @@ fn getTypeAndBase(self: *const Self, t: TyRef) struct { base: ast.Type, t: ast.T
     }
 }
 
-pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
+pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) error{OutOfMemory}!void {
     const t = self.getType(tref);
     switch (t) {
         .Anon => |fields| {
@@ -881,24 +891,8 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
             }
         },
         .Con => |con| {
-            for (con.application.tvars) |mtOrNum| {
-                switch (mtOrNum) {
-                    .Type => |mt| try self.ftvs(store, mt),
-                    .Num => |num| {
-                        switch (self.getNum(num)) {
-                            .Unknown => try store.nums.insert(num),
-                            else => {},
-                        }
-                    },
-                }
-            }
-
-            for (con.application.envVars) |envVar| {
-                const env = self.getEnv(envVar);
-                if (env.env.* == null) { // NOTE: same thing as the case for .Fun. NOTE: technically, we also check for nulls when turning FTVs -> Scheme in mkSchemeForFunction, but it's due to some bug, where some envs are not null for some reason.
-                    try store.envs.insert(env.base);
-                }
-            }
+            try self.ftvsFromMatch(store, con.application);
+            // TODO: outer tvars
         },
         .Fun => |fun| {
             for (fun.args) |arg| {
@@ -906,6 +900,9 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) !void {
             }
 
             const env = self.getEnv(fun.env);
+            if (env.env.*) |ee| {
+                try self.ftvsFromMatch(store, ee.match);
+            }
             // if (env.env == null) { // Q: @grok is this correct? A: if we add unions, we should remove this check.
             // NOTE: check removed. what I'm doing is going to ADD a match of the instantiating function to provide context to the function.
             try store.envs.insert(env.base);
@@ -929,11 +926,14 @@ pub fn ftvsFromMatch(self: *Self, store: *FTVs, m: *const ast.Match) !void {
 
     for (m.envVars) |ev| {
         const env = self.getEnv(ev);
+        if (env.env.*) |ee| {
+            try self.ftvsFromMatch(store, ee.match);
+        }
         try store.envs.insert(env.base);
     }
 
     for (m.assocs) |massoc| {
-        if (massoc) |assoc| {
+        if (massoc.*) |assoc| {
             switch (assoc) {
                 .Id => {},
                 .InstFun => |ifun| {
@@ -971,7 +971,7 @@ pub fn ftvsFromEnv(self: *Self, envftvs: *FTVs, env: *ast.Env) !void {
     }
 }
 
-// TODO(26.03.26): maybe we should do it the same way as envs?
+// !! Only used in datatypes. !!
 pub const TVarStore = Set(ast.TVarOrNum, ast.TVarOrNum.comparator());
 pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref: ast.Type) !void {
     const t = self.getType(tref);
@@ -996,7 +996,7 @@ pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref
                         switch (self.getNum(tnumref)) {
                             .TNum => |tnum| {
                                 // only add nums NOT from the datatype
-                                if (!std.meta.eql(tnum.binding, binding)) {
+                                if (!std.meta.eql(tnum.binding, binding.?)) {
                                     try store.insert(.{ .TNum = tnum });
                                 }
                             },
@@ -1026,34 +1026,142 @@ pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref
     }
 }
 
-pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *TVarStore, env: *ast.Env) !void {
+// TODO(26.03.26): maybe we should do it the same way as envs?
+pub const AllStore = struct {
+    al: std.mem.Allocator,
+    tvars: Set(ast.TVarOrNum, ast.TVarOrNum.comparator()),
+    envs: Set(ast.EnvRef, ast.EnvRef.Comparator),
+    assocs: Set(ast.Association.ID, std.hash_map.AutoContext(ast.Association.ID)),
+
+    pub fn init(al: std.mem.Allocator, tc: *const Self) @This() {
+        _ = tc;
+        return .{
+            .al = al,
+            .tvars = Set(ast.TVarOrNum, ast.TVarOrNum.comparator()).init(al),
+            .envs = Set(ast.EnvRef, ast.EnvRef.Comparator).init(al),
+            .assocs = Set(ast.Association.ID, std.hash_map.AutoContext(ast.Association.ID)).init(al),
+        };
+    }
+
+    pub fn toScheme(self: *const @This(), envs: *const FTVs.Envs, assocs: []ast.Association) !ast.Scheme {
+        var stvars = std.ArrayList(ast.TVarOrNum).init(self.al);
+        var stvarIt = self.tvars.iterator();
+        while (stvarIt.next()) |tv| {
+            try stvars.append(tv.*);
+        }
+
+        var stenvs = std.ArrayList(ast.EnvRef).init(self.al);
+        var stenvIt = self.envs.iterator();
+        while (stenvIt.next()) |env| {
+            if (envs.contains(env.*)) {
+                try stenvs.append(env.*);
+            }
+        }
+
+        var stassocs = std.ArrayList(ast.Association).init(self.al);
+        for (assocs) |ass| {
+            if (self.assocs.contains(ass.uid)) {
+                try stassocs.append(ass);
+            }
+        }
+
+        return ast.Scheme{
+            .tvars = stvars.items,
+            .envVars = stenvs.items,
+            .associations = stassocs.items,
+            .env = null,
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.tvars.deinit();
+        self.envs.deinit();
+    }
+};
+pub fn getTVarsFromEnv(self: *Self, binding: ?ast.Binding, store: *AllStore, env: *ast.Env) !void {
     for (env.insts.items) |inst| {
         // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
         // NOTE: but that's what I'm doing now??
+        // NOTE(18.04.26): what? why whould I do that. Im gonna change it to instantiated types, since it seems that's what's needed.
         switch (inst.v) {
             .TNum => {},
             .Var => try self.getTVars(binding, store, inst.t),
             .Fun => |fun| {
-                for (fun.params) |p| {
-                    try self.getTVars(binding, store, p.d.t);
-                }
+                _ = fun;
+                try self.getTVarsFromMatch(binding, store, inst.m);
+                // for (fun.params) |p| {
+                //     try self.getTVars(binding, store, p.d.t);
+                // }
 
-                try self.getTVars(binding, store, fun.ret);
+                // try self.getTVars(binding, store, fun.ret);
             },
 
             .ClassFun => |vv| {
-                const cfun = vv.cfun;
-                for (cfun.params) |p| {
-                    try self.getTVars(binding, store, p.t);
+                if (vv.ref.*) |ref| {
+                    switch (ref) {
+                        .Id => |id| {
+                            try store.assocs.insert(id);
+                        },
+                        .InstFun => unreachable,
+                    }
                 }
 
-                try self.getTVars(binding, store, cfun.ret);
+                // NOTE: should I do it??
+                try self.getTVars(binding, store, inst.t);
+                // const cfun = vv.cfun;
+                // for (cfun.params) |p| {
+                //     try self.getTVars(binding, store, p.t);
+                // }
+
+                // try self.getTVars(binding, store, cfun.ret);
             },
         }
     }
 }
 
-pub fn getTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref: ast.Type) !void {
+pub fn getTVarsFromTypeOrNum(self: *Self, binding: ?ast.Binding, store: *AllStore, mtOrNum: ast.TypeOrNum) error{OutOfMemory}!void {
+    switch (mtOrNum) {
+        .Type => |mt| try self.getTVars(binding, store, mt),
+        .Num => |tnumref| {
+            switch (self.getNum(tnumref)) {
+                .TNum => |tnum| {
+                    // only add nums NOT from the datatype
+                    if (binding == null or std.meta.eql(tnum.binding, binding.?)) {
+                        try store.tvars.insert(.{ .TNum = tnum });
+                    }
+                },
+                else => {},
+            }
+        },
+    }
+}
+
+pub fn getTVarsFromMatch(self: *Self, binding: ?ast.Binding, store: *AllStore, m: *const ast.Match) !void {
+    for (m.tvars) |tv| {
+        try self.getTVarsFromTypeOrNum(binding, store, tv);
+    }
+
+    for (m.envVars) |envref| {
+        const env = self.getEnv(envref);
+        if (env.env.*) |e| {
+            try self.getTVarsFromMatch(binding, store, e.match);
+        }
+    }
+
+    for (m.assocs) |massoc| {
+        if (massoc.*) |assoc| {
+            switch (assoc) {
+                .Id => |id| try store.assocs.insert(id),
+                .InstFun => |ifun| {
+                    try self.getTVarsFromMatch(binding, store, ifun.m);
+                },
+            }
+        }
+        // TODO
+    }
+}
+
+pub fn getTVars(self: *Self, binding: ?ast.Binding, store: *AllStore, tref: ast.Type) !void {
     const t = self.getType(tref);
     switch (t) {
         .Anon => |fields| {
@@ -1069,18 +1177,9 @@ pub fn getTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref: ast
             }
         },
         .Con => |con| {
-            for (con.application.tvars) |mtOrNum| {
-                switch (mtOrNum) {
-                    .Type => |mt| try self.getTVars(binding, store, mt),
-                    .Num => |num| {
-                        switch (self.getNum(num)) {
-                            .TNum => |tnum| if (std.meta.eql(tnum.binding, binding)) {
-                                try store.insert(.{ .TNum = tnum });
-                            },
-                            else => {},
-                        }
-                    },
-                }
+            try self.getTVarsFromMatch(binding, store, con.application);
+            for (con.outerApplication) |numOrTy| {
+                try self.getTVarsFromTypeOrNum(binding, store, numOrTy);
             }
         },
         .Fun => |fun| {
@@ -1088,11 +1187,18 @@ pub fn getTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref: ast
                 try self.getTVars(binding, store, arg);
             }
 
+            // TODO: should put this to a function?
+            const env = self.getEnv(fun.env);
+            if (env.env.*) |e| {
+                try self.getTVarsFromMatch(binding, store, e.match);
+            }
+            try store.envs.insert(env.base);
+
             try self.getTVars(binding, store, fun.ret);
         },
         .TVar => |tv| {
-            if (std.meta.eql(tv.binding, binding)) {
-                try store.insert(.{ .TVar = tv });
+            if (binding == null or std.meta.eql(tv.binding.?, binding.?)) {
+                try store.tvars.insert(.{ .TVar = tv });
             }
         },
     }
@@ -1111,18 +1217,7 @@ pub const FTVs = struct {
             return k.tyv.uid;
         }
     });
-    const Envs = Set(ast.EnvRef, struct {
-        pub fn eql(ctx: @This(), a: ast.EnvRef, b: ast.EnvRef) bool {
-            _ = ctx;
-            return a.id == b.id;
-        }
-
-        pub fn hash(ctx: @This(), k: ast.EnvRef) u64 {
-            _ = ctx;
-            // return @truncate(k.tyv);
-            return k.id;
-        }
-    });
+    const Envs = Set(ast.EnvRef, ast.EnvRef.Comparator);
     const Nums = Set(ast.NumRef, struct {
         pub fn eql(ctx: @This(), a: ast.NumRef, b: ast.NumRef) bool {
             _ = ctx;
@@ -1327,9 +1422,9 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
         try envs.append(nuEnv);
     }
 
-    var assocs = std.ArrayList(?ast.Match.AssocRef).init(self.arena);
+    var assocs = std.ArrayList(*?ast.Match.AssocRef).init(self.arena);
     for (mm.assocs) |moldAssoc| {
-        if (moldAssoc) |oldAssoc| {
+        if (moldAssoc.*) |oldAssoc| {
             switch (oldAssoc) {
                 .Id => |id| {
                     // if (@TypeOf(match) == *const ast.Match) {
@@ -1337,25 +1432,23 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
                     //     var c = ast.Ctx.init(&hadNewline, self);
                     //     c.print(.{ id, " :: ", match, "\n" });
                     // }
-                    if (match.tryGetFunctionByID(id)) |nuId| {
-                        try assocs.append(.{ .InstFun = nuId });
+                    if (match.tryGetFunctionOrIDByID(id)) |ref| {
+                        try assocs.append(ref);
                         changed = true;
                         continue;
                     } else {
-                        try assocs.append(.{ .Id = id });
+                        try assocs.append(moldAssoc);
                         continue;
                     }
                 },
                 .InstFun => |ifun| {
                     if (try self.mapMatch_(match, ifun.m)) |nuMatch| {
-                        try assocs.append(.{ .InstFun = .{
-                            .fun = ifun.fun,
-                            .m = nuMatch,
-                            .locality = ifun.locality,
-                        } });
+                        moldAssoc.*.?.InstFun.m = nuMatch;
+                        changed = true;
                     } else {
-                        try assocs.append(moldAssoc);
+                        //
                     }
+                    try assocs.append(moldAssoc);
                     continue;
                 },
             }
@@ -1365,6 +1458,10 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
         }
         try assocs.append(moldAssoc);
     }
+
+    std.debug.assert(tvars.items.len == mm.tvars.len);
+    std.debug.assert(envs.items.len == mm.envVars.len);
+    std.debug.assert(assocs.items.len == mm.assocs.len);
 
     if (!changed) {
         tvars.deinit();

@@ -11,7 +11,7 @@ const Gen = @import("UniqueGen.zig");
 const sizer = @import("sizer.zig");
 const TypeSize = sizer.TypeSize;
 
-pub const Debug = false;
+pub const Debug = true;
 
 pub const GenError = anyerror;
 pub fn Mono(Back: type) type {
@@ -344,7 +344,9 @@ pub fn Mono(Back: type) type {
                             },
                             .ClassFun => |cfun| {
                                 switch (cfun.ref.*.?) {
-                                    .Id => {}, // don't do anything, since it's a function from outside.
+                                    .Id => |uid| {
+                                        _ = uid;
+                                    }, //{}, // don't do anything, since it's a function from outside.
                                     .InstFun => |calledFun| {
                                         if (calledFun.fun.env.level > fun.env.level) {
                                             try self.expandFunction(calledFun.fun, calledFun.m);
@@ -363,9 +365,11 @@ pub fn Mono(Back: type) type {
                         gp.value_ptr.* = .{ .completes = ast.Function.EnvCompletes.initContext(self.al, .{ .typeContext = self.typeContext }), .uses = 0 };
                     }
 
-                    // var hadNewline = false;
-                    // var c = ast.Ctx.init(&hadNewline, self.typeContext);
-                    // c.print(.{ "fun ", fun.name, " :: ", um, "\n" });
+                    if (Debug) {
+                        var hadNewline = false;
+                        var c = ast.Ctx.init(&hadNewline, self.typeContext);
+                        c.print(.{ "fun ", fun.name, " :: ", um, "\n" });
+                    }
 
                     //
                     // vp might have changed. find it again!!
@@ -387,8 +391,8 @@ pub fn Mono(Back: type) type {
                             .ClassFun => |cfun| {
                                 switch (cfun.ref.*.?) {
                                     .Id => |id| {
-                                        if (um.getFunctionOrIDByID(id)) |r| {
-                                            switch (r) {
+                                        if (um.tryGetFunctionOrIDByID(id)) |r| {
+                                            switch (r.*.?) {
                                                 .InstFun => |ipair| {
                                                     const ifn = ipair.fun;
                                                     if (ifn.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
@@ -421,7 +425,7 @@ pub fn Mono(Back: type) type {
                     // (only needed for insts thooo)
                     for (um.assocs, 0..) |massoc, i| {
                         const afun = b: {
-                            if (massoc) |assoc| {
+                            if (massoc.*) |assoc| {
                                 switch (assoc) {
                                     .InstFun => |ifun| break :b ifun,
                                     .Id => continue,

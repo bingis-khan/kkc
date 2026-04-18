@@ -59,6 +59,17 @@ pub fn Set(comptime K: type, comptime Context: type) type {
             }
         }
 
+        pub fn intersection(self: *Self, other: *const Self) !Self {
+            var nu = Self.init(self.hash.allocator);
+            var it = self.iterator();
+            while (it.next()) |e| {
+                if (other.contains(e.*)) {
+                    try nu.insert(e.*);
+                }
+            }
+            return nu;
+        }
+
         pub fn deinit(self: *Self) void {
             self.hash.deinit();
         }

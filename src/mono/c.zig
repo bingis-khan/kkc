@@ -2652,18 +2652,9 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         .assocs = &.{},
                         .scheme = outerTVScheme,
                     };
-                    const outerTVMap = TypeMap{
-                        .prev = oldTyMap,
-                        .scheme = &outerTVScheme,
-                        .match = &outerTVMatch,
-                    };
+                    const outerTVMap = try TypeMap.initMap(&outerTVMatch, self.typeContext, self.tymap);
 
-                    var tymap = TypeMap{
-                        .prev = &outerTVMap,
-                        .scheme = &data.scheme,
-                        .match = tyApp.application,
-                    };
-                    self.tymap = &tymap;
+                    self.tymap = &try TypeMap.initMap(tyApp.application, self.typeContext, &outerTVMap);
                     defer self.tymap = oldTyMap;
 
                     // generate dat data definition.
@@ -3023,13 +3014,16 @@ pub const EnvApp = struct {
                     e.* = tymap.mapEnv(base).?;
                 }
 
-                const assocs = try al.alloc(?ast.Match.AssocRef, fun.scheme.associations.len);
-                for (fun.scheme.associations, assocs) |sa, *a| {
+                const assocsStuff = try al.alloc(?ast.Match.AssocRef, fun.scheme.associations.len);
+                const assocs = try al.alloc(*?ast.Match.AssocRef, fun.scheme.associations.len);
+                for (fun.scheme.associations, assocs, assocsStuff) |sa, *a, *as| {
                     if (sa.concrete) |_| {
-                        a.* = .{ .InstFun = tymap.tryGetFunctionByID(sa.uid).? };
+                        as.* = .{ .InstFun = tymap.tryGetFunctionByID(sa.uid).? };
                     } else {
-                        a.* = null;
+                        as.* = null;
                     }
+
+                    a.* = as;
                 }
 
                 const match = try common.allocOne(al, ast.Match{

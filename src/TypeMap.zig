@@ -67,16 +67,38 @@ pub const TypeMap = struct {
         // }
     }
 
-    pub fn tryGetFunctionByID(self: *const @This(), uid: ast.Association.ID) ?ast.Match.AssocRef.InstPair {
+    pub fn tryGetFunctionByID_(self: *const @This(), uid: ast.Association.ID) union(enum) { Fun: ast.Match.AssocRef.InstPair, Id: ast.Association.ID } {
         for (self.scheme.associations, self.match.assocs) |a, r| {
             if (a.uid == uid) {
-                return switch (r.?) {
-                    .Id => |refuid| return self.tryGetFunctionByID(refuid),
-                    .InstFun => |instfun| instfun,
+                return switch (r.*.?) {
+                    .Id => |refuid| return self.tryGetFunctionByID_(refuid),
+                    .InstFun => |instfun| .{ .Fun = instfun },
                 };
             }
         } else {
-            return (self.prev orelse return null).tryGetFunctionByID(uid);
+            return (self.prev orelse return .{ .Id = uid }).tryGetFunctionByID_(uid);
+        }
+    }
+    pub fn tryGetFunctionByID(self: *const @This(), uid: ast.Association.ID) ?ast.Match.AssocRef.InstPair {
+        return switch (self.tryGetFunctionByID_(uid)) {
+            .Fun => |ip| ip,
+            .Id => null,
+        };
+    }
+    pub fn tryGetFunctionOrIDByID(self: *const @This(), uid: ast.Association.ID) ?*?ast.Match.AssocRef {
+        for (self.scheme.associations, self.match.assocs) |a, r| {
+            if (a.uid == uid) {
+                if (r.*) |rr| {
+                    return switch (rr) {
+                        .Id => |refuid| return self.tryGetFunctionOrIDByID(refuid),
+                        .InstFun => r,
+                    };
+                } else {
+                    return r;
+                }
+            }
+        } else {
+            return (self.prev orelse return null).tryGetFunctionOrIDByID(uid);
         }
     }
 };

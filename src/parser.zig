@@ -4446,7 +4446,6 @@ fn solveAvailableConstraints(self: *Self) !void {
                 .Con => |con| {
                     if (if (assoc.instances.getPtr(assoc.class)) |dataInstances| dataInstances.get(con.type) else null) |inst| {
                         if (assoc.concrete) |conc| {
-                            // NOTE: modifying self.associations while iterating assocs.
                             const fun: *AST.Function = b: {
                                 for (inst.instFuns) |instFun| {
                                     if (instFun.classFunId == conc.classFun.uid) {
@@ -4852,9 +4851,11 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
         envVars[i] = try self.typeContext.newEnv(null);
     }
 
-    const assocs = try self.arena.alloc(?AST.Match.AssocRef, scheme.associations.len);
-    for (assocs) |*a| {
-        a.* = null; // default VALUE YO
+    const assocsStuff = try self.arena.alloc(?AST.Match.AssocRef, scheme.associations.len);
+    const assocs = try self.arena.alloc(*?AST.Match.AssocRef, scheme.associations.len);
+    for (0..assocs.len) |i| {
+        assocsStuff[i] = null;
+        assocs[i] = &assocsStuff[i];
     }
 
     tvarMatch.* = AST.Match{
@@ -4870,7 +4871,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
         const instances = minstances orelse try self.getInstances();
 
         // should prolly add assocs to "Match", but we don't need em yet.
-        for (scheme.associations, assocs) |assoc, *ref| {
+        for (scheme.associations, assocs) |assoc, ref| {
             try self.addAssociation(.{
                 .from = try self.typeContext.mapType(tvarMatch, try self.typeContext.newType(
                     .{ .TVar = assoc.depends },
@@ -5169,35 +5170,20 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         const ref = self.typeContext.getEnv(se).env;
         if (ref.*) |ftvenv| {
             if (env.level < ftvenv.env.level) {
-                // TODO: do it later after expanding assocs.
-                var paramenvftvs = TypeContext.FTVs.init(self.arena);
-                try self.typeContext.ftvsFromEnv(&paramenvftvs, ftvenv.env);
-
                 // get those tvars.
-                var tvarStore = TypeContext.TVarStore.init(self.arena);
+                var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
                 try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env);
+
                 // NOTE/TODO: we're gonna ignore tyvars here, because they already became tvars.
                 // should we do env intersection to?
-                paramenvftvs.difference(&envftvs);
-                // paramenvftvs.intersection(&funftvs);  // ????
 
                 // TODO: also, do we add assocs here??
 
                 // now we have scheme variables for this env here in paramenvftvs.
-                var stvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
-                var stvarIt = tvarStore.iterator();
-                while (stvarIt.next()) |tv| {
-                    try stvars.append(tv.*);
-                }
 
                 // ENV => TODO
 
-                const scheme = AST.Scheme{
-                    .tvars = stvars.items,
-                    .envVars = &.{},
-                    .associations = &.{},
-                    .env = null,
-                };
+                const scheme = try tvarStore.toScheme(&funftvs.envs, assocs.items);
 
                 const newMatch = try ftvenv.match.joinScheme(&scheme, self.typeContext, self.arena); // joins a scheme to match with uninstantiated stuff from that scheme in the match.
 

@@ -397,10 +397,10 @@ inst Division F64
 
 
 inst ListLike Array
-	from-listlike (self): self
+	from-listlike (self Array n a): self
 
 inst ListLike SmolArray
-	from-listlike (arr): SmolArray { arr }
+	from-listlike (arr Array n a): SmolArray { arr }
 
 
 

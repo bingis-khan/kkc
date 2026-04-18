@@ -364,6 +364,10 @@ pub const EnvFun = struct {
         return null;
     }
 };
+pub const FunctionOrElse = union(enum) {
+    Fun: *const Function,
+    Lam: struct { args: []Type, ret: Type },
+};
 pub const Env = struct {
     id: Unique,
     insts: std.ArrayList(EnvVar),
@@ -1283,6 +1287,19 @@ pub const TyRef = struct {
 pub const EnvRef = struct {
     id: usize,
 
+    pub const Comparator = struct {
+        // tc: *const TypeContext,
+        pub fn eql(self: @This(), le: EnvRef, re: EnvRef) bool {
+            _ = self;
+            return le.id == re.id;
+        }
+
+        pub fn hash(ctx: @This(), k: EnvRef) u64 {
+            _ = ctx;
+            return k.id;
+        }
+    };
+
     pub fn print(eid: @This(), c: Ctx) void {
         const eb = c.typeContext.getEnv(eid);
         // c.print(.{ "(", eb.env.id, ")" });
@@ -1510,7 +1527,7 @@ pub fn TypeF(comptime a: ?type) type {
 
                 .Fun => |fun| {
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    // fun.env.print(c); // TEMP
+                    fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                 },
@@ -1696,6 +1713,24 @@ pub const Scheme = struct {
         };
     }
 
+    pub fn joinScheme(self: *const @This(), scheme: *const Scheme, al: std.mem.Allocator) !@This() {
+        return Scheme{
+            .tvars = try std.mem.concat(al, TVarOrNum, &.{
+                self.tvars,
+                scheme.tvars,
+            }),
+            .envVars = try std.mem.concat(al, EnvRef, &.{
+                self.envVars,
+                scheme.envVars,
+            }),
+            .associations = try std.mem.concat(al, Association, &.{
+                self.associations,
+                scheme.associations,
+            }),
+            .env = if (scheme.env) |env| env else scheme.env,
+        };
+    }
+
     pub const Empty = empty();
 
     pub fn print(self: @This(), c: Ctx) void {
@@ -1794,6 +1829,7 @@ pub const Association = struct {
 
     fn print(self: @This(), c: Ctx) void {
         if (self.concrete) |conc| {
+            c.print(.{ "(", self.uid, ")" });
             c.s("(");
             self.depends.print(c);
             c.s(" => ");
@@ -1801,7 +1837,7 @@ pub const Association = struct {
             c.print(.{ " :$", conc.classFun });
             c.s(")");
         } else {
-            c.print(.{ self.depends, ": ", self.class });
+            c.print(.{ "(", self.uid, ")", self.depends, ": ", self.class });
         }
     }
 };
@@ -1809,8 +1845,9 @@ pub const Match = struct {
     scheme: Scheme,
     tvars: []TypeOrNum,
     envVars: []EnvRef,
-    assocs: []?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined".
+    assocs: []*?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined".
     // ALSO, a null is here when an assoc is not concrete!
+    // additional thing: currently it's a pointer, but maybe it should be an index like TypeOrNum and EnvRef.
 
     pub const AssocRef = union(enum) {
         InstFun: InstPair, // some top level association.
@@ -1856,21 +1893,26 @@ pub const Match = struct {
             try envVars.append(ev);
         }
 
-        var assocs = std.ArrayList(?AssocRef).init(al);
-        try assocs.appendSlice(self.assocs);
-        for (scheme.associations) |assoc| {
+        var assocsStuff = try al.alloc(?AssocRef, scheme.associations.len);
+        var assocs = try al.alloc(*?AssocRef, scheme.associations.len + self.assocs.len);
+        for (scheme.associations, 0..) |assoc, i| {
             if (assoc.concrete != null) {
-                try assocs.append(.{ .Id = assoc.uid });
+                assocsStuff[i] = .{ .Id = assoc.uid };
             } else {
-                try assocs.append(null);
+                assocsStuff[i] = null;
             }
+            assocs[i] = &assocsStuff[i];
+        }
+
+        for (self.assocs, scheme.associations.len..) |a, i| {
+            assocs[i] = a;
         }
 
         return try common.allocOne(al, @This(){
             .scheme = s,
             .tvars = tvars.items,
             .envVars = envVars.items,
-            .assocs = assocs.items,
+            .assocs = assocs,
         });
     }
 
@@ -1897,7 +1939,7 @@ pub const Match = struct {
                 if (i >= 1) {
                     c.print(" ");
                 }
-                if (maref) |aref| {
+                if (maref.*) |aref| {
                     switch (aref) {
                         .InstFun => |ifn| {
                             c.print(.{ "[", ifn.fun.name, " ", ifn.m, "]" });
@@ -1983,10 +2025,10 @@ pub const Match = struct {
         }
     }
 
-    pub fn getFunctionOrIDByID(self: *const @This(), uid: Association.ID) ?Match.AssocRef {
+    pub fn tryGetFunctionOrIDByID(self: *const @This(), uid: Association.ID) ?*?Match.AssocRef {
         for (self.scheme.associations, self.assocs) |a, r| {
             if (a.uid == uid) {
-                return r.?;
+                return r;
             }
         } else {
             return null;
@@ -2011,6 +2053,9 @@ pub const Match = struct {
         typeContext: *const TypeContext,
 
         pub fn eql(ctx: @This(), a: *const Match, b: *const Match) bool {
+            // TODO: this condition may hide bugs and I'm not sure if it should even be triggered in a well formed program.
+            if (a.tvars.len != b.tvars.len) return false;
+
             for (a.tvars, b.tvars) |ltv, rtv| {
                 switch (ltv) {
                     .Type => |lt| if (!lt.tyEq(rtv.Type, ctx.typeContext)) return false,
@@ -2024,8 +2069,8 @@ pub const Match = struct {
             }
 
             for (a.assocs, b.assocs) |mla, mra| {
-                if (mla) |la| {
-                    const ra = mra.?;
+                if (mla.*) |la| {
+                    const ra = mra.*.?;
                     switch (la) {
                         .InstFun => |lifn| {
                             const rifn = ra.InstFun;
@@ -2035,7 +2080,7 @@ pub const Match = struct {
                         .Id => unreachable,
                     }
                 } else {
-                    std.debug.assert(mra == null);
+                    std.debug.assert(mra.* == null);
                 }
             }
 

@@ -103,6 +103,13 @@ pub const Error = union(enum) {
         actual: usize,
     },
 
+    MismatchingTNum: struct {
+        l: i64,
+        lloc: Loc,
+        r: i64,
+        rloc: ?Loc,
+    },
+
     TuplesNotYetSupported: struct {},
 
     CannotDirectlyMutateVarFromEnv: struct {},
@@ -312,6 +319,14 @@ pub const Error = union(enum) {
                 // p("Mismatching lengths: {} =/= {}", .{ e.lpl, e.rpl });
             },
             .MismatchingKind => |e| p("Mismatching kind for {s}: expect {}, but got {}", .{ e.data.name, e.expect, e.actual }),
+            .MismatchingTNum => |e| {
+                if (e.rloc) |rloc| {
+                    err.atLocation(e.lloc, .{ .label = .{ "mismatching tnum literals. expected ", e.l } });
+                    err.atLocation(rloc, .{ .label = .{ "but got ", e.r } });
+                } else {
+                    err.atLocation(e.lloc, .{ .label = .{ "mismatching tnum literals. expected ", e.l, ", but got ", e.r } });
+                }
+            },
             .TuplesNotYetSupported => p("Tuples not yet supported!", .{}),
 
             .CannotDirectlyMutateVarFromEnv => p("cannot directly mutate a var from outer scope", .{}),
