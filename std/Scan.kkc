@@ -44,6 +44,13 @@ fn scan-int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s, Str s
 
 	sc drop'(digit-chars count())
 	return digit-chars parse-int()
+fn int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s, Str s: scan-int(sc)  # another name!
 
-fn try-scan-char (sc Ptr (Scanner s), options) -> Bool <= Iter s, IntoIter s
-	return todo()
+fn char(sc Ptr (Scanner s)) -> Maybe Char <= Iter s, IntoIter s: next(&sc&.s)
+
+fn try-char (sc Ptr (Scanner s), char Char) -> Bool <= Iter s, IntoIter s
+	if sc&.s Iter.head() == Just(char)
+		sc drop'(1)
+		return True
+
+	return False

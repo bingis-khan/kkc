@@ -1,12 +1,16 @@
-#$ instantiate and return an inner function, which depends on other functions, which depend on the outer function's polymorphic tvar.
-# 1
-fn a(x)
-	fn b1()
-		println(x)
-	fn b2()
-		b1()
-	fn b()
-		b2()
-	return b
+x = (fn(xx))
+	if True
+		y = 420
+		y = (fn(xxx))
+			println('cock')
 
-a(1)()
+		y(111)
+		y = 420
+		y = 420
+		y = 420
+		println(123)
+	y = 1
+	pass
+	pass
+	pass
+x(123)

@@ -40,7 +40,11 @@ use Iter
 	sum
 	product
 	flatten
+
+	permutations
 	cartesian
+
+	combinations
 	unordered-pairs
 
 	drop'
@@ -52,12 +56,19 @@ use Iter
 	nil
 
 # use Iter2
-# 	head
+# 	maximum
 
 use Array
 
 use Mem
 	undefined
+	u32-i32
+	size-u32
+	i32-u32
+	i32-size
+	i64-i32
+	u32-i64
+	size-i32
 
 use Error  # imports instances of failable.
 	or-else
@@ -99,3 +110,6 @@ use Misc
 	and-maybe
 	fmap-maybe
 	is-just
+use Math
+	maximum
+	minimum

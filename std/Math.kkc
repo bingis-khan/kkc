@@ -28,11 +28,21 @@ fn min(l, r)
 	else
 		return r
 
+fn minimum(it): it Iter.reduce(None, fn(x, last-min): Misc.maybe(last-min, fn(lm): Just(min(lm,x)), Just(x)))
+
+
 fn max(l, r)
 	if l > r
 		return l
 	else
 		return r
+
+fn maximum(it): it Iter.reduce(None, fn(x, last-max): Misc.maybe(last-max, fn(lm): Just(max(lm,x)), Just(x)))
+
+
+fn abs(x):
+	if x >= 0: x
+	else -x
 
 fn between(c, l, r)
 	from = min(l, r)

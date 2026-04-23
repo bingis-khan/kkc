@@ -500,8 +500,11 @@ fn finishBodyAndInferReturnType(self: *Self, fnBody: *std.ArrayList(*AST.Stmt), 
     }
 }
 
+// Should body() set .mode?
 fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: ReturnStatus } {
     std.debug.assert(self.returned != .Returned);
+
+    self.mode = .{ .Simple = .Normal };
     const oldReturned = self.returned;
     defer self.returned = oldReturned;
 
@@ -2799,15 +2802,17 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
     };
     lamMode.this.Lambda.lamExpr.e.Lam.env = lamenv;
 
-    self.mode = .{ .Simple = switch (lamMode.prev) {
-        .Normal => .Normal,
-        .CountIndent => |i| .{
-            .CountIndent = .{
-                .indent = i.indent,
-                .hadMultiline = true,
+    self.mode = .{
+        .Simple = switch (lamMode.prev) {
+            .Normal => .Normal,
+            .CountIndent => |i| .{
+                .CountIndent = .{
+                    .indent = i.indent,
+                    .hadMultiline = true,
+                },
             },
         },
-    } };
+    };
 }
 
 // NOTE: this is seriously unfinished!

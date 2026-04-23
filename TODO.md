@@ -15,6 +15,14 @@
 - [ ] reevaluate type defaulting (currently, the first encountered class default gets defaulted, which makes the process effectively stochastic)
 - [ ] review the architecture of the type checker. (connected with "numbers in type parameters")
 - [ ] apostrophe in string interpolation breaks it (actually tokenize string interpolation? allow actual expressions? or just track parens?)
+- [ ] I want this to work:
+		```
+		fn sort'(slice Slice a, funcmp (a, a) -> Ordering)
+		    inst Ord a
+		        cmp (l, r): funcmp(l, r)
+		    Slice.sort(slice)
+		```
+
 
 
 # Finished

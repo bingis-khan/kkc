@@ -251,9 +251,11 @@ fn flatten (it)
 			return FlattenIter { super: it, inner: @undefined, empty: True }
 
 
-fn cartesian (lit, rit): lit
+# all permutations!
+fn permutations (lit, rit): lit
 	map(fn x: rit map(fn y: (x, y)))
 	flatten()
+fn cartesian (lit, rit): permutations(lit, rit)  # previous name
 
 
 # comically inefficient
@@ -313,10 +315,12 @@ fn drop-while (it, pred):
 fn break' (it, pred):
 	Tuple2(it take-while(pred), it drop-while(pred))
 
-fn unordered-pairs(it): it
+fn combinations(it): it
 	zip(from(1))
 	map(fn Tuple2(e, d): it drop(Mem.i32-size(d)) map(fn e': Tuple2(e, e'))) # TODO(safe-conversion)
 	flatten()
+
+fn unordered-pairs(it): combinations(it) # previous name.
 
 ### append
 
