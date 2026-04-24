@@ -1,0 +1,40 @@
+
+fn u32-or(l U32, r U32): @u32-bit-or(l, r)
+fn u32-ors(vals): vals Iter.reduce(0, u32-or)
+fn u32-and(l U32, r U32): @u32-bit-and(l, r)
+fn u32-neg(l U32): @u32-bit-neg(l)
+fn u32-xor(l U32, r U32): @u32-bit-and(@u32-bit-or(l, r), @u32-bit-neg(@u32-bit-and(l, r)))
+
+fn set-bit(x U32, i I32):
+	x u32-or((2 Math.pow(i)) Mem.i32-u32())
+
+
+BitIter
+	x U32
+	size Maybe I32
+
+inst IntoIter BitIter
+	into-iter (it _): it
+
+inst Iter BitIter
+	next (it Ptr _) -> Maybe Bool
+		case it&.size
+			None
+				if it&.x == 0
+					return None
+
+				xb = it&.x u32-and(1)
+				it <&.x= it&.x Math.rshift(1)
+				return Just(xb /= 0)
+
+			Just(max)
+				if max <= 0
+					return None
+
+				xb = it&.x u32-and(1)
+				it <&.x= it&.x Math.rshift(1)
+				it <&.size= Just(max - 1)
+				return Just(xb /= 0)
+
+fn bits(x U32) -> BitIter: BitIter { x, size: None }
+fn bits'(x U32, expected-size Maybe I32) -> BitIter: BitIter { x, size: expected-size }

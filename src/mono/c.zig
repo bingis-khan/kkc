@@ -1474,7 +1474,16 @@ const Stmt = struct {
                         try stmt.j(.{"!"});
                         try stmt.genExpr(unop.e);
                     },
-                    .Update => unreachable,
+                    .Update => |upd| {
+                        const t = try stmt.tempExpr(unop.e);
+                        for (upd) |u| {
+                            var l = startLine(stmt.ctx);
+                            try l.p(.{ t, ".", try genField(l.ctx, u.field, u.value.t), "=" });
+                            try l.genExpr(u.value);
+                            try l.finishStmt();
+                        }
+                        try stmt.j(.{t});
+                    },
                     .Negate => |ifun| {
                         try stmt.instFun(ifun);
                         try stmt.p(.{"("});
@@ -1696,8 +1705,6 @@ const Stmt = struct {
                 try stmt.p("}");
             },
             .Float => |fl| try stmt.p(fl),
-
-            else => unreachable,
         }
         try stmt.p(")");
     }

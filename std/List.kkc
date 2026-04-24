@@ -184,7 +184,7 @@ fn add-all(list, it)
 
 # for now, don't shrink, since I'm using it in kd
 fn trim(l Ptr (List al a), new-count)
-	l <&.count= new-count
+	l <&.count= Math.min(new-count, l&.count)
 
 fn to-list(it, al)
 	l =& mk(al)

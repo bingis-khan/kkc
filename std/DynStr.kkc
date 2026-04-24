@@ -34,5 +34,15 @@ fn from-const-str (s ConstStr)
 	len = Str.const-str-len(s)
 	return DynStr { contents: Slice { ptr: s Mem.cast(), count: len } }
 
+# special clone, where DynStr is compatible with C-style ConstStr
+fn clone-0(s DynStr, al Allocator) -> DynStr
+	cnt = s.contents.count
+	nus = al Alloc.allocate(cnt + 1)
+	s.contents Slice.copy-to(nus)
+	nus Slice.set(cnt, '\0')
+	return DynStr { contents: Slice { ptr: nus.ptr, count: cnt } }
+
+fn clone(s DynStr, al Allocator): clone-0(s, al)
+
 fn free (s DynStr, al Allocator)
 	al Alloc.free({ ptr: s.contents.ptr, count: 0 })

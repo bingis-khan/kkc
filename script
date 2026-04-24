@@ -1,5 +1,13 @@
 
-fn sort'(slice Slice a, funcmp (a, a) -> Ordering)
-    inst Ord a
-        cmp (l, r): funcmp(l, r)
-    Slice.sort(slice)
+# fn sort'(slice Slice a, funcmp (a, a) -> Ordering)
+#     inst Ord a
+#         cmp (l, r): funcmp(l, r)
+#     Slice.sort(slice)
+
+# x = { a: 1 }
+# y = x { a: 2 }
+# println(y.a)
+println(Term.is-terminal())
+# beep = 7 Mem.cast() as Char
+# println(beep)
+# Term.beep()

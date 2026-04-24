@@ -226,6 +226,26 @@ inst ListDecon Slice
 				return True
 
 
+SliceReversedIter a
+	slice Slice a
+	current-offset Idx
+
+fn reversed(slice Slice a):
+	SliceReversedIter { slice, current-offset: slice.count }
+	
+inst IntoIter SliceReversedIter
+	into-iter (self): self
+
+inst Iter SliceReversedIter
+	next (self Ptr (SliceReversedIter a)) -> Maybe a
+		off = self&.current-offset
+		if off == 0
+			return None
+
+		self <&.current-offset= off - 1
+		return Just(self&.slice[self&.current-offset])
+
+
 fn map (s Slice a, fun a -> a)
 	0 to ((s.count - 1) size-i32()) for-each(fn i: s set(i i32-size(), fun(s[i i32-size()])))
 

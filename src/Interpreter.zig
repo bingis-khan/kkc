@@ -720,9 +720,6 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 },
             }
         },
-        .Char => |c| {
-            return self.val(.{ .char = c }, 1);
-        },
         .Int => |x| {
             const int = try self.intValue(x.int);
             const instFun = try self.getAndUnboxInstFunRef(x.ref);
@@ -1383,7 +1380,7 @@ fn function_(self: *Self, funAndEnv: *RawValue.Fun, comptime Arg: type, args: []
         }
     }
 
-    for (fun.scheme.tvars, match.tvars) |tvOrNum, mtvOrNum| {
+    for (match.scheme.tvars, match.tvars) |tvOrNum, mtvOrNum| {
         switch (tvOrNum) {
             .TVar => {},
             .TNum => |tnum| {
@@ -1671,6 +1668,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
                 // bruh. maybe I should just put void in prelude?
                 if (common.streq(ann.params[0], "void")) {
                     return ffi.types.void;
+                }
+
+                if (common.streq(ann.params[0], "void*")) {
+                    return ffi.types.pointer;
                 }
             }
 

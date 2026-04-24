@@ -60,6 +60,9 @@ inst Str Char
 	chars (self _):
 		Iter.single(self)
 
+inst Indexable ConstStr
+	elem-get (self _, sz Size) -> Char
+		return Mem.offset-ptr(self Mem.cast() as Ptr Char, sz Mem.size-i64())&
 
 
 ####### Int #######

@@ -1,6 +1,4 @@
-#!/bin/env kkc
 # A "shell" module. I want to test how an interface for such a module would look like.
-
 use CnileInst
 use Slice
 	Slice
@@ -20,7 +18,14 @@ use List
 	to-list
 use StrBuilder
 use Alloc
+	Allocator
 	free
+use Str
+	Str
+use Misc
+	with
+use DynStr
+	DynStr
 
 
 fn older-than (l, r)
@@ -80,4 +85,104 @@ fn rm (s)
 	if Cnile.remove(s) /= 0
 		panic('remove() failed')
 
+fn cat(path Str, al Allocator) -> DynStr: path
+	StrBuilder.mk-const-str(al)
+	with(fn(path): path StrBuilder.free-const-str(al), fn(path): path File.read-contents(al))
 
+fn ls (path Str, al Allocator) -> Slice ConstStr
+	path = path StrBuilder.mk-const-str(al)
+	dir = Cnile.opendir(path)
+	if Mem.is-ptr-null(dir)
+		panic('ls: could not open directory')
+
+	dirs =& List.mk(al)
+	while True
+		entry = Cnile.readdir(dir) Cnile.castptr-ptr()
+		if Mem.is-ptr-null(entry)
+			break
+
+		name = @cast(&entry&.d-name) as ConstStr
+		if Cnile.strcmp(name, '.') /= 0 and Cnile.strcmp(name, '..') /= 0
+			dirs List.add(name)
+
+	Cnile.closedir(dir)
+	path StrBuilder.free-const-str(al)
+	return dirs& List.to-slice()
+
+# NOTE: Allocates the ConstStr!
+# Dirent shit
+FileType
+	File
+	Dir
+
+inst Eq FileType
+	eq (l, r)
+		case (l, r)
+			(File, File)
+				return True
+			(Dir, Dir)
+				return True
+			_
+				return False
+
+
+# currently ignore symlinks!! :)
+fn d-type-to-type (x U8)
+	if x == 8
+		return Just(File)
+	elif x == 4
+		return Just(Dir)
+	else
+		return None
+
+fn ls-Ra-opt (path Str, fun (ConstStr, Maybe FileType, Bool) -> { should-dealloc Bool, skip Bool }, al Allocator)
+	fn ls-R-into (path ConstStr)
+		dir = Cnile.opendir(path)
+		if Mem.is-ptr-null(dir)
+			panic('ls-R: could not open directory "\(path)"')
+
+		while True
+			entry = Cnile.readdir(dir) Cnile.castptr-ptr()
+			if Mem.is-ptr-null(entry)
+				break
+
+			name = @cast(&entry&.d-name) as ConstStr
+			if Cnile.strcmp(name, '.') /= 0 and Cnile.strcmp(name, '..') /= 0
+				filetype = d-type-to-type(entry&.d-type)
+				child = '\(path)/\(name)' StrBuilder.mk-const-str(al)
+				hidden = name[0] == '.'
+				res = fun(child, filetype, hidden)
+
+				if not res.skip and filetype == Just(Dir)
+					ls-R-into(child)
+
+				if res.should-dealloc
+					child StrBuilder.free-const-str(al)
+
+		Cnile.closedir(dir)
+
+	path-cs = path StrBuilder.mk-const-str(al)
+	ls-R-into(path-cs)
+	path-cs StrBuilder.free-const-str(al)
+
+# fn ls-Ra (path Str, al Allocator)
+# 	dirs =& List.mk(al)
+# 	path ls-Ra-opt(fn(child, filetype, hidden), al)
+# 		dirs List.add(child)
+# 		return { should-dealloc: False, skip: False }
+# 	return dirs& List.to-slice()
+
+# OKAY, the names are funny. I should later put all this stuff in its own, more normal module and just make custom names for Sh.
+# -p flag filters only files
+fn ls-R (path Str, al Allocator)
+	dirs =& List.mk(al)
+	path ls-Ra-opt(fn(child, filetype, hidden), al)
+		if hidden
+			return { should-dealloc: True, skip: True }
+
+		if filetype == Just(Dir)
+			return { should-dealloc: True, skip: False }
+
+		dirs List.add(child)
+		return { should-dealloc: False, skip: False }
+	return dirs& List.to-slice()

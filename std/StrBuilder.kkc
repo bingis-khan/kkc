@@ -42,6 +42,9 @@ fn count(sb Ptr (StrBuilder alloc)): sb&.chars.count
 fn mk (al alloc) -> StrBuilder alloc <= Allocator alloc
 	return StrBuilder { chars: List.mk(al) }
 
+fn free(sb Ptr (StrBuilder Allocator))
+	List.free(&sb&.chars)
+
 # DOES NOT REALLOCATE!
 fn as-str (builder Ptr (StrBuilder alloc)):
 	DynStr { contents: builder&.chars.elements subslice(0, builder&.chars.count) }

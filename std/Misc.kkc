@@ -26,3 +26,12 @@ fn maybe (x Maybe a, fun a -> b, default b) -> b:
 	(case x)
 		Just(y): fun(y)
 		_: default
+
+# I should add a Deallocatable/Freeable class to this and then I don't need to provide a deallocatable function!
+fn with (res a, free-fun a -> Unit, fun a -> b) -> b
+	ret = fun(res)
+	free-fun(res)
+	return ret
+
+fn flip(fun (a, b) -> c) -> (b, a) -> c:
+	fn(l, r): fun(r, l)

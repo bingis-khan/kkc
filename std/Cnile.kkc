@@ -43,6 +43,11 @@ Pollfd
 CPollfd
 
 
+#[ctype 'void*']
+CastPtr a
+	this-field-is-only-for-sizing-cast-the-whole-thing Ptr Void
+
+fn castptr-ptr(cptr CastPtr a) -> Ptr a: @cast(cptr)
 
 # NOTE: I'm thinking, since records are already C layout compatible,
 # my default would be to NOT set custom field names, cause it's annoying.
@@ -84,6 +89,16 @@ Stat
 
 #[ctype 'char* const*']
 ExecVpArgv
+
+#[ctype 'DIR']
+DIR
+
+Dirent
+	d-ino U64
+	d-off I64
+	d-reclen U16
+	d-type U8
+	d-name Array 256 Char
 
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
@@ -161,6 +176,10 @@ external
 	#[cstdinclude 'unistd.h']
 	chdir (path ConstStr) -> CInt
 
+	#[cstdinclude 'unistd.h']
+	isatty (fileno CInt) -> CInt
+
+
 	#### ????
 	#[cstdinclude 'unistd.h']
 	fork () -> CInt  # pid_t
@@ -186,7 +205,17 @@ external
 	#[cstdinclude 'unistd.h']
 	read (fd CInt, buf Ptr Void, count Size) -> CInt
 
-	
+	#### dirent.h ####
+	#[cstdinclude 'dirent.h']
+	opendir (path ConstStr) -> Ptr DIR  # nullable!
+
+	#[cstdinclude 'dirent.h']
+	readdir (dir Ptr DIR) -> CastPtr Dirent  # nullable!
+
+	#[cstdinclude 'dirent.h']
+	closedir (dir Ptr DIR) -> CInt
+
+
 
 #[dylib 'libm.so.6']
 #[cstdinclude 'math.h']

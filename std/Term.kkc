@@ -18,6 +18,14 @@ fn println (s)
 	print-str('\(s)\n')
 
 
+## term stuff
+
+fn is-terminal(): Cnile.isatty(Cnile.stdout-fileno()) > 0
+fn beep()
+	c = 7 Mem.cast() as Char
+	print(c)
+
+
 ## color term stuff.
 ## SHOULD THIS BE IN THE SAME FILE???
 

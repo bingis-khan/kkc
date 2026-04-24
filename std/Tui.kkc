@@ -1,7 +1,7 @@
 use Cnile
 	Timespec
 use Array  # SmolArray Iter instance
-use Math
+use Bits
 	u32-and
 	u32-ors
 	u32-or

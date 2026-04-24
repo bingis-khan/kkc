@@ -54,3 +54,28 @@ actually, parsing functions vs variables has gotten a bit complicated. For now, 
 ```
 
 is this good?
+
+---
+
+NEW SYNTAX JUST DROPPED
+(singleline multiline)
+
+```
+# kewl
+with ('miau.txt' File.read-contents(al), fn file: file DynStr.free(), fn(file)):
+  lines()
+  free()
+
+# or
+'miau.txt'
+  File.read-contents(al)
+  with(DynStr.free, fn(line)): line
+    lines()
+    count()
+  println()  # clearly outside of `with()`
+
+# normal
+with ('miau.txt' File.read-contents(al), fn file: file DynStr.free(), fn(file): file lines() count())
+```
+
+it allows me to "continue" the iterator construction outside of the parenthesis and later have a possibility of continuing

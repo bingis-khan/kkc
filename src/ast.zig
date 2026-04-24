@@ -878,7 +878,6 @@ pub const Expr = struct {
             cases: []ExprCase,
         },
         Str: Str,
-        Char: u8, // later RUNE!
         NamedRecord: struct {
             data: *Data,
             fields: []Field,
@@ -1016,7 +1015,6 @@ pub const Expr = struct {
             },
             .Int => |i| c.sp("{}", .{i.int}),
             .Float => |f| c.sp("{}", .{f}),
-            .Char => |ch| c.sp("c'{}'", .{ch}),
             .Str => |s| {
                 std.debug.lockStdErr();
                 defer std.debug.unlockStdErr();

@@ -5,6 +5,8 @@ use Mem
 use Cnile
 use Slice
 	Slice
+use Iter
+	zip
 
 
 class Allocator
@@ -30,3 +32,20 @@ inst Allocator CAllocator
 
 	free (CAllocator, slice Slice a) -> Unit
 		Cnile.free(slice.ptr cast-ptr())
+
+
+fn default(al Allocator, count Size, x a) -> Slice a
+	s = al allocate(count)
+	s Slice.map(fn _: x)
+	return s
+
+fn clone(s Slice a, al Allocator) -> Slice a
+	nus = al allocate(s.count)
+	for (sx, og) in nus Slice.addresses() zip(s)
+		sx <&= og
+	return nus
+
+fn deep-free (al Allocator, s Slice a, free-fun (Allocator, a) -> ())
+	s Iter.for-each(fn ss: free-fun(al, ss))
+	al free(s)
+
