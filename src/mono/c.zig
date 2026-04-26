@@ -41,6 +41,8 @@ aux: struct { // RETARDED
     f64cmp: bool = false,
 
     sighandler: bool = false,
+
+    listDecons: ListDeconsGenerated,
 },
 
 const FunctionsGenerated = std.HashMap(EnvApp, ?FunGen, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
@@ -67,6 +69,7 @@ const AnonsGenerated = std.HashMap([]Field, Unique, struct {
         return 0; // TESTIN EQUALITY
     }
 }, std.hash_map.default_max_load_percentage);
+const ListDeconsGenerated = std.HashMap(ast.TypeApplication, Unique, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
 pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
     var c = @This(){
         .cur = CW.init(al),
@@ -80,7 +83,9 @@ pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
         .anonsGenerated = AnonsGenerated.initContext(al, .{ .typeContext = tc }),
         .parts = std.ArrayList(CW).init(al),
         .tempgen = UniqueGen.init(),
-        .aux = .{},
+        .aux = .{
+            .listDecons = ListDeconsGenerated.initContext(al, .{ .typeContext = tc }),
+        },
     };
 
     c.cur.currentIndent += 1;
@@ -111,7 +116,7 @@ pub fn genFunction(self: *Self, fun: *ast.Function) GenError!void { // TODO: par
     _ = try genFunctionForRealForReal(self, fun);
 }
 
-pub fn genFunctionForRealForReal(self: *Self, fun: *ast.Function) !FunGen {
+pub fn genFunctionForRealForReal(self: *Self, fun: *ast.Function) GenError!FunGen {
     return try genFunctionForReal(self, fun.name.name, fun.params, fun.ret, fun.env, fun, .{ .Body = fun.body });
 }
 
@@ -531,8 +536,6 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
                         }
                     }
                     try endBodyAndFinish(self);
-
-                    unreachable;
                 },
                 .EnumLike => {
                     var l = startLine(self);
@@ -602,36 +605,7 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
                 },
 
                 .ADT, .RecordLike => {
-                    var ifc = startLine(self);
-                    try ifc.p(.{ "if", "(" });
-                    const firstCase = &sw.cases[0];
-                    const hadFirstCondition = try ifc.deconCondition(firstCase.decon, cond);
-                    try ifc.p(.{")"});
-                    try ifc.beginBody();
-                    {
-                        try deconAssignments(self, firstCase.decon, cond);
-                        try self.monoScope(firstCase.body);
-                    }
-                    try endBodyAndFinish(self);
-
-                    // this means the check will always succeed, so no need to compile other cases.
-                    if (hadFirstCondition) {
-                        for (sw.cases[1..]) |*case| {
-                            var eifc = startLine(self);
-                            try eifc.p(.{ "else", "if", "(" });
-                            const hadCondition = try eifc.deconCondition(case.decon, cond);
-                            try eifc.p(.{")"});
-                            try eifc.beginBody();
-                            {
-                                try deconAssignments(self, case.decon, cond);
-                                try self.monoScope(case.body);
-                            }
-                            try endBodyAndFinish(self);
-
-                            // means that this check will always succeed, so we can skip other bodies.
-                            if (!hadCondition) break;
-                        }
-                    }
+                    try switchCase(self, cond, sw.cases[0], sw.cases[1..]);
                 },
             }
         },
@@ -727,6 +701,34 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
             try endBodyAndFinish(self);
         },
     }
+}
+
+fn switchCase(self: *Self, cond: ast.Var, firstCase: ast.Case, remaining: []ast.Case) !void {
+    var ifc = startLine(self);
+    try ifc.p(.{ "if", "(" });
+    const hadFirstCondition = try ifc.deconCondition(firstCase.decon, cond);
+    try ifc.p(.{")"});
+    try ifc.beginBody();
+    {
+        try deconAssignments(self, firstCase.decon, cond);
+        try self.monoScope(firstCase.body);
+    }
+    try endBodyAndFinish(self);
+
+    if (!hadFirstCondition) {
+        // this means the check will always succeed, so no need to compile other cases.
+        return;
+    }
+
+    if (remaining.len == 0) return;
+
+    var eifc = startLine(self);
+    try eifc.p(.{"else"});
+    try eifc.beginBody();
+    {
+        try switchCase(self, cond, remaining[0], remaining[1..]);
+    }
+    try endBodyAndFinish(self);
 }
 
 // FOR NOW DEACTIVATE. When we add list deconstructions, we'll have to do tha thing.
@@ -841,7 +843,13 @@ fn deconPathTyEnd(dt: anytype, self: ast.Decon.PathF(dt).Type, stmt: *Stmt) !voi
 
 fn writeDeconPath(dt: anytype, self: *const ast.Decon.PathF(dt), stmt: *Stmt) anyerror!void {
     switch (self.*) {
-        .Tip => |t| try stmt.j(.{t.v}),
+        .Tip => |t| {
+            if (t.idx) |idx| {
+                try stmt.j(.{ t.v, "[", idx, "]" });
+            } else {
+                try stmt.j(.{t.v});
+            }
+        },
         .Concat => |concat| {
             try deconPathTyBegin(dt, concat.path, stmt);
             try writeDeconPath(dt, concat.next, stmt);
@@ -1715,6 +1723,7 @@ const Stmt = struct {
         unreachable;
     }
 
+    // TODO: functions using this ignore env. create a call() function, which takes care of it.
     fn instFun(stmt: *@This(), inst: ast.InstFunInst) !void {
         const aref = inst.*.?;
         switch (aref) {
@@ -1985,7 +1994,96 @@ const Stmt = struct {
                     try self.deconCondition_(hadCondition, field.decon, &nextDP);
                 }
             },
-            .List => unreachable,
+            .List => |listDecon| {
+                {
+                    // const oldCW = self.ctx.backend.cur;
+                    // self.ctx.backend.cur = CW.init(self.ctx.backend.al);
+                    // defer self.ctx.backend.cur = oldCW;
+
+                    {
+                        const lparrv = listDecon.lrefvar;
+                        const rparrv: ?ast.Var = if (listDecon.r) |r| r.rrefvar else null;
+
+                        try self.deconConnect(hadCondition);
+                        try self.instFun(listDecon.assocRef);
+
+                        // WORKING AROUND A ZIG COMPILER BUG.
+                        // I can't nest Join/Tuple/SepBy which contains a Var inside SepBy.
+                        // (Im using zig 0.13, so maybe it's fixed in a newer release?)
+                        {
+                            try self.p(.{ "(", dp, "," });
+                            try self.p(.{ "&", lparrv, "," });
+                            try self.p(.{ listDecon.l.len, "," });
+                            if (listDecon.r) |r| {
+                                if (r.spreadVar) |_| {
+                                    unreachable;
+                                } else {
+                                    try self.p(.{ "(", listDecon.spreadTy, ")", "{", ".tag = 1", "}", "," });
+                                }
+                                try self.p(.{ "&", rparrv.? });
+                            } else {
+                                try self.p(.{ "(", listDecon.spreadTy, ")", "{", ".tag = 0", "}", "," });
+                                try self.p("NULL");
+                            }
+                            try self.p(.{","});
+                            try self.p(.{ if (listDecon.r) |r| r.r.len else 0, ")" });
+                        }
+
+                        {
+                            const larrv = ast.Var{ .name = "_larr_", .uid = self.ctx.backend.temp().id };
+                            if (listDecon.l.len > 0) {
+                                var larrl = startLine(self.ctx);
+                                try larrl.definition(listDecon.elemTy, Join(.{ larrv, "[", listDecon.l.len, "]" }));
+                                try larrl.finishStmt();
+                            }
+
+                            // indirection
+                            var lparrl = startLine(self.ctx);
+                            try lparrl.definition(listDecon.elemTy, Join(.{ "*", lparrv }));
+                            try lparrl.p(.{"="});
+                            if (listDecon.l.len > 0) {
+                                try lparrl.p(.{larrv});
+                            } else {
+                                try lparrl.p("NULL");
+                            }
+                            try lparrl.finishStmt();
+
+                            // GEN
+                            for (listDecon.l, 0..) |ldecon, idx| {
+                                const ldp = ast.Decon.PathM{ .Tip = .{ .t = listDecon.elemTy, .v = lparrv, .idx = @intCast(idx) } };
+                                try self.deconCondition_(hadCondition, ldecon, &ldp);
+                            }
+                        }
+
+                        if (listDecon.r) |r| {
+                            const rarrv = ast.Var{ .name = "_rarr_", .uid = self.ctx.backend.temp().id };
+                            if (r.r.len > 0) {
+                                var rarrl = startLine(self.ctx);
+                                try rarrl.definition(listDecon.elemTy, Tuple(.{ rarrv, "[", r.r.len, "]" }));
+                                try rarrl.finishStmt();
+                            }
+
+                            // indirection
+                            var rparrl = startLine(self.ctx);
+                            try rparrl.definition(listDecon.elemTy, Join(.{ "*", rparrv.? }));
+                            try rparrl.p(.{"="});
+                            if (r.r.len > 0) {
+                                try rparrl.p(.{rarrv});
+                            } else {
+                                try rparrl.p("NULL");
+                            }
+                            try rparrl.finishStmt();
+
+                            // GEN
+                            for (r.r, 0..) |rdecon, idx| {
+                                const ldp = ast.Decon.PathM{ .Tip = .{ .t = listDecon.elemTy, .v = rparrv.?, .idx = @intCast(idx) } };
+                                try self.deconCondition_(hadCondition, rdecon, &ldp);
+                            }
+                        }
+                    }
+                    // try self.ctx.backend.parts.append(self.ctx.backend.cur);
+                }
+            },
         }
     }
 
@@ -2404,13 +2502,27 @@ fn SepBy(sep: Str, args: anytype) struct {
     args: @TypeOf(args),
 
     pub fn write(self: @This(), stmt: *Stmt) anyerror!void {
-        if (self.args.len > 0) {
-            try stmt.p(.{self.args[0]});
-        } else return;
+        switch (comptime @typeInfo(@TypeOf(self.args))) {
+            .Struct => |strukt| {
+                const fields = strukt.fields;
+                inline for (fields, 0..) |field, i| {
+                    if (i > 0) {
+                        try stmt.p(.{self.sep});
+                    }
+                    const arg = @field(self.args, field.name);
+                    try stmt.p(.{arg});
+                }
+            },
+            else => {
+                if (self.args.len > 0) {
+                    try stmt.p(.{self.args[0]});
+                } else return;
 
-        for (self.args[1..]) |arg| {
-            try stmt.p(self.sep);
-            try stmt.p(.{arg});
+                for (self.args[1..]) |arg| {
+                    try stmt.p(.{self.sep});
+                    try stmt.p(.{arg});
+                }
+            },
         }
     }
 } {
@@ -2523,6 +2635,9 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             .I64 => {},
             .U8 => {},
             .U32 => {},
+            .U64 => {},
+            .Size => {},
+            .F32 => {},
             .F64 => {},
             .Ordering => {},
             .Maybe => {},
@@ -2530,6 +2645,8 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             .Tuple2 => {},
             .Tuple3 => {},
             .Tuple4 => {},
+            .ListSpread => {},
+            .Char => {},
 
             .Ptr => return .{ .Ptr = tyApp.application.tvars[0].Type },
             .Array => {
@@ -2566,7 +2683,6 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
 
                 return .{ .Application = .{ .data = data, .id = nuId } };
             },
-            else => unreachable,
         }
     }
 

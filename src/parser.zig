@@ -1436,10 +1436,15 @@ fn deconRefVar(self: *Self) AST.Var {
 }
 
 fn deconstruction(self: *Self, refvar: AST.Var) !*AST.Decon {
+    return try self.deconstructionIdx(refvar, null);
+}
+
+fn deconstructionIdx(self: *Self, refvar: AST.Var, idx: ?u32) !*AST.Decon {
     const ty = try self.typeContext.fresh();
     const dpBase = try AST.Decon.Path.init(self.arena, .{ .Tip = .{
         .v = refvar,
         .t = ty,
+        .idx = idx,
     } });
     const decon = try deconstruction_(self, dpBase);
     try self.typeContext.unify(ty, decon.t, null);
@@ -1449,7 +1454,7 @@ fn deconstruction(self: *Self, refvar: AST.Var) !*AST.Decon {
 fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Decon {
     const decon: AST.Decon = if (self.consume(.IDENTIFIER)) |vn| b: {
         const v = try self.newVar(vn, switch (dp.*) {
-            .Tip => null,
+            .Tip => |tip| if (tip.idx == null) null else .{ .dp = dp },
             .Concat => .{ .dp = dp },
         });
         break :b .{
@@ -1641,8 +1646,8 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
         };
     } // record deccon
     else if (self.consume(.LEFT_SQBR)) |ltok| b: {
-        var left = std.ArrayList(AST.DeconBase).init(self.arena);
-        var right = std.ArrayList(AST.DeconBase).init(self.arena);
+        var left = std.ArrayList(*AST.Decon).init(self.arena);
+        var right = std.ArrayList(*AST.Decon).init(self.arena);
         const listTy = try self.typeContext.fresh();
         const elemTy = try self.typeContext.fresh();
         const spreadTy = try self.typeContext.fresh();
@@ -1652,6 +1657,10 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
         var decons = &left;
         var spreadVar: ?AST.Var = null;
         var hadSpread = false;
+        var idx: u32 = 0;
+        const lrefvar = self.deconRefVar();
+        var rrefvar: ?AST.Var = null;
+        var refvar = lrefvar;
         const dloc = if (self.consume(.RIGHT_SQBR)) |rtok| bb: {
             break :bb self.loc(ltok).between(self.loc(rtok));
         } else bb: {
@@ -1669,11 +1678,14 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
 
                     hadSpread = true;
                     decons = &right;
+                    rrefvar = self.deconRefVar();
+                    refvar = rrefvar.?;
+                    idx = 0;
                 } else {
-                    const refvar = self.deconRefVar();
-                    const decon = try self.deconstruction(refvar);
+                    const decon = try self.deconstructionIdx(refvar, idx);
                     try self.typeContext.unify(decon.t, elemTy, &.{ .l = decon.l });
-                    try decons.append(.{ .d = decon, .refvar = refvar });
+                    try decons.append(decon);
+                    idx += 1;
                 }
 
                 if (self.consume(.RIGHT_SQBR)) |rtok| {
@@ -1723,9 +1735,11 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
             .l = dloc,
             .d = .{ .List = .{
                 .l = left.items,
+                .lrefvar = lrefvar,
                 .r = if (hadSpread) .{
                     .spreadVar = if (spreadVar) |v| .{ .v = v, .t = spreadInnerTy } else null,
                     .r = right.items,
+                    .rrefvar = rrefvar.?,
                 } else null,
                 .assocRef = ifn.ref,
 

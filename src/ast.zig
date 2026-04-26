@@ -734,6 +734,7 @@ pub const DeconUse = struct { dp: *const Decon.Path };
 pub const DeconBase = struct {
     d: *Decon,
     refvar: Var,
+    idx: ?u32 = null,
 
     pub fn print(self: @This(), c: Ctx) void {
         self.d.print(c);
@@ -753,10 +754,12 @@ pub const Decon = struct {
         Record: []Field,
 
         List: struct {
-            l: []DeconBase,
+            l: []*Decon,
+            lrefvar: Var,
             r: ?struct {
                 spreadVar: ?struct { v: Var, t: Type },
-                r: []DeconBase,
+                r: []*Decon,
+                rrefvar: Var,
             },
 
             elemTy: Type,
@@ -819,7 +822,7 @@ pub const Decon = struct {
     pub const PathM = PathF(.Mono);
     pub fn PathF(e: enum { Poly, Mono }) type {
         return union(enum) {
-            Tip: struct { v: Var, t: TyRef },
+            Tip: struct { v: Var, t: TyRef, idx: ?u32 = null },
             Concat: struct {
                 path: PathF(e).Type,
                 next: *const PathF(e),
