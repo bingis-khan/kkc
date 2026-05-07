@@ -36,6 +36,7 @@ use Iter
 	all
 	any
 	head
+	last
 	null
 	sum
 	product

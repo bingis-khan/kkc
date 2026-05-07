@@ -34,6 +34,13 @@ fn from-const-str (s ConstStr)
 	len = Str.const-str-len(s)
 	return DynStr { contents: Slice { ptr: s Mem.cast(), count: len } }
 
+fn from-str (s Str, al)
+	l =& List.mk(al)
+	l List.add-all(s Str.chars())
+	l List.add(Str.nullchar())
+	return DynStr { contents: l& List.to-slice(), count: l List.size() - 1 }
+
+
 # special clone, where DynStr is compatible with C-style ConstStr
 fn clone-0(s DynStr, al Allocator) -> DynStr
 	cnt = s.contents.count

@@ -1275,7 +1275,10 @@ const Stmt = struct {
                         try stmt.p("==");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .errno => unreachable,
+                    .errno => {
+                        try stmt.ctx.backend.imports.insert("errno.h");
+                        try stmt.p("errno");
+                    },
 
                     .@"register-signal" => {
                         const regfunname = "_intr_register_signal";

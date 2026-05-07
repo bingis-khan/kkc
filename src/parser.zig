@@ -1133,7 +1133,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 .level = self.level(),
             });
 
-            try self.addInstance(instance);
+            try self.addInstance(self.scope.currentScope(), instance);
 
             break :b .{
                 .Instance = instance,
@@ -3872,7 +3872,7 @@ fn addAllInstances(self: *Self, exports: *const Module.Exports) !void {
     while (it.next()) |insts| {
         var iit = insts.value_ptr.iterator();
         while (iit.next()) |inst| {
-            try self.addInstance(inst.value_ptr.*);
+            try self.addInstance(self.scope.scopes.botp(), inst.value_ptr.*);
         }
     }
 }
@@ -5277,8 +5277,8 @@ fn addAssociation(self: *Self, assoc: Association) !void {
     try self.associations.append(assoc);
 }
 
-fn addInstance(self: *Self, instance: *AST.Instance) !void {
-    const getOrPutResult = try self.scope.currentScope().instances.getOrPut(instance.class);
+fn addInstance(self: *Self, scope: *CurrentScope, instance: *AST.Instance) !void {
+    const getOrPutResult = try scope.instances.getOrPut(instance.class);
     if (!getOrPutResult.found_existing) {
         getOrPutResult.value_ptr.* = Module.DataInstance.init(self.arena);
     }

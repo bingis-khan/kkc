@@ -1,3 +1,4 @@
+const std = @import("std");
 pub fn Fixed(comptime t: type, comptime sz: usize) type {
     return struct {
         mem: [sz]t,
@@ -25,6 +26,16 @@ pub fn Fixed(comptime t: type, comptime sz: usize) type {
 
         pub fn top(s: *const Self) t {
             return s.mem[s.current - 1];
+        }
+
+        pub fn bot(s: *const Self) t {
+            std.debug.assert(s.current > 0);
+            return s.mem[0];
+        }
+
+        pub fn botp(s: *Self) *t {
+            std.debug.assert(s.current > 0);
+            return &s.mem[0];
         }
 
         pub fn peek(s: *const Self) t {

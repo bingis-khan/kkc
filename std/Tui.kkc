@@ -107,6 +107,9 @@ Tui
 	fps-count U32
 	orig-termios Cnile.Termios
 
+	should-redraw Bool  # NOTE: put it either here or in Screen. NOTE2: actually, screen already had it bruh. - `requires-full-redraw`
+	# I'll see how I approach non-screen clearing stuff like tqdm(), which would not use the Screen part and finally decide where it belongs.
+
 
 fn read-byte(timeout-ms I32) -> Maybe Cnile.Char
 	pfd = Cnile.Pollfd { fd: 0, events: 1, revents: 0 }
@@ -158,6 +161,7 @@ fn mk() -> Tui
 		, fps-count: 0
 		, orig-termios: og-termios
 		, palette: palette
+		, should-redraw: True  # True for first draw.
 		}
 
 fn sync(tui Ptr Tui)
@@ -209,6 +213,10 @@ MouseButton
 	ScrollUp
 	ScrollDown
 
+inst Eq MouseButton
+	# NOTE: maybe add an intrinsic to get tag value?
+	eq (l, r): Mem.cast-on-zeroed(l) == (Mem.cast-on-zeroed(r) as U32)
+
 MouseEvent
 	button  MouseButton
 	x       I32
@@ -257,7 +265,7 @@ fn btn-to-mouse-button (btn I64):
 		2: MouseRight
 		64: ScrollUp
 		65: ScrollDown
-		_: panic'('incorrect mouse button')
+		_: panic'('incorrect mouse button code: \(btn)')
 
 
 fn parse-ss3(c Cnile.Char) -> Maybe Key
@@ -418,11 +426,11 @@ fn read-key() -> Maybe InputEvent
 
 	return Just(Key(Escape))
 
-
 fn update-dimensions (tui Ptr Tui)
 	if not should-resize&
 		return False
 
+	tui <&.should-redraw= True
 	should-resize <&= False
 	dim = Term.get-dimensions()
 	w = dim fst()
@@ -431,6 +439,38 @@ fn update-dimensions (tui Ptr Tui)
 	tui <&.width= w
 	tui <&.height= h
 	return True
+
+
+fn read-event (tui Ptr Tui) -> Maybe InputEvent
+	tui update-dimensions()
+
+	case read-key()
+		None
+			return None
+		Just(ev)
+			tui <&.should-redraw= True
+			return Just(ev)
+
+# NOTE: always use as a first argument, because it clears the redraw flag!
+# NOTE2: that's actually stupid. mouse movements also trigger events.
+# The ideal way would be to compare current program state with the previous state, or make elif chains which end in else, which triggers "no-action" or something.
+fn should-redraw (tui Ptr Tui) -> Bool
+	redraw = tui&.should-redraw
+	tui <&.should-redraw = False
+	return redraw
+
+# another idea!
+# `should-redraw()` always be the first argument to the drawing condition
+# because it clears the `tui.should-redraw` flag. (otherwise, stuff might get drawn twice when there are other reasons for redrawing.)
+# so, force it with a HOF:
+# WARNING: bad codegen, even with -O3:
+#   CPU USAGE:
+#     `should-redraw()`: 1%
+#     `draw()`: 5%  <- why is this so large? or is it a bug in my code? i guess the unoptimized function environment goes like this bruh.
+#     no capping: 8%
+fn draw(tui Ptr Tui, cond, body () -> ())
+	if tui should-redraw() or cond
+		body()
 
 
 ### SCREEN
@@ -483,7 +523,7 @@ fn mk-screen(tui Ptr Tui, al Allocator)
 		, previous: prev
 		, al: al
 		, tui: tui
-		, requires-full-redraw: False
+		, requires-full-redraw: True
 		, default-fg: Term.ColorDefault
 		, default-bg: Term.ColorDefault
 		}
@@ -550,7 +590,8 @@ fn render-screen(screen Ptr (Screen Allocator))
 # calls update-dimensions() anyway.
 fn resize-screen-if-needed(screen Ptr (Screen Allocator)) -> Bool
 	tui = screen&.tui
-	if not tui update-dimensions()
+	tui update-dimensions()
+	if not tui&.should-redraw
 		return False
 
 	screen <&.requires-full-redraw = True
@@ -624,4 +665,9 @@ fn draw-str-right(screen Ptr (Screen Allocator), s Str, x I32, y I32)
 	slen = s chars() count() size-i32()
 	w = screen&.tui&.width u32-i32()
 	x = w - x - slen
+	screen draw-str(s, x, y)
+
+fn draw-str-center(screen Ptr (Screen Allocator), s Str, x I32, y I32)
+	slen = s chars() count() size-i32()
+	x = x - slen / 2
 	screen draw-str(s, x, y)

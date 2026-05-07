@@ -7,6 +7,7 @@ FILE
 
 
 CInt = I32
+CUInt = U32
 CULong = U64
 
 ClockId = I32
@@ -48,6 +49,7 @@ CastPtr a
 	this-field-is-only-for-sizing-cast-the-whole-thing Ptr Void
 
 fn castptr-ptr(cptr CastPtr a) -> Ptr a: @cast(cptr)
+fn ptr-castptr(ptr Ptr a) -> CastPtr a: @cast(ptr)
 
 # NOTE: I'm thinking, since records are already C layout compatible,
 # my default would be to NOT set custom field names, cause it's annoying.
@@ -63,7 +65,7 @@ Winsize
 	ws-ypixel U16
 
 # Stat for x86_64 linux :)
-#[ctype 'struct Stat']
+# #[ctype 'struct stat']
 Stat
 	dev U64
 	ino U64
@@ -122,7 +124,12 @@ external
 	snprintf1 (p Ptr Char, n CInt, format ConstStr, x a) -> CInt
 
 
+	#[cstdinclude 'stdlib.h']
+	srand (seed CUInt) -> Void
+
+	#[cstdinclude 'stdlib.h']
 	rand () -> CInt
+
 
 	#[cstdinclude 'string.h']
 	memset (dest Ptr Void, byte CInt, count Size) -> Ptr Void
@@ -169,7 +176,9 @@ external
 
 
 	##### sys/stat.h #####
-	stat (path ConstStr, stat Ptr Stat) -> Void
+	#[cstdinclude 'sys/stat.h']
+	stat (path ConstStr, stat CastPtr Stat) -> Void
+	#[cstdinclude 'sys/stat.h']
 	mkdir (path ConstStr, mode CInt) -> CInt
 
 	#### unistd.h ####
@@ -178,6 +187,9 @@ external
 
 	#[cstdinclude 'unistd.h']
 	isatty (fileno CInt) -> CInt
+
+	#[cstdinclude 'unistd.h']
+	access (path ConstStr, mode CInt) -> CInt
 
 
 	#### ????
@@ -269,5 +281,9 @@ fn wifexited (status CInt):
 	status == 0
 
 fn errno-EEXIST(): @errno == 17
+
+# sys/stat.h mode constants
+fn s-ifmt() -> U32: 61440   # 0o170000 - bitmask for file type bits
+fn s-ifdir() -> U32: 16384  # 0o040000 - directory file type
 
 # TODO: nullable CPtr and a function CPtr a -> Maybe (Ptr a)

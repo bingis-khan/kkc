@@ -282,8 +282,10 @@ fn modulePathToFilepath(self: *const Self, base: Module.BasePath) !Str {
     if (base.isSTD) {
         try sb.appendSlice(self.stdPath);
     } else {
-        try sb.appendSlice(self.rootPath);
-        try sb.append('/');
+        if (self.rootPath.len > 0) {
+            try sb.appendSlice(self.rootPath);
+            try sb.append('/');
+        }
     }
 
     // TODO: i don't feel like making an iterator in stack :)

@@ -437,6 +437,7 @@ fn any(it, fun): it
 	reduce(False, fn (e, x): fun(e) or x)
 
 fn head(it): (&it into-iter()) next()
+fn last(it): it reduce(None, fn(e, _): Just(e))
 
 fn null(it)
 	case it head()
