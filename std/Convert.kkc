@@ -8,6 +8,7 @@ use Iter
 use Error
 	or-fail
 use Into
+use SmolStr
 
 
 # official octal number function.
@@ -31,3 +32,12 @@ fn hex-digit(c Char)
 fn from-hex(arr): arr
 	map(fn c: c hex-digit() or-fail('"\(c)" is not a hex digit.') u8-i64() from-integral())
 	reduce(0, fn(elem, b): b * 16 + elem)
+
+fn u8-str(byte U8)
+	fn b16-char (b U8)
+		if b >= 10
+			return Str.u8-char((b - 10) + char-u8('a'))
+		else
+			return Str.u8-char(b + char-u8('0'))
+			
+	return SmolStr.mk([b16-char(byte / 16), b16-char(byte Math.mod(16))])

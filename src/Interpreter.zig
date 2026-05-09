@@ -1677,9 +1677,9 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 
             // TEMP TEMP TEMP
             {
-                // if (common.streq(c.type.name, "I32")) {
-                //     return ffi.types.sint32;
-                // }
+                if (common.streq(c.type.name, "U8")) {
+                    return ffi.types.uint8;
+                }
 
                 if (common.streq(c.type.name, "I64")) {
                     return ffi.types.sint64;

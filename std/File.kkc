@@ -66,3 +66,27 @@ fn try-write-contents (filename, contents) -> Bool
 fn write-contents (filename, contents)
 	if not try-write-contents(filename, contents)
 		panic('could not write to file \(filename)')
+
+fn try-write-bytes (filename, contents)
+	file = Cnile.fopen(filename, 'wb')
+	if file Mem.is-ptr-null()
+		return False
+
+	# oh no, this is soooo bad.
+	it =& contents into-iter()
+	while True
+		case next(it)
+			None
+				# ughh.... write the file char-by-char............
+				file Cnile.fclose()
+				return True
+			Just(c)
+				chars-written = Cnile.fprintf1(file, '%c', c)
+				if chars-written < 0
+					return False
+
+	return unreachable()
+
+fn write-bytes (filename, contents)
+	if not try-write-bytes(filename, contents)
+		panic('could not write to file \(filename)')

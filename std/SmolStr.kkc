@@ -1,0 +1,24 @@
+use Error
+	panic
+use Str
+	Str
+
+SmolStr
+	SmolStr Size
+
+fn mk(chs Array n Char) -> SmolStr
+	max-sz = (Mem.get-typesize() as Mem.TypeSize SmolStr).size - 1
+	if n Mem.i32-size() > max-sz
+		panic('too big for smol str. given \(n), but gotten \(max-sz)')
+
+	return Mem.cast-on-zeroed(chs)
+
+inst Str SmolStr
+	print-str (self _)
+		cs = Mem.cast(&self) as ConstStr
+		Str.print-str(cs)
+
+	chars (self _)
+		cs = Mem.cast(&self) as ConstStr
+		return cs Str.chars()
+

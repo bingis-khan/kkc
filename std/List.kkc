@@ -15,6 +15,8 @@ use Alloc
 use Str
 	Str
 	print-str
+use Mem
+	i32-size
 
 
 Idx = Size
@@ -181,6 +183,9 @@ fn top (list)
 
 fn add-all(list, it)
 	it for-each(fn x: list add(x))
+
+fn insert-all(list, idx, it)
+	it zip(from(0)) for-each(fn ((x, i)): list insert(idx + i i32-size(), x))  # TODO: SLOW
 
 # for now, don't shrink, since I'm using it in kd
 fn trim(l Ptr (List al a), new-count)

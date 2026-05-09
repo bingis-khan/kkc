@@ -398,6 +398,8 @@ fn char-i32(c Char) -> I32:
 	Mem.cast-on-zeroed(c)
 fn char-u8(c Char) -> U8:
 	Mem.cast(c)
+fn u8-char(c U8) -> Char:
+	Mem.cast(c)
 fn i32-char(i I32) -> Char:
 	Mem.cast(i)
 
