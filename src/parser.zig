@@ -2489,6 +2489,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .@"i64-sub",
                 .@"i64-mul",
                 .@"i64-div",
+                .@"u64-add",
+                .@"u64-sub",
+                .@"u64-mul",
+                .@"u64-div",
                 .@"i32-add",
                 .@"i32-sub",
                 .@"i32-mul",
@@ -2512,6 +2516,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 => b: {
                     const intTy = switch (intr.ty) {
                         .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => try self.definedType(.I64),
+                        .@"u64-add", .@"u64-sub", .@"u64-mul", .@"u64-div" => try self.definedType(.U64),
                         .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => try self.definedType(.I32),
                         .@"u32-add", .@"u32-sub", .@"u32-mul", .@"u32-div" => try self.definedType(.U32),
                         .@"u8-add", .@"u8-sub", .@"u8-mul", .@"u8-div" => try self.definedType(.U8),
@@ -2526,6 +2531,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     break :b intTy;
                 },
                 .@"i64-cmp",
+                .@"u64-cmp",
                 .@"i32-cmp",
                 .@"u32-cmp",
                 .@"u8-cmp",

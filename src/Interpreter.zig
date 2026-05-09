@@ -590,6 +590,19 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         else => unreachable,
                     });
                 },
+                .@"u64-add", .@"u64-sub", .@"u64-mul", .@"u64-div" => {
+                    const l = (try self.expr(intr.args[0])).ref.u64;
+                    const r = (try self.expr(intr.args[1])).ref.u64;
+
+                    return try self.val(.{ .u64 = switch (intr.intr.ty) {
+                        .@"u64-add" => l + r,
+                        .@"u64-sub" => l - r,
+                        .@"u64-mul" => l * r,
+                        .@"u64-div" => @divTrunc(l, r),
+                        else => unreachable,
+                    } }, @sizeOf(@TypeOf(l)));
+                },
+
                 .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => {
                     const l = (try self.expr(intr.args[0])).ref.i32;
                     const r = (try self.expr(intr.args[1])).ref.i32;
@@ -654,6 +667,17 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 .@"i64-cmp" => {
                     const l = (try self.expr(intr.args[0])).ref.int;
                     const r = (try self.expr(intr.args[1])).ref.int;
+                    if (l < r) {
+                        return try self.intValue(0);
+                    } else if (l == r) {
+                        return try self.intValue(1);
+                    } else {
+                        return try self.intValue(2);
+                    }
+                },
+                .@"u64-cmp" => {
+                    const l = (try self.expr(intr.args[0])).ref.u64;
+                    const r = (try self.expr(intr.args[1])).ref.u64;
                     if (l < r) {
                         return try self.intValue(0);
                     } else if (l == r) {
@@ -1435,6 +1459,7 @@ const RawValue = extern union {
     int: i64,
     i32: i32,
     u32: u32,
+    u64: u64,
     u8: u8,
     size: usize,
     float: f64,

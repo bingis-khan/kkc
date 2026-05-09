@@ -181,6 +181,9 @@ external
 	#[cstdinclude 'sys/stat.h']
 	mkdir (path ConstStr, mode CInt) -> CInt
 
+	#[cstdinclude 'sys/stat.h']
+	chmod (path ConstStr, mode U32) -> CInt
+
 	#### unistd.h ####
 	#[cstdinclude 'unistd.h']
 	chdir (path ConstStr) -> CInt

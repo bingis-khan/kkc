@@ -41,6 +41,9 @@ fn patch(bb Ptr (ByteBuf al), idx List.Idx, x a) <= Allocator al
 		List.set(&bb&.buf, idx + i i32-size(), e)
 
 
+fn write-bytes(bb Ptr (ByteBuf al), xs it) <= Allocator al, IntoIter it
+	List.add-all(&bb&.buf, xs)
+
 inst IntoIter ByteBuf
 	into-iter (self _): self.buf into-iter()
 

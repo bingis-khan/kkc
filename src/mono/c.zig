@@ -34,6 +34,7 @@ al: std.mem.Allocator,
 tempgen: UniqueGen,
 aux: struct { // RETARDED
     i64cmp: bool = false,
+    u64cmp: bool = false,
     i32cmp: bool = false,
     u32cmp: bool = false,
     u8cmp: bool = false,
@@ -1180,31 +1181,32 @@ const Stmt = struct {
             },
             .Intrinsic => |intr| {
                 switch (intr.intr.ty) {
-                    .@"u32-add", .@"u8-add", .@"i64-add", .@"i32-add", .@"size-add", .@"f64-add" => {
+                    .@"u32-add", .@"u8-add", .@"i64-add", .@"u64-add", .@"i32-add", .@"size-add", .@"f64-add" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("+");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-sub", .@"u8-sub", .@"i64-sub", .@"i32-sub", .@"size-sub", .@"f64-sub" => {
+                    .@"u32-sub", .@"u8-sub", .@"i64-sub", .@"u64-sub", .@"i32-sub", .@"size-sub", .@"f64-sub" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("-");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-mul", .@"u8-mul", .@"i64-mul", .@"i32-mul", .@"size-mul", .@"f64-mul" => {
+                    .@"u32-mul", .@"u8-mul", .@"i64-mul", .@"u64-mul", .@"i32-mul", .@"size-mul", .@"f64-mul" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("*");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-div", .@"u8-div", .@"i64-div", .@"i32-div", .@"size-div", .@"f64-div" => {
+                    .@"u32-div", .@"u8-div", .@"i64-div", .@"u64-div", .@"i32-div", .@"size-div", .@"f64-div" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("/");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-cmp", .@"u8-cmp", .@"i64-cmp", .@"i32-cmp", .@"size-cmp", .@"f64-cmp" => {
+                    .@"u32-cmp", .@"u8-cmp", .@"i64-cmp", .@"u64-cmp", .@"i32-cmp", .@"size-cmp", .@"f64-cmp" => {
                         // CRINGE
                         const it = intr.intr.ty;
                         const cmp = switch (it) {
                             .@"i64-cmp" => &stmt.ctx.backend.aux.i64cmp,
+                            .@"u64-cmp" => &stmt.ctx.backend.aux.u64cmp,
                             .@"i32-cmp" => &stmt.ctx.backend.aux.i32cmp,
                             .@"u32-cmp" => &stmt.ctx.backend.aux.u32cmp,
                             .@"u8-cmp" => &stmt.ctx.backend.aux.u8cmp,
@@ -1214,6 +1216,7 @@ const Stmt = struct {
                         };
                         const tyname = ast.Annotation.find(stmt.ctx.prelude.defined(switch (it) {
                             .@"i64-cmp" => .I64,
+                            .@"u64-cmp" => .U64,
                             .@"i32-cmp" => .I32,
                             .@"size-cmp" => .Size,
                             .@"u8-cmp" => .U8,

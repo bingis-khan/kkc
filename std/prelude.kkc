@@ -381,6 +381,21 @@ inst Division Size
 	op-div (l, r): @size-div(l, r)
 
 
+## U64
+
+inst Addition U64
+	op-add (l, r): @u64-add(l, r)
+
+inst Subtraction U64
+	op-sub (l, r): @u64-sub(l, r)
+
+inst Multiplication U64
+	op-mul (l, r): @u64-mul(l, r)
+
+inst Division U64
+	op-div (l, r): @u64-div(l, r)
+
+
 ## Float
 
 inst Addition F64
