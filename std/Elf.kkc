@@ -156,6 +156,7 @@ fn write-to-file (elf Ptr (Elf Allocator), filename)
     filename File.write-bytes(elf&.bytes)
     Cnile.chmod(filename, Convert.from-octal([7, 5, 5]) Mem.i32-u32())
 
+fn bytebuf (elf Ptr (Elf Allocator)) -> Ptr (ByteBuf Allocator): &elf&.bytes
 
 # TEMPORARY, for demonstration purposes.
 fn write-hello-world(elf Ptr (Elf Allocator))

@@ -1,16 +1,16 @@
 # TODO
 
 - [ ] **unions** + typeclass-bound anonymous unions?
+- [ ] recursion (including nested recursion, which would make mutual recursion possible)
+- [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] exports
 - [ ] string matching in deconstruction.
 - [ ] polymorphic number matching (use a combination of FromIntegral + Eq)
 - [ ] deconstruction on assignment
-- [ ] mutual recursion
-- [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] hidden tvars
 - [ ] simpler/rethink Str instance (separate printing from char gen)
-- [ ] better occurs check (iirc we init an FTV struct which is pretty slow, make a dedicated function for this)
 - [ ] utf8 support (my own, inbuilt support!)
+- [ ] better occurs check (iirc we init an FTV struct which is pretty slow, make a dedicated function for this)
 - [ ] crappy code - separate tvars into tvars and tnums
 - [ ] reevaluate type defaulting (currently, the first encountered class default gets defaulted, which makes the process effectively stochastic)
 - [ ] review the architecture of the type checker. (connected with "numbers in type parameters")
