@@ -2355,9 +2355,9 @@ fn getTypeMapped(self: *const Self, ogt: ast.Type) !ast.TypeF(ast.Type) {
     return self.typeContext.getType(ty);
 }
 
-fn getEnv(self: *const Self, ogenv: ast.EnvRef) TypeContext.Env {
-    const base = self.typeContext.getEnv(ogenv).base;
-    return self.typeContext.getEnv(self.tymap.mapEnv(base) orelse base).env.*.?;
+fn getEnv(self: *const Self, ogenv: ast.UnionRef) TypeContext.Env {
+    const base = self.typeContext.getUnion(ogenv).base;
+    return self.typeContext.getUnion(self.tymap.mapUnion(base) orelse base).env.*.?;
 }
 
 fn isEnvEmptyT(self: *Self, env: *const TypeContext.Env) !bool {
@@ -3123,10 +3123,10 @@ pub const EnvApp = struct {
             };
         }
 
-        const envs = try al.alloc(ast.EnvRef, scheme.envVars.len);
+        const envs = try al.alloc(ast.UnionRef, scheme.envVars.len);
         for (scheme.envVars, envs) |se, *e| {
-            const base = self.typeContext.getEnv(se).base;
-            e.* = tymap.mapEnv(base).?;
+            const base = self.typeContext.getUnion(se).base;
+            e.* = tymap.mapUnion(base).?;
         }
 
         const assocsStuff = try al.alloc(?ast.Match.AssocRef, scheme.associations.len);

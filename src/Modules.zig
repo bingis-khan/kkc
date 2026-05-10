@@ -234,7 +234,11 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     }
 
     if (!fullPath.isSTD) {
-        try parser.addExports(&self.stdExports.?);
+        if (self.stdExports) |*exports| {
+            try parser.addExports(exports);
+        } else {
+            std.debug.assert(self.opts.noDefaultImports);
+        }
     }
 
     const module = try parser.parse();

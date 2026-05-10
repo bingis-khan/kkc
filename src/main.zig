@@ -63,91 +63,92 @@ pub fn main() !void {
     // go and interpret
     if (opts.backend) |backend| {
         switch (backend) {
-            .c => {
-                // mono it
-                // var backend = Bytecode.Backend.init(aa, modules.typeContext);
-                var cbackend = C.init(aa, modules.typeContext);
-                try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, aa);
+            // .c => {
+            //     // mono it
+            //     // var backend = Bytecode.Backend.init(aa, modules.typeContext);
+            //     var cbackend = C.init(aa, modules.typeContext);
+            //     try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, aa);
 
-                const cWritingCompilingStartTime = try std.time.Instant.now();
-                const rawStdout = std.io.getStdOut().writer();
-                var stdoutbuf = std.io.bufferedWriter(rawStdout);
-                const stdout = stdoutbuf.writer();
+            //     const cWritingCompilingStartTime = try std.time.Instant.now();
+            //     const rawStdout = std.io.getStdOut().writer();
+            //     var stdoutbuf = std.io.bufferedWriter(rawStdout);
+            //     const stdout = stdoutbuf.writer();
 
-                if (opts.printAST or opts.printRootAST) {
-                    try cbackend.writeTo(stdout);
-                    try stdoutbuf.flush();
-                }
+            //     if (opts.printAST or opts.printRootAST) {
+            //         try cbackend.writeTo(stdout);
+            //         try stdoutbuf.flush();
+            //     }
 
-                const filename = std.fs.path.stem(opts.filename);
-                const outname = opts.exeName orelse filename;
-                const c_filename = try std.mem.concat(aa, u8, &.{ outname, ".c" });
+            //     const filename = std.fs.path.stem(opts.filename);
+            //     const outname = opts.exeName orelse filename;
+            //     const c_filename = try std.mem.concat(aa, u8, &.{ outname, ".c" });
 
-                const file = try std.fs.cwd().createFile(c_filename, .{});
-                defer file.close();
+            //     const file = try std.fs.cwd().createFile(c_filename, .{});
+            //     defer file.close();
 
-                const writer = file.writer();
-                try cbackend.writeTo(writer);
+            //     const writer = file.writer();
+            //     try cbackend.writeTo(writer);
 
-                {
-                    var copts = std.ArrayList([]const u8).init(aa);
-                    try copts.appendSlice(&.{ "cc", c_filename, "-o", outname });
+            //     {
+            //         var copts = std.ArrayList([]const u8).init(aa);
+            //         try copts.appendSlice(&.{ "cc", c_filename, "-o", outname });
 
-                    var prog_c_opts = cbackend.coptions.iterator();
-                    while (prog_c_opts.next()) |copt| {
-                        try copts.append(copt.*);
-                    }
+            //         var prog_c_opts = cbackend.coptions.iterator();
+            //         while (prog_c_opts.next()) |copt| {
+            //             try copts.append(copt.*);
+            //         }
 
-                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = copts.items });
-                    try stdout.writeAll(res.stdout);
-                    try stdout.writeAll(res.stderr);
-                    try stdoutbuf.flush();
+            //         const res = try std.process.Child.run(.{ .allocator = aa, .argv = copts.items });
+            //         try stdout.writeAll(res.stdout);
+            //         try stdout.writeAll(res.stderr);
+            //         try stdoutbuf.flush();
 
-                    switch (res.term) {
-                        .Exited => |code| {
-                            if (code != 0) {
-                                return;
-                            }
-                        },
-                        else => return,
-                    }
-                }
+            //         switch (res.term) {
+            //             .Exited => |code| {
+            //                 if (code != 0) {
+            //                     return;
+            //                 }
+            //             },
+            //             else => return,
+            //         }
+            //     }
 
-                const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
-                std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
+            //     const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
+            //     std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
 
-                if (!opts.dontRun) {
-                    try stdoutbuf.flush();
+            //     if (!opts.dontRun) {
+            //         try stdoutbuf.flush();
 
-                    const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });
+            //         const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });
 
-                    // prepare prog with args.
-                    var proc_params = std.ArrayList([]const u8).init(aa);
-                    try proc_params.append(exe_name);
-                    for (opts.programArgs[1..]) |ztArg| {
-                        var arg: []const u8 = undefined;
-                        arg.ptr = ztArg;
-                        arg.len = std.mem.len(ztArg);
-                        try proc_params.append(arg);
-                    }
-                    var child = std.process.Child.init(proc_params.items, aa);
-                    child.stdin_behavior = .Inherit;
-                    child.stdout_behavior = .Inherit;
-                    child.stderr_behavior = .Inherit;
+            //         // prepare prog with args.
+            //         var proc_params = std.ArrayList([]const u8).init(aa);
+            //         try proc_params.append(exe_name);
+            //         for (opts.programArgs[1..]) |ztArg| {
+            //             var arg: []const u8 = undefined;
+            //             arg.ptr = ztArg;
+            //             arg.len = std.mem.len(ztArg);
+            //             try proc_params.append(arg);
+            //         }
+            //         var child = std.process.Child.init(proc_params.items, aa);
+            //         child.stdin_behavior = .Inherit;
+            //         child.stdout_behavior = .Inherit;
+            //         child.stderr_behavior = .Inherit;
 
-                    try child.spawn();
-                    const term = try child.wait();
+            //         try child.spawn();
+            //         const term = try child.wait();
 
-                    switch (term) {
-                        .Exited => |code| {
-                            std.debug.print("program exited with code {}\n", .{code});
-                        },
-                        else => |code| {
-                            std.debug.print("unexpected STOP ({})\n", .{code});
-                        },
-                    }
-                }
-            },
+            //         switch (term) {
+            //             .Exited => |code| {
+            //                 std.debug.print("program exited with code {}\n", .{code});
+            //             },
+            //             else => |code| {
+            //                 std.debug.print("unexpected STOP ({})\n", .{code});
+            //             },
+            //         }
+            //     }
+            // },
+            else => unreachable,
         }
     } else {
         if (!opts.dontRun) {
@@ -190,7 +191,9 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
 
     const prelude = try modules.loadPrelude();
     typeContext.prelude = prelude;
-    _ = try modules.loadConverged();
+    if (!opts.noDefaultImports) {
+        _ = try modules.loadConverged();
+    }
 
     return modules;
 }

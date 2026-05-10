@@ -273,7 +273,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
             try tvars.append(.{ .TVar = assoc.depends });
         }
 
-        var envs = std.ArrayList(AST.EnvRef).init(self.arena);
+        var envs = std.ArrayList(AST.UnionRef).init(self.arena);
         var envIter = ftvs.envs.iterator();
         while (envIter.next()) |env| {
             try envs.append(env.*);
@@ -2814,7 +2814,7 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
         .match = &AST.Match.Empty,
         .level = lamenv.level,
     });
-    try self.typeContext.unifyEnv(funty.env, envty, &.{ .l = lamMode.this.Lambda.lamExpr.l }, &.{ .lfull = lamty, .rfull = null });
+    try self.typeContext.unifyUnion(funty.env, envty, &.{ .l = lamMode.this.Lambda.lamExpr.l }, &.{ .lfull = lamty, .rfull = null });
 
     lamMode.this.Lambda.lamExpr.e.Lam.body.Body = .{
         .stmts = stmts.items,
@@ -4855,7 +4855,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
         };
     }
 
-    const envVars = try self.arena.alloc(AST.EnvRef, scheme.envVars.len);
+    const envVars = try self.arena.alloc(AST.UnionRef, scheme.envVars.len);
     for (scheme.envVars, 0..) |_, i| {
         // NOTE: we don't care for now - at the end we're gonna unify these environments.
         // const envb = self.typeContext.getEnv(er);
@@ -4942,15 +4942,7 @@ fn instantiateScheme(self: *Self, scheme: AST.Scheme, minstances: ?Module.ClassI
 
     // now environment shit
     for (scheme.envVars, envVars) |sse, me| {
-        const se = self.typeContext.getEnv(sse).env;
-        if (se.*) |env| { // NOTE: DO NOT EVEN FUCKING TRY TAKING A REFERENCE TO *ENV YOU FUCKING NIGGER.
-            try self.typeContext.unifyEnv(me, try self.typeContext.newEnv(.{
-                .env = env.env,
-                .fun = env.fun,
-                .match = try self.typeContext.mapMatch(tvarMatch, env.match),
-                .level = env.level,
-            }), null, undefined);
-        }
+        try self.typeContext.unifyUnion(me, try self.typeContext.cloneMapUnion(tvarMatch, sse), null, undefined);
     }
 
     return tvarMatch;
@@ -5044,7 +5036,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         try tvars.append(.{ .TNum = tnum });
     }
 
-    var envs = std.ArrayList(AST.EnvRef).init(self.arena);
+    var envs = std.ArrayList(AST.UnionRef).init(self.arena);
     var envIt = funftvs.envs.iterator();
     while (envIt.next()) |e| {
         try envs.append(e.*);
@@ -5187,8 +5179,8 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     //   TODO: when you call an external function with an inner environment, it should also be mapped.
     //        where will these additional environments appear? in the environment's Matches - both in the Env and the Type.
     for (envs.items) |se| {
-        const ref = self.typeContext.getEnv(se).env;
-        if (ref.*) |ftvenv| {
+        const ref = self.typeContext.getUnion(se).env;
+        for (ref.envs.items) |*ftvenv| {
             if (env.level < ftvenv.level) {
                 const newMatch = b: {
                     // NOTE about this whole thing: currently, we're most likely not handling variables correctly. If we assign the env to an outer variable, and then try to return that variable, it's gonna be real funny
@@ -5207,20 +5199,11 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         } else {
                             std.debug.assert(outerLevel > env.level);
                             std.debug.assert(ftvenv.level == lastScheme.lastEnv.level);
-
-                            // TEMP? LITERALLY COPYPASTA
-                            // get those tvars.
-                            var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
-                            try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env, env.level);
-
-                            const scheme = try tvarStore.toScheme(&funftvs.envs, assocs.items);
-
-                            const numatch = try ftvenv.match.joinScheme(&scheme, self.typeContext, self.arena); // joins a scheme to match with uninstantiated stuff from that scheme in the match.
-                            ftvenv.env.monoLastScheme = .{ .lastEnv = env, .scheme = scheme };
-
-                            break :b numatch;
+                            // fallthrough to default case.
                         }
-                    } else {
+                    }
+
+                    {
                         // get those tvars.
                         var tvarStore = TypeContext.AllStore.init(self.arena, self.typeContext);
                         try self.typeContext.getTVarsFromEnv(expectedBinding, &tvarStore, ftvenv.env, env.level);
@@ -5234,8 +5217,8 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                     }
                 };
 
-                ref.*.?.match = newMatch;
-                ref.*.?.level = env.level;
+                ftvenv.match = newMatch;
+                ftvenv.level = env.level;
             }
         }
     }

@@ -1212,7 +1212,7 @@ pub const TyRef = struct {
                 .Fun => |f2| {
                     if (!tyEq(f1.ret, f2.ret, tyc)) return false;
                     if (!tyEqs(f1.args, f2.args, tyc)) return false;
-                    if (!EnvRef.envEq(f1.env, f2.env, tyc)) return false;
+                    if (!UnionRef.envEq(f1.env, f2.env, tyc)) return false;
                     return true;
                 },
                 else => false,
@@ -1290,38 +1290,43 @@ pub const TyRef = struct {
     //     };
     // }
 };
-pub const EnvRef = struct {
+pub const UnionRef = struct {
     id: usize,
 
     pub const Comparator = struct {
         // tc: *const TypeContext,
-        pub fn eql(self: @This(), le: EnvRef, re: EnvRef) bool {
+        pub fn eql(self: @This(), le: UnionRef, re: UnionRef) bool {
             _ = self;
             return le.id == re.id;
         }
 
-        pub fn hash(ctx: @This(), k: EnvRef) u64 {
+        pub fn hash(ctx: @This(), k: UnionRef) u64 {
             _ = ctx;
             return k.id;
         }
     };
 
     pub fn print(eid: @This(), c: Ctx) void {
-        const eb = c.typeContext.getEnv(eid);
-        // c.print(.{ "(", eb.env.id, ")" });
-        if (eb.env.*) |env| {
+        const eu = c.typeContext.getUnion(eid);
+
+        c.print("{");
+        for (eu.env.envs.items, 0..) |env, i| {
+            if (i > 0) {
+                c.print(", ");
+            }
+
             c.print(.{ "(", env.env.id, ")", "(", env.match, ")" });
-            env.env.print(c);
-        } else {
-            c.s("[X]");
+            // env.env.print(c);
         }
+        c.print("}");
     }
 
     // BRUH, this only makes sense when using mono, if it's used in parser, then bruh.
     // this is temporary, because I want to add unions at some point tho.
+    // NOTE(11.05.26): uh oh? i want to use it in parser :3
     pub fn envEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
-        const le = tyc.getEnv(l);
-        const re = tyc.getEnv(r);
+        const le = tyc.getUnion(l);
+        const re = tyc.getUnion(r);
 
         if (le.env.* == null and re.env.* == null) {
             return le.base.id == re.base.id;
@@ -1480,7 +1485,7 @@ pub fn TypeF(comptime a: ?type) type {
         pub const Fun = struct {
             args: []Rec,
             ret: Rec,
-            env: EnvRef,
+            env: UnionRef,
 
             pub const Comparator = struct {
                 typeContext: *const TypeContext,
@@ -1490,7 +1495,7 @@ pub fn TypeF(comptime a: ?type) type {
                     for (l.args, r.args) |ll, rr| {
                         if (!ll.tyEq(rr, ctx.typeContext)) return false;
                     }
-                    if (!EnvRef.envEq(l.env, r.env, ctx.typeContext)) return false;
+                    if (!UnionRef.envEq(l.env, r.env, ctx.typeContext)) return false;
 
                     return true;
                 }
@@ -1534,7 +1539,7 @@ pub fn TypeF(comptime a: ?type) type {
                 .Fun => |fun| {
                     c.s("(");
                     c.encloseSepBy(fun.args, ", ", "(", ")");
-                    // fun.env.print(c); // TEMP
+                    fun.env.print(c); // TEMP
                     c.s(" -> ");
                     fun.ret.print(c);
                     c.s(")");
@@ -1695,12 +1700,12 @@ pub const Record = TypeF(Type).Field;
 pub const Scheme = struct {
     tvars: []TVarOrNum,
     // tnums: []TNum, // TODO: tnubs :) I think it's better because we don't do weird casts.
-    envVars: []EnvRef, // like unions. same environments can appear in different places, and they need to be the same thing.
+    envVars: []UnionRef, // like unions. same environments can appear in different places, and they need to be the same thing.
 
     associations: []Association,
 
     pub const SchemeEnv = struct {
-        ref: EnvRef,
+        ref: UnionRef,
         numatch: ?*const Match,
 
         pub fn print(self: @This(), c: Ctx) void {
@@ -1725,7 +1730,7 @@ pub const Scheme = struct {
                 self.tvars,
                 scheme.tvars,
             }),
-            .envVars = try std.mem.concat(al, EnvRef, &.{
+            .envVars = try std.mem.concat(al, UnionRef, &.{
                 self.envVars,
                 scheme.envVars,
             }),
@@ -1849,7 +1854,7 @@ pub const Association = struct {
 pub const Match = struct {
     scheme: Scheme,
     tvars: []TypeOrNum,
-    envVars: []EnvRef,
+    envVars: []UnionRef,
     assocs: []*?AssocRef, // null to check for errors. normally, by the end of parsing, it must not be "undefined".
     // ALSO, a null is here when an assoc is not concrete!
     // additional thing: currently it's a pointer, but maybe it should be an index like TypeOrNum and EnvRef.
@@ -1878,7 +1883,7 @@ pub const Match = struct {
             }
         }
 
-        var envVars = std.ArrayList(EnvRef).init(al);
+        var envVars = std.ArrayList(UnionRef).init(al);
         try envVars.appendSlice(self.envVars);
         for (scheme.envVars) |ev| {
             try envVars.append(ev);
@@ -1921,7 +1926,7 @@ pub const Match = struct {
             }
         }
 
-        var envVars = std.ArrayList(EnvRef).init(al);
+        var envVars = std.ArrayList(UnionRef).init(al);
         for (scheme.envVars) |ev| {
             try envVars.append(ev);
         }
@@ -2030,7 +2035,7 @@ pub const Match = struct {
         return null;
     }
 
-    pub fn mapEnv(self: *const @This(), base: EnvRef) ?EnvRef {
+    pub fn mapUnion(self: *const @This(), base: UnionRef) ?UnionRef {
         for (self.scheme.envVars, self.envVars) |s, m| {
             if (base.id == s.id) {
                 return m;
@@ -2093,7 +2098,7 @@ pub const Match = struct {
 
             for (a.envVars, b.envVars) |leRef, reRef| {
                 // ENV SHOULD BE THE SAME SIZE (thats what I'm )
-                if (!EnvRef.envEq(leRef, reRef, ctx.typeContext)) return false;
+                if (!UnionRef.envEq(leRef, reRef, ctx.typeContext)) return false;
             }
 
             for (a.assocs, b.assocs) |mla, mra| {

@@ -304,7 +304,7 @@ pub fn Mono(Back: type) type {
                     // NOTE(env-escaping) instead of looking for outer tvars/envs/assocs, we just extend the environment scheme with outer schemes, so it can be mapped.
                     var outerEnvIt = outerEnvs.iterator();
                     while (outerEnvIt.next()) |oe| {
-                        const ee = self.typeContext.getEnv(oe.*);
+                        const ee = self.typeContext.getUnion(oe.*);
                         if (ee.env.*) |e| {
                             var mef = e.env.outer;
                             var envmatch = e.match;

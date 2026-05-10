@@ -21,7 +21,7 @@ pub const TyStoreElem = union(enum) {
 };
 const TyStore = std.ArrayList(if (ast.TyRefPointer) *TyStoreElem else TyStoreElem);
 
-const EnvRef = ast.EnvRef;
+const UnionRef = ast.UnionRef;
 pub const Env = struct {
     env: *ast.Env,
     match: *const ast.Match,
@@ -41,6 +41,20 @@ pub const Env = struct {
         return .{ .env = self.env, .fun = self.fun };
     }
 };
+
+pub const Union = struct {
+    envs: std.ArrayList(Env), // NOTE(11.05.26): the problem is that we can't really compare envs before. we can, i guess, compare ids, but this would require us to store IDs here (which might not be a bad idea thooooo. like, unification will be faster, because we'll be moving less memory.).
+
+    fn init(al: std.mem.Allocator) @This() {
+        return .{ .envs = std.ArrayList(Env).init(al) };
+    }
+
+    fn initCapacity(al: std.mem.Allocator, cap: usize) !@This() {
+        return .{ .envs = try std.ArrayList(Env).initCapacity(al, cap) };
+    }
+};
+
+// NOTE(11.05.26): it's unused for now.
 pub const MatchLink = struct {
     match: *const ast.Match,
     next: ?*const MatchLink,
@@ -108,8 +122,8 @@ pub const MatchLink = struct {
     }
 };
 const EnvStore = std.ArrayList(union(enum) {
-    Ref: EnvRef,
-    Env: ?Env,
+    Ref: UnionRef,
+    Union: Union,
 });
 
 const NumRef = ast.NumRef;
@@ -189,8 +203,33 @@ pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
     }
 }
 
-pub fn newEnv(self: *Self, e: ?Env) !ast.EnvRef {
-    try self.envContext.append(.{ .Env = e });
+pub fn newEnv(self: *Self, e: ?Env) !ast.UnionRef {
+    var envUnion = Union.init(self.arena);
+    if (e) |ee| {
+        try envUnion.envs.append(ee);
+    }
+
+    try self.envContext.append(.{ .Union = envUnion });
+    const envid = self.envContext.items.len - 1;
+    return .{ .id = envid };
+}
+
+pub fn cloneMapUnion(self: *Self, match: anytype, euRef: ast.UnionRef) !ast.UnionRef {
+    const eu = self.getUnion(euRef).env;
+    var nueu = Union.init(self.arena);
+    for (eu.envs.items) |env| {
+        try nueu.envs.append(.{
+            .env = env.env,
+            .fun = env.fun,
+            .match = try self.mapMatch(match, env.match),
+            .level = env.level,
+        });
+    }
+    return try self.addUnion(&nueu);
+}
+
+fn addUnion(self: *Self, eu: *const Union) !ast.UnionRef {
+    try self.envContext.append(.{ .Union = eu.* });
     const envid = self.envContext.items.len - 1;
     return .{ .id = envid };
 }
@@ -318,7 +357,7 @@ fn unify_(self: *Self, t1: TyRef, t2: TyRef, locs: Locs, fullTys: Full) error{Ou
         .Fun => |lfun| {
             switch (tt2) {
                 .Fun => |rfun| {
-                    try self.unifyEnv(lfun.env, rfun.env, locs, fullTys);
+                    try self.unifyUnion(lfun.env, rfun.env, locs, fullTys);
                     try self.unify_(lfun.ret, rfun.ret, locs, fullTys);
                     try self.unifyParams(lfun.args, rfun.args, locs, fullTys);
                 },
@@ -495,35 +534,34 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
     }
 }
 
-pub fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs, full: Full) !void {
+pub fn unifyUnion(self: *Self, lenvref: UnionRef, renvref: UnionRef, locs: Locs, full: Full) !void {
     _ = full; // use later
+    _ = locs; // use in occurscheck errors
+    // NOTE(11.05.26): ????
     // SLOW AND BAD! Structurally check if environments are the same (but it's BAD, because we are not deduplicating them!!)
     // Later (after we implement classes) we will probably have an id associated with it.
     // Then I can decide if I want structural equality.
     if (lenvref.id == renvref.id) return;
-    const llenv = self.getEnv(lenvref).env.* orelse {
-        // self.envContext.items[lenvref.id] = self.envContext.items[renvref.id];
+    const llenv = self.getUnion(lenvref).env;
+    if (llenv.envs.items.len == 0) {
         self.setEnvRef(lenvref, renvref);
-        return;
-    };
-    const lenv = llenv.env;
-    const rrenv = self.getEnv(renvref).env.* orelse {
-        // self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
-        self.setEnvRef(renvref, lenvref);
-        return;
-    };
-    const renv = rrenv.env;
-
-    if (lenv.insts.items.len != renv.insts.items.len) {
-        try self.envMismatch(lenv, renv, locs);
         return;
     }
 
-    for (lenv.insts.items, renv.insts.items) |lv, rv| {
-        if (!std.meta.eql(lv, rv)) {
-            try self.envMismatch(lenv, renv, locs);
-            return;
-        }
+    const rrenv = self.getUnion(renvref).env;
+    if (rrenv.envs.items.len == 0) {
+        // self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
+        self.setEnvRef(renvref, lenvref);
+        return;
+    }
+
+    // TODO: occurs check for unions
+    if (llenv.envs.items.len > rrenv.envs.items.len) {
+        try llenv.envs.appendSlice(rrenv.envs.items);
+        self.setEnvRef(renvref, lenvref);
+    } else {
+        try rrenv.envs.appendSlice(llenv.envs.items);
+        self.setEnvRef(lenvref, renvref);
     }
 
     // both are equal here!
@@ -531,30 +569,30 @@ pub fn unifyEnv(self: *Self, lenvref: EnvRef, renvref: EnvRef, locs: Locs, full:
     // // TODO: we should also do something like this with types, because this might decrease unification times in the future.
 }
 
-pub fn getEnv(self: *const Self, envref: EnvRef) struct {
-    env: *?Env,
-    base: EnvRef,
+pub fn getUnion(self: *const Self, envref: UnionRef) struct {
+    env: *Union,
+    base: UnionRef,
 } {
     var curref = envref;
     while (true) {
         switch (self.envContext.items[curref.id]) {
-            .Env => |*env| return .{
+            .Union => |*eu| return .{
                 .base = curref,
-                .env = env,
+                .env = eu,
             },
             .Ref => |ref| curref = ref,
         }
     }
 }
 
-fn setEnvRef(self: *Self, src: EnvRef, dest: EnvRef) void {
+fn setEnvRef(self: *Self, src: UnionRef, dest: UnionRef) void {
     var curref = src;
     while (true) {
         const next = self.envContext.items[curref.id];
         self.envContext.items[curref.id] = .{ .Ref = dest };
         switch (next) {
             .Ref => |ref| curref = ref,
-            .Env => return, // already mutated, so we just return
+            .Union => return, // already mutated, so we just return
         }
     }
 }
@@ -563,7 +601,7 @@ fn unifyMatch(self: *Self, lm: *const ast.Match, rm: *const ast.Match, locs: Loc
     try self.unifyParamsWithTNums(lm.tvars, rm.tvars, locs, full);
 
     for (lm.envVars, rm.envVars) |le, re| {
-        try self.unifyEnv(le, re, locs, full);
+        try self.unifyUnion(le, re, locs, full);
     }
 
     // when should / does matching associations happen?
@@ -817,7 +855,8 @@ fn occursCheck(self: *const Self, tyv: ast.TyVar, ty: TyRef) bool {
             return self.occursCheckMatch(tyv, con.application);
         },
         .Fun => |fun| {
-            if (self.getEnv(fun.env).env.*) |env| {
+            const eu = self.getUnion(fun.env).env;
+            for (eu.envs.items) |env| {
                 if (self.occursCheckMatch(tyv, env.match)) return true;
             }
 
@@ -899,13 +938,13 @@ pub fn ftvs(self: *Self, store: *FTVs, tref: ast.Type) error{OutOfMemory}!void {
                 try self.ftvs(store, arg);
             }
 
-            const env = self.getEnv(fun.env);
-            if (env.env.*) |ee| {
+            const eu = self.getUnion(fun.env);
+            for (eu.env.envs.items) |ee| {
                 try self.ftvsFromMatch(store, ee.match);
             }
             // if (env.env == null) { // Q: @grok is this correct? A: if we add unions, we should remove this check.
             // NOTE: check removed. what I'm doing is going to ADD a match of the instantiating function to provide context to the function.
-            try store.envs.insert(env.base);
+            try store.envs.insert(eu.base);
             // }
 
             try self.ftvs(store, fun.ret);
@@ -932,11 +971,11 @@ pub fn ftvsFromMatch(self: *Self, store: *FTVs, m: *const ast.Match) !void {
     }
 
     for (m.envVars) |ev| {
-        const env = self.getEnv(ev);
-        if (env.env.*) |ee| {
-            try self.ftvsFromMatch(store, ee.match);
+        const eu = self.getUnion(ev);
+        for (eu.env.envs.items) |env| {
+            try self.ftvsFromMatch(store, env.match);
         }
-        try store.envs.insert(env.base);
+        try store.envs.insert(eu.base);
     }
 
     for (m.assocs) |massoc| {
@@ -1037,7 +1076,7 @@ pub fn getOuterTVars(self: *Self, binding: ?ast.Binding, store: *TVarStore, tref
 pub const AllStore = struct {
     al: std.mem.Allocator,
     tvars: Set(ast.TVarOrNum, ast.TVarOrNum.comparator()),
-    envs: Set(ast.EnvRef, ast.EnvRef.Comparator),
+    envs: Set(ast.UnionRef, ast.UnionRef.Comparator),
     assocs: Set(ast.Association.ID, std.hash_map.AutoContext(ast.Association.ID)),
 
     pub fn init(al: std.mem.Allocator, tc: *const Self) @This() {
@@ -1045,7 +1084,7 @@ pub const AllStore = struct {
         return .{
             .al = al,
             .tvars = Set(ast.TVarOrNum, ast.TVarOrNum.comparator()).init(al),
-            .envs = Set(ast.EnvRef, ast.EnvRef.Comparator).init(al),
+            .envs = Set(ast.UnionRef, ast.UnionRef.Comparator).init(al),
             .assocs = Set(ast.Association.ID, std.hash_map.AutoContext(ast.Association.ID)).init(al),
         };
     }
@@ -1057,7 +1096,7 @@ pub const AllStore = struct {
             try stvars.append(tv.*);
         }
 
-        var stenvs = std.ArrayList(ast.EnvRef).init(self.al);
+        var stenvs = std.ArrayList(ast.UnionRef).init(self.al);
         var stenvIt = self.envs.iterator();
         while (stenvIt.next()) |env| {
             if (envs.contains(env.*)) {
@@ -1156,9 +1195,9 @@ pub fn getTVarsFromMatch(self: *Self, binding: ?ast.Binding, store: *AllStore, m
     }
 
     for (m.envVars) |envref| {
-        const env = self.getEnv(envref);
-        if (env.env.*) |e| {
-            try self.getTVarsFromMatch(binding, store, e.match);
+        const eu = self.getUnion(envref);
+        for (eu.env.envs.items) |env| {
+            try self.getTVarsFromMatch(binding, store, env.match);
         }
     }
 
@@ -1202,11 +1241,11 @@ pub fn getTVars(self: *Self, binding: ?ast.Binding, store: *AllStore, tref: ast.
             }
 
             // TODO: should put this to a function?
-            const env = self.getEnv(fun.env);
-            if (env.env.*) |e| {
-                try self.getTVarsFromMatch(binding, store, e.match);
+            const eu = self.getUnion(fun.env);
+            for (eu.env.envs.items) |env| {
+                try self.getTVarsFromMatch(binding, store, env.match);
             }
-            try store.envs.insert(env.base);
+            try store.envs.insert(eu.base);
 
             try self.getTVars(binding, store, fun.ret);
         },
@@ -1231,7 +1270,7 @@ pub const FTVs = struct {
             return k.tyv.uid;
         }
     });
-    const Envs = Set(ast.EnvRef, ast.EnvRef.Comparator);
+    const Envs = Set(ast.UnionRef, ast.UnionRef.Comparator);
     const Nums = Set(ast.NumRef, struct {
         pub fn eql(ctx: @This(), a: ast.NumRef, b: ast.NumRef) bool {
             _ = ctx;
@@ -1284,16 +1323,6 @@ pub fn mapType(self: *Self, match: anytype, ty: ast.Type) error{OutOfMemory}!ast
     const bt = self.getTypeAndBase(ty);
     const t = bt.t;
 
-    // for (match.tvars) |tyOrNum| {
-    //     switch (tyOrNum) {
-    //         .Type => |mty| {
-    //             const mt = self.getTypeAndBase(mty);
-    //             if (mt.base.eq(bt.base)) return ty;
-    //         },
-    //         else => continue,
-    //     }
-    // }
-
     return switch (t) {
         .Con => |con| b: {
             const mconMatch = try self.mapMatch_(match, con.application);
@@ -1340,7 +1369,7 @@ pub fn mapType(self: *Self, match: anytype, ty: ast.Type) error{OutOfMemory}!ast
 
             // this obv. won't be necessary with Match
             //   (I meant the recursively applying env part!)
-            const env = try self.mapEnv(match, fun.env);
+            const env = try self.mapUnion(match, fun.env);
             changed = changed or env.id != fun.env.id;
 
             if (!changed) {
@@ -1429,9 +1458,9 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
         }
     }
 
-    var envs = std.ArrayList(ast.EnvRef).init(self.arena);
+    var envs = std.ArrayList(ast.UnionRef).init(self.arena);
     for (mm.envVars) |oldEnv| {
-        const nuEnv = try self.mapEnv(match, oldEnv);
+        const nuEnv = try self.mapUnion(match, oldEnv);
         changed = changed or oldEnv.id != nuEnv.id;
         try envs.append(nuEnv);
     }
@@ -1504,29 +1533,33 @@ fn mapNum(self: *Self, match: anytype, numref: ast.NumRef) ?ast.NumRef {
     return null;
 }
 
-fn mapEnv(self: *Self, match: anytype, envref: ast.EnvRef) error{OutOfMemory}!ast.EnvRef {
-    const envAndBase = self.getEnv(envref);
-    if (match.mapEnv(envAndBase.base)) |nue| {
+fn mapUnion(self: *Self, match: anytype, envref: ast.UnionRef) error{OutOfMemory}!ast.UnionRef {
+    const envAndBase = self.getUnion(envref);
+    if (match.mapUnion(envAndBase.base)) |nue| {
         return nue;
     } else {
-        return if (envAndBase.env.*) |env| bb: {
+        var changed = false;
+        var nueu = try Union.initCapacity(self.arena, envAndBase.env.envs.items.len);
+        for (envAndBase.env.envs.items) |env| {
             const menvMatch = try self.mapMatch_(match, env.match);
-            break :bb if (menvMatch) |envMatch| b: {
-                break :b try self.newEnv(.{
+            try nueu.envs.append(if (menvMatch) |envMatch| b: {
+                changed = true;
+                break :b .{
                     .env = env.env,
                     .match = envMatch,
                     .fun = env.fun,
                     .level = env.level,
-                });
+                };
             } else b: {
-                break :b envref;
-            };
-        } else bb: {
-            // i guess we just return the normal one? random choice.
-            break :bb envref;
+                break :b env;
+            });
+        }
 
-            // try self.newEnv(null); // IMPORTANT: must instantiate new env..
-        };
+        if (changed) {
+            return try self.addUnion(&nueu);
+        } else {
+            return envref;
+        }
     }
 }
 

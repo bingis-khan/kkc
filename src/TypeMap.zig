@@ -46,8 +46,8 @@ pub const TypeMap = struct {
         return self.match.mapTNum(tnum) orelse (self.prev orelse return null).mapTNum(tnum);
     }
 
-    pub fn mapEnv(self: *const @This(), base: ast.EnvRef) ?ast.EnvRef {
-        return self.match.mapEnv(base) orelse (self.prev orelse return null).mapEnv(base);
+    pub fn mapUnion(self: *const @This(), base: ast.UnionRef) ?ast.UnionRef {
+        return self.match.mapUnion(base) orelse (self.prev orelse return null).mapUnion(base);
         // const be = tc.getEnv(base);
         // if (be.env.*) |env| {
         //     return .{ .base = be.base, .env = env };

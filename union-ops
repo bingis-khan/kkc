@@ -1,0 +1,12 @@
+Im rethinking union operations. I think I should refactor some code while I'm at it.
+
+(also, env escaping included!)
+
+newUnion() - can yield empty union or one env union - used in function instantiation
+getUnion() - miau (return reference too)
+cloneUnion() - used in instantiation too. new id n shii.
+   - both should use some addUnion() function, which just adds a new Union - this will make changing the repr easier.
+
+env escaping
+
+- go through each environment in the union and do the thing, miau :3

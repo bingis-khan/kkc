@@ -56,8 +56,6 @@ use Iter
 	cons
 	nil
 
-# use Iter2
-# 	maximum
 
 use Array
 
