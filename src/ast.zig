@@ -237,8 +237,8 @@ pub const Function = struct {
     };
 
     pub const Use = union(enum) {
-        Fun: struct { fun: *Function, m: *const Match },
-        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst },
+        Fun: struct { fun: *Function, m: *const Match, t: Type },
+        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst, t: Type },
 
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
@@ -257,8 +257,40 @@ pub const Function = struct {
     pub const MonoMatchStuff = struct {
         uses: u32,
         completes: EnvCompletes,
+
+        // kinda krap. these collect all callsite unions.
+        // then we can actually check if the union is empty when generating code.
+        callingUnions: CallingUnions, // base refs only
+
+        const CallingUnions = Set(UnionRef, UnionRef.Comparator);
+
+        pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
+            return .{
+                .completes = Function.EnvCompletes.initContext(al, .{
+                    .typeContext = tc,
+                }),
+                .uses = 0,
+                .callingUnions = CallingUnions.init(al),
+            };
+        }
     };
-    pub const MonoMatches = std.HashMap(*const Match, MonoMatchStuff, Match.Comparator, std.hash_map.default_max_load_percentage);
+    pub const MonoEntry = struct {
+        m: *const Match,
+
+        pub const Comparator = struct {
+            typeContext: *const TypeContext,
+            pub fn eql(ctx: @This(), a: MonoEntry, b: MonoEntry) bool {
+                return Match.Comparator.eql(.{ .typeContext = ctx.typeContext }, a.m, b.m);
+            }
+
+            pub fn hash(ctx: @This(), k: MonoEntry) u64 {
+                _ = ctx;
+                _ = k;
+                return 0; // TODO(hash)
+            }
+        };
+    };
+    pub const MonoMatches = std.HashMap(MonoEntry, MonoMatchStuff, MonoEntry.Comparator, std.hash_map.default_max_load_percentage);
     pub const EnvCompletes = Set(FunApp, FunApp.Comparator);
     pub const FunApp = struct {
         fun: *const Function,
@@ -276,6 +308,7 @@ pub const Function = struct {
             }
 
             pub fn hash(ctx: @This(), k: FunApp) u64 {
+                // TODO: hasEnv
                 return k.fun.name.uid * 497192 + Match.Comparator.hash(.{ .typeContext = ctx.typeContext }, k.m);
             }
         };
@@ -1212,7 +1245,7 @@ pub const TyRef = struct {
                 .Fun => |f2| {
                     if (!tyEq(f1.ret, f2.ret, tyc)) return false;
                     if (!tyEqs(f1.args, f2.args, tyc)) return false;
-                    if (!UnionRef.envEq(f1.env, f2.env, tyc)) return false;
+                    if (!UnionRef.unionEq(f1.env, f2.env, tyc)) return false;
                     return true;
                 },
                 else => false,
@@ -1324,18 +1357,23 @@ pub const UnionRef = struct {
     // BRUH, this only makes sense when using mono, if it's used in parser, then bruh.
     // this is temporary, because I want to add unions at some point tho.
     // NOTE(11.05.26): uh oh? i want to use it in parser :3
-    pub fn envEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
+    // pub fn envEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
+    //     const le = tyc.getUnion(l);
+    //     const re = tyc.getUnion(r);
+
+    //     if (le.env.* == null and re.env.* == null) {
+    //         return le.base.id == re.base.id;
+    //     } else {
+    //         // currently, we don't care about structural equality that much, especially if we're gonna implement unions.
+    //         if (le.env.*.?.env.id != re.env.*.?.env.id) return false;
+    //         // Ctx.pp(ctx.typeContext, a);
+    //         return Match.Comparator.eql(.{ .typeContext = tyc }, le.env.*.?.match, re.env.*.?.match);
+    //     }
+    // }
+    pub fn unionEq(l: @This(), r: @This(), tyc: *const TypeContext) bool {
         const le = tyc.getUnion(l);
         const re = tyc.getUnion(r);
-
-        if (le.env.* == null and re.env.* == null) {
-            return le.base.id == re.base.id;
-        } else {
-            // currently, we don't care about structural equality that much, especially if we're gonna implement unions.
-            if (le.env.*.?.env.id != re.env.*.?.env.id) return false;
-            // Ctx.pp(ctx.typeContext, a);
-            return Match.Comparator.eql(.{ .typeContext = tyc }, le.env.*.?.match, re.env.*.?.match);
-        }
+        return le.base.id == re.base.id;
     }
 };
 pub const NumRef = struct {
@@ -1495,7 +1533,7 @@ pub fn TypeF(comptime a: ?type) type {
                     for (l.args, r.args) |ll, rr| {
                         if (!ll.tyEq(rr, ctx.typeContext)) return false;
                     }
-                    if (!UnionRef.envEq(l.env, r.env, ctx.typeContext)) return false;
+                    if (!UnionRef.unionEq(l.env, r.env, ctx.typeContext)) return false;
 
                     return true;
                 }
@@ -1864,7 +1902,12 @@ pub const Match = struct {
         Id: Association.ID, // this one means the assoc is contained in some Scheme.
 
         // I FUCKING HATE THESE NAMES
-        pub const InstPair = struct { fun: *Function, m: *Match, locality: Locality };
+        pub const InstPair = struct {
+            fun: *Function,
+            m: *Match,
+            locality: Locality,
+            t: Type,
+        };
     };
 
     pub fn joinScheme(self: *const @This(), scheme: *const Scheme, tc: *TypeContext, al: std.mem.Allocator) !*const @This() {
@@ -2098,7 +2141,7 @@ pub const Match = struct {
 
             for (a.envVars, b.envVars) |leRef, reRef| {
                 // ENV SHOULD BE THE SAME SIZE (thats what I'm )
-                if (!UnionRef.envEq(leRef, reRef, ctx.typeContext)) return false;
+                if (!UnionRef.unionEq(leRef, reRef, ctx.typeContext)) return false;
             }
 
             for (a.assocs, b.assocs) |mla, mra| {

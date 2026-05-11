@@ -10,3 +10,44 @@ cloneUnion() - used in instantiation too. new id n shii.
 env escaping
 
 - go through each environment in the union and do the thing, miau :3
+
+
+----
+
+
+Im thinking how to handle unions here. Two problems:
+
+1. generating unions and the mono/c is kind of a spaghetti (actually not that much, but some stuff should be deduplicated,
+	because it actually shares the behavior.)
+	TWO functions would need to be generated depending on the callsite: *if any function in the union has an environment or not.*
+		however, we can generate the environment in the correct place and function on-demand on callsite.
+		ALTHOUGH, a simple hacky solution while we figure stuff out would be to just put an Env/Void* there and optionally put a NULL as first argument.
+		this is temporary of course, but might solve the problem for now.
+	
+2. it would be nice if we could generate a flat assembly. to do this, it would be nice if the functions were explicitly
+	generated and in the correct order. in this case, knowing the calling context would be nice.
+
+3. eliminating unused functions from variables, eg:
+
+x =& fn: 1
+
+fn miau()
+	y = 420
+	x <&= fn: y
+
+# miau not called. stuff should be eliminated from the union.
+x()
+
+---
+
+how should i divide unions and shii
+
+unions /= (envs == function)
+
+so, env id can be shared with a function, because it's a one to one relationship.
+but a union can be of multiple things.
+
+---
+
+for mono-unions, we just make a second mono-set.
+at function expansion, when we operate with a match, we add the finished mono-set of scheme unions into current unions (mapped obviously.)

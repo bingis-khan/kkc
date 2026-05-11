@@ -13,6 +13,14 @@ class Allocator
 	allocate (self _, count Size) -> Slice a
 	free (self _, slice Slice a) -> Unit
 
+# zig-like allocator struct thing.
+# Allocator
+# 	allocate (sz Size) -> Slice U8
+# 	free (p Ptr U8) -> Unit
+
+# fn allocate (self Allocator, count Size) -> Slice a
+# 	pass
+
 
 # bogus datatype for the C allocator.
 CAllocator

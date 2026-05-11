@@ -54,7 +54,6 @@ pub const Union = struct {
     }
 };
 
-// NOTE(11.05.26): it's unused for now.
 pub const MatchLink = struct {
     match: *const ast.Match,
     next: ?*const MatchLink,

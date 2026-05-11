@@ -1,16 +1,5 @@
-x = (fn(xx))
-	if True
-		y = 420
-		y = (fn(xxx))
-			println('cock')
-
-		y(111)
-		y = 420
-		y = 420
-		y = 420
-		println(123)
-	y = 1
-	pass
-	pass
-	pass
-x(123)
+y = 1
+f = fn: y
+x = 2
+f <= fn: x
+println(f())

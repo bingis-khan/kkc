@@ -4003,7 +4003,7 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
             // try self.expandFunctionEnvIntoCurrentEnv(self.env, fun.env, funTyAndMatch.m);
 
             // add uses
-            const use = AST.Function.Use{ .Fun = .{ .fun = fun, .m = funTyAndMatch.m } };
+            const use = AST.Function.Use{ .Fun = .{ .fun = fun, .m = funTyAndMatch.m, .t = funTyAndMatch.t } };
             if (AST.EnvFun.getFun(self.env)) |envfun| {
                 try envfun.temp__mono.uses.append(use);
             } else {
@@ -4326,6 +4326,7 @@ fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
         .ClassFun = .{
             .cfun = cfun,
             .ref = ref,
+            .t = funTy,
         },
     };
 
@@ -4488,6 +4489,7 @@ fn solveAvailableConstraints(self: *Self) !void {
                                 .fun = fun,
                                 .m = funTyAndMatch.m,
                                 .locality = locality(conc.env, fun.env.level),
+                                .t = funTyAndMatch.t,
                             } };
 
                             const envInst = AST.EnvVar{

@@ -111,19 +111,27 @@ pub fn Mono(Back: type) type {
                     .Function => |fun| {
                         var it = self.getEnvUses(fun);
                         while (it.next()) |kv| {
-                            const m = kv.key_ptr.*;
+                            const m = kv.key_ptr.*.m;
                             const mm = try self.typeContext.mapMatch(self.tymap, m);
+                            const hasEnv = false; // TEMP.
                             const funapp = ast.Function.FunApp{ .fun = fun, .m = mm };
                             if (Debug) {
                                 self.ctx.print(.{ "gen fun: ", fun.name, " ", fun.env, " ", mm, "\n" });
                             }
+
+                            // for debugging.
+                            // (alternatively, we can do what the .Instance case does (20.05.26))
+                            if (self.useScope.uses.get(funapp)) |k| {
+                                std.debug.assert(std.meta.eql(k, .{ .uses = kv.value_ptr.uses, .defined = true }));
+                            }
+
                             try self.useScope.uses.put(funapp, .{ .uses = kv.value_ptr.uses, .defined = true });
                             {
                                 const oldM = self.tymap;
                                 defer self.tymap = oldM;
                                 self.tymap = &TypeMap.init(mm, oldM);
 
-                                try Backend.genFunction(self, fun);
+                                try Backend.genFunction(self, fun, hasEnv);
                                 // try self.genEnv(&fun.env.monoInsts, m, null);
                             }
                         }
@@ -138,7 +146,7 @@ pub fn Mono(Back: type) type {
                                     try self.useScope.uses.put(
                                         .{
                                             .fun = instFun.fun,
-                                            .m = e.key_ptr.*,
+                                            .m = e.key_ptr.*.m,
                                         },
                                         .{
                                             .uses = e.value_ptr.uses,
@@ -148,9 +156,13 @@ pub fn Mono(Back: type) type {
                                 }
                             }
                             while (it.next()) |kv| {
-                                const m = kv.key_ptr.*;
+                                const m = kv.key_ptr.m;
                                 const mm = try self.typeContext.mapMatch(self.tymap, m);
-                                const funapp = ast.Function.FunApp{ .fun = instFun.fun, .m = mm };
+                                const hasEnv = false; // TEMP
+                                const funapp = ast.Function.FunApp{
+                                    .fun = instFun.fun,
+                                    .m = mm,
+                                };
 
                                 // mark that the env is going to be generated shortly
                                 self.useScope.uses.getPtr(funapp).?.defined = true;
@@ -163,10 +175,16 @@ pub fn Mono(Back: type) type {
                                     defer self.tymap = oldM;
                                     self.tymap = &TypeMap.init(mm, oldM);
 
-                                    try Backend.genFunction(self, instFun.fun);
+                                    try Backend.genFunction(self, instFun.fun, hasEnv);
 
-                                    const use = try self.useScope.findUses(.{ .fun = instFun.fun, .m = mm });
-                                    try self.tryCompleteEnv(.{ .fun = instFun.fun, .m = mm }, kv.value_ptr, use);
+                                    const use = try self.useScope.findUses(.{
+                                        .fun = instFun.fun,
+                                        .m = mm,
+                                    });
+                                    try self.tryCompleteEnv(.{
+                                        .fun = instFun.fun,
+                                        .m = mm,
+                                    }, kv.value_ptr, use);
                                 }
                             }
                         }
@@ -181,7 +199,7 @@ pub fn Mono(Back: type) type {
                 var ecIt = v.completes.iterator();
                 while (ecIt.next()) |app| {
                     try Backend.genEnvCompletion(self, app.*, fun);
-                    const iv = app.fun.temp__mono.matches.getPtr(app.m).?;
+                    const iv = app.fun.temp__mono.matches.getPtr(.{ .m = app.m }).?;
                     const iu = try self.useScope.findUses(app.*);
                     iu.uses -= 1;
 
@@ -270,7 +288,7 @@ pub fn Mono(Back: type) type {
                 };
             }
 
-            fn expandFunction(self: *@This(), fun: *ast.Function, um: *const ast.Match) Error!void {
+            fn expandFunction(self: *@This(), fun: *ast.Function, um: *const ast.Match, baseUnionId: ast.UnionRef) Error!void {
                 if (!fun.env.monoFinished) {
                     defer fun.env.monoFinished = true;
 
@@ -303,9 +321,9 @@ pub fn Mono(Back: type) type {
 
                     // NOTE(env-escaping) instead of looking for outer tvars/envs/assocs, we just extend the environment scheme with outer schemes, so it can be mapped.
                     var outerEnvIt = outerEnvs.iterator();
-                    while (outerEnvIt.next()) |oe| {
-                        const ee = self.typeContext.getUnion(oe.*);
-                        if (ee.env.*) |e| {
+                    while (outerEnvIt.next()) |oue| {
+                        const ee = self.typeContext.getUnion(oue.*);
+                        for (ee.env.envs.items) |*e| {
                             var mef = e.env.outer;
                             var envmatch = e.match;
                             while (mef) |ef| {
@@ -316,7 +334,7 @@ pub fn Mono(Back: type) type {
                             }
 
                             // SUSSY
-                            ee.env.*.?.match = envmatch;
+                            e.match = envmatch;
                         }
                     }
 
@@ -339,7 +357,7 @@ pub fn Mono(Back: type) type {
                         switch (use) {
                             .Fun => |calledFun| {
                                 if (calledFun.fun.env.level > fun.env.level) {
-                                    try self.expandFunction(calledFun.fun, calledFun.m);
+                                    try self.expandFunction(calledFun.fun, calledFun.m, unreachable);
                                 }
                             },
                             .ClassFun => |cfun| {
@@ -349,7 +367,7 @@ pub fn Mono(Back: type) type {
                                     }, //{}, // don't do anything, since it's a function from outside.
                                     .InstFun => |calledFun| {
                                         if (calledFun.fun.env.level > fun.env.level) {
-                                            try self.expandFunction(calledFun.fun, calledFun.m);
+                                            try self.expandFunction(calledFun.fun, calledFun.m, unreachable);
                                         }
                                     },
                                 }
@@ -360,9 +378,14 @@ pub fn Mono(Back: type) type {
 
                 matchAlreadyRegistered: {
                     {
-                        const gp = try fun.temp__mono.matches.getOrPut(um);
+                        const gp = try fun.temp__mono.matches.getOrPut(.{
+                            .m = um,
+                        });
                         if (gp.found_existing) break :matchAlreadyRegistered;
-                        gp.value_ptr.* = .{ .completes = ast.Function.EnvCompletes.initContext(self.al, .{ .typeContext = self.typeContext }), .uses = 0 };
+                        gp.value_ptr.* = ast.Function.MonoMatchStuff.init(
+                            self.al,
+                            self.typeContext,
+                        );
                     }
 
                     if (Debug) {
@@ -383,7 +406,7 @@ pub fn Mono(Back: type) type {
                         switch (inst.v) {
                             .Fun => |ifn| {
                                 if (ifn.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
-                                    try self.expandFunction(ifn, iinst.m);
+                                    try self.expandFunction(ifn, iinst.m, getBaseUnionRef(self.typeContext, inst.t));
                                 } else {
                                     try self.addToEnv(fun.env.outer, iinst);
                                 }
@@ -396,7 +419,7 @@ pub fn Mono(Back: type) type {
                                                 .InstFun => |ipair| {
                                                     const ifn = ipair.fun;
                                                     if (ifn.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
-                                                        try self.expandFunction(ifn, ipair.m);
+                                                        try self.expandFunction(ifn, ipair.m, getBaseUnionRef(self.typeContext, inst.t));
                                                     } else {
                                                         // try self.addToEnv(fun.env.outer, iinst);
                                                     }
@@ -441,7 +464,11 @@ pub fn Mono(Back: type) type {
                         };
 
                         if (afun.fun.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
-                            try self.expandFunction(afun.fun, afun.m);
+                            try self.expandFunction(
+                                afun.fun,
+                                afun.m,
+                                getBaseUnionRef(self.typeContext, afun.t),
+                            );
                         } else {
                             // try self.addToEnv(fun.env.outer, .{
                             //     .v = .{ .Fun = afun.fun },
@@ -463,13 +490,18 @@ pub fn Mono(Back: type) type {
                             // }
                             // ctx.print("\n");
                             // }
-                            try afun.fun.temp__mono.matches.getPtr(afun.m).?.completes.insert(.{ .fun = fun, .m = um });
-                            fun.temp__mono.matches.getPtr(um).?.uses += 1;
+                            try afun.fun.temp__mono.matches.getPtr(.{ .m = afun.m }).?.completes.insert(.{ .fun = fun, .m = um });
+                            fun.temp__mono.matches.getPtr(.{ .m = um }).?.uses += 1;
                         }
                     }
                 }
 
                 // if there was already a match, no need to expand.
+                // we also add the current union to this yo.
+                const mms = fun.temp__mono.matches.getPtr(.{
+                    .m = um,
+                }).?;
+                try mms.callingUnions.insert(baseUnionId);
             }
 
             fn addToEnv(self: *@This(), startEnv: ?ast.EnvFun, umInst: ast.EnvVar) !void {
@@ -506,12 +538,16 @@ pub fn Mono(Back: type) type {
                     .ClassFun => |cfun| {
                         switch (cfun.ref.*.?) {
                             .InstFun => |fun| {
-                                try monoStuff.expandFunction(fun.fun, fun.m);
+                                const baseUnionRef = getBaseUnionRef(tc, cfun.t);
+                                try monoStuff.expandFunction(fun.fun, fun.m, baseUnionRef);
                             },
                             .Id => unreachable, // actually unreachable cuz these are top level.
                         }
                     },
-                    .Fun => |fun| try monoStuff.expandFunction(fun.fun, fun.m),
+                    .Fun => |fun| {
+                        const unionBase = getBaseUnionRef(tc, fun.t);
+                        try monoStuff.expandFunction(fun.fun, fun.m, unionBase);
+                    },
                 }
             }
 
@@ -541,4 +577,9 @@ pub fn Mono(Back: type) type {
             return tsz.getFieldOffsetFromType(t, mem);
         }
     };
+}
+
+fn getBaseUnionRef(tc: *const TypeContext, t: ast.Type) ast.UnionRef {
+    const tt = tc.getType(t);
+    return tc.getUnion(tt.Fun.env).base;
 }
