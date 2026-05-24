@@ -1,5 +1,5 @@
-y = 1
-f = fn: y
 x = 2
-f <= fn: x
-println(f())
+f = fn m: m + x
+y = 1
+f <= fn m: m + 1
+println(f(2))

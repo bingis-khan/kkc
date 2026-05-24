@@ -187,8 +187,8 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
 
         var typarams = std.ArrayList(Parameter).init(self.backend.al);
 
-        if (!isFunEnvEmpty) {
-            try typarams.append(.{ .v = .{ .Env = nuId }, .t = undefined });
+        if (hasEnv) {
+            try typarams.append(.{ .v = if (isFunEnvEmpty) .PlaceholderEnv else .{ .Env = nuId }, .t = undefined });
         }
 
         for (params) |param| {
@@ -211,7 +211,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         try d.definition(ret, Tuple(.{ ast.Var{ .name = name, .uid = nuId }, "(", SepBy(", ", typarams.items), ")" }));
         try d.beginBody();
         {
-            const paramMatch = if (isFunEnvEmpty) typarams.items else typarams.items[1..];
+            const paramMatch = if (!hasEnv) typarams.items else typarams.items[1..];
 
             skipCondition: {
                 var condl = startLine(self);
@@ -286,7 +286,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
                     switch (inst.locality(env)) {
                         .Local => try i.localVarThatCouldPossiblyBeDeconed(v),
                         .External => {
-                            try i.j(.{ "env.", v.v });
+                            try i.j(.{ "env->", v.v });
                         },
                     }
                 },
@@ -298,7 +298,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
                         switch (inst.locality(env)) {
                             .Local => try i.j(.{ EnvInstCName, funNuId }),
                             .External => {
-                                try i.j(.{ "env.", EnvInstCName, funNuId });
+                                try i.j(.{ "env->", EnvInstCName, funNuId });
                             },
                         }
                     } else continue;
@@ -315,7 +315,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
                                 switch (inst.locality(env)) {
                                     .Local => try i.j(.{ "envinst", funNuId }),
                                     .External => {
-                                        try i.j(.{ "env.", "envinst", funNuId });
+                                        try i.j(.{ "env->", "envinst", funNuId });
                                     },
                                 }
                             } else continue;
@@ -340,7 +340,9 @@ const Parameter = struct {
     v: union(enum) {
         NormalVar: ast.Var,
         RefVar: ast.Var,
-        Env: Unique, // funny! it should only happend in the beginning.
+
+        Env: Unique, // funny! it should only appear as the first argument.
+        PlaceholderEnv, // for functions in unions with env, but when the functions don't actually need any environment.
     },
     t: ast.Type,
 
@@ -350,9 +352,10 @@ const Parameter = struct {
             .RefVar => |t| try stmt.definition(s.t, t),
             .Env => |nuid| {
                 try stmt.p(.{"struct"});
-                try stmt.j(.{ "env", nuid });
+                try stmt.j(.{ "env", nuid, "*" });
                 try stmt.p(.{"env"});
             },
+            .PlaceholderEnv => try stmt.p("void* __env"),
         }
     }
 };
@@ -463,7 +466,7 @@ pub fn genUnionInst(self: *Self, t: ast.Type) !?Unique {
         try ifun.definition(ret, Tuple(.{
             "(*fun)",
             "(",
-            Join(.{ "struct env", nuId }),
+            Join(.{ "struct env", nuId, "*" }),
             PrependAll(", ", params),
             ")",
         }));
@@ -506,7 +509,7 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
             }
             switch (vm.locality) {
                 .Local => try s.localVarThatCouldPossiblyBeDeconed(vm.varRef),
-                .External => try s.j(.{ "env.", vm.varRef.v }),
+                .External => try s.j(.{ "env->", vm.varRef.v }),
             }
 
             for (vm.accessors) |acc| {
@@ -1160,7 +1163,7 @@ const Stmt = struct {
                             try stmt.localVarThatCouldPossiblyBeDeconed(vv);
                         },
                         .External => {
-                            try stmt.j(.{ "env.", vv.v });
+                            try stmt.j(.{ "env->", vv.v });
                         },
                     }
                 },
@@ -1190,19 +1193,19 @@ const Stmt = struct {
                     try stmt.p(.{num});
                 },
             },
-            .Call => |call| {
-                const funTy = (try getType(stmt.ctx, call.callee.t)).Fun;
+            .Call => |funcall| {
+                const funTy = (try getType(stmt.ctx, funcall.callee.t)).Fun;
                 const envm = getUnion(stmt.ctx, funTy.env).yunion;
 
                 switch (try areAllEnvsEmptyT(stmt.ctx, &envm)) {
                     .AllEmpty => {
-                        try genExpr(stmt, call.callee);
+                        try genExpr(stmt, funcall.callee);
 
                         try stmt.p("(");
-                        if (call.args.len > 0) {
-                            try genExpr(stmt, call.args[0]);
+                        if (funcall.args.len > 0) {
+                            try genExpr(stmt, funcall.args[0]);
 
-                            for (call.args[1..]) |arg| {
+                            for (funcall.args[1..]) |arg| {
                                 try stmt.j(", ");
                                 try genExpr(stmt, arg);
                             }
@@ -1211,13 +1214,13 @@ const Stmt = struct {
                         try stmt.p(")");
                     },
                     .OneEnv => {
-                        const t = try stmt.tempExpr(call.callee);
+                        const t = try stmt.tempExpr(funcall.callee);
                         try stmt.j(.{ t, ".fun" });
 
                         try stmt.p("(");
-                        try stmt.j(.{ t, ".env" });
+                        try stmt.j(.{ "&", t, ".env" });
 
-                        for (call.args) |arg| {
+                        for (funcall.args) |arg| {
                             try stmt.j(", ");
                             try genExpr(stmt, arg);
                         }
@@ -1634,32 +1637,12 @@ const Stmt = struct {
             .Lam => |lam| {
                 const munionId = try genUnionInst(stmt.ctx, expr.t);
                 const hasEnv = munionId != null;
-                const nuId = (try genFunctionForReal(stmt.ctx, "lam", lam.params, lam.returnType(), lam.env, null, switch (lam.body) {
+                const fungen = (try genFunctionForReal(stmt.ctx, "lam", lam.params, lam.returnType(), lam.env, null, switch (lam.body) {
                     .Expr => |lamexpr| .{ .Expr = lamexpr },
                     .Body => |bod| .{ .Body = bod.stmts },
-                }, hasEnv)).id;
+                }, hasEnv));
 
-                // TEMP?
-                if (!hasEnv) {
-                    try stmt.p(.{ast.Var{ .name = "lam", .uid = nuId }});
-                } else {
-                    // CRINGE
-                    try stmt.p(.{"(struct"});
-                    try stmt.j(.{
-                        "envunion",
-                        munionId.?,
-                        "){ .fun = ",
-                        ast.Var{ .name = "lam", .uid = nuId },
-                    });
-                    if (!try isEnvEmpty(stmt.ctx, lam.env)) {
-                        try stmt.j(.{
-                            ", .env = ",
-                            "envinst",
-                            nuId,
-                        });
-                    }
-                    try stmt.p("}");
-                }
+                try call(stmt, "lam", fungen, munionId, lam.env, .Local, expr.t);
             },
             .AnonymousRecord => |rec| {
                 switch (try getTypeMapped(stmt.ctx, expr.t)) {
@@ -1814,36 +1797,54 @@ const Stmt = struct {
         stmt.ctx.tymap = &tymap;
         defer stmt.ctx.tymap = oldTymap;
 
-        const hasEnv = (try areAllEnvsEmptyTOfFunType(stmt.ctx, functionTy)).hasEnv();
+        const munionId = try genUnionInst(stmt.ctx, functionTy);
+        const hasEnv = munionId != null;
         const funNuId = try genFunctionForRealForReal(stmt.ctx, fun, hasEnv);
-        const nuId = funNuId.id;
 
-        if (try isEnvEmpty(stmt.ctx, fun.env)) { // TODO: handle union stuff.
-            try stmt.p(.{ast.Var{ .name = fun.name.name, .uid = nuId }});
+        try call(stmt, fun.name.name, funNuId, munionId, fun.env, locality, functionTy);
+    }
+
+    fn call(stmt: *@This(), funname: Str, fungen: FunGen, munionId: ?Unique, env: *ast.Env, locality: ast.Locality, t: ast.Type) !void {
+        const hasEnv = munionId != null;
+        const nuId = fungen.id;
+
+        if (!hasEnv) {
+            try stmt.p(.{ast.Var{ .name = funname, .uid = nuId }});
         } else {
-            const munionId = try genUnionInst(stmt.ctx, functionTy);
-            _ = munionId; // TODO: handle env stuff
-
+            // CRINGE
             try stmt.p(.{"(struct"});
             try stmt.j(.{
                 "envunion",
-                nuId,
-                "){ .fun = ",
-                ast.Var{ .name = fun.name.name, .uid = nuId },
-                ", .env = ",
+                munionId.?,
+                "){ .fun = (",
             });
-            if (funNuId.type == .Recursive) {
-                try stmt.j(.{"env"});
-            } else {
-                try stmt.j(.{
-                    if (locality == .Local) "" else "env.",
-                    "envinst",
-                    nuId,
-                });
-            }
+            const ty = (try getTypeMapped(stmt.ctx, t)).Fun;
+            try stmt.definition(ty.ret, Tuple(.{
+                "(*)",
+                "(",
+                Join(.{ "struct env", munionId.?, "*" }),
+                PrependAll(", ", ty.args),
+                ")",
+            }));
             try stmt.j(.{
-                " }",
+                ")",
+                ast.Var{ .name = funname, .uid = nuId },
             });
+            if (!try isEnvEmpty(stmt.ctx, env)) {
+                try stmt.j(.{
+                    ", .env = ",
+                });
+                if (fungen.type == .Recursive) {
+                    try stmt.j(.{"env"});
+                } else {
+                    try stmt.j(.{
+                        if (locality == .Local) "" else "env->",
+                        "envinst",
+                        nuId,
+                    });
+                }
+            }
+            try stmt.p("}");
         }
     }
 
