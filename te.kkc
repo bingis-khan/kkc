@@ -1,5 +1,5 @@
 x = 2
 f = fn m: m + x
 y = 1
-f <= fn m: m + 1
+f <= fn m: m + y
 println(f(2))

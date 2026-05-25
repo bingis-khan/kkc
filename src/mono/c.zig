@@ -73,7 +73,8 @@ const FunGen = struct {
         Recursive,
     },
 };
-const UnionsGenerated = std.HashMap(UnionApp, ?Unique, UnionApp.Comparator, std.hash_map.default_max_load_percentage);
+const UnionInstType = struct { id: Unique, ut: enum { OneEnv, MoreEnvs } };
+const UnionsGenerated = std.HashMap(UnionApp, ?UnionInstType, UnionApp.Comparator, std.hash_map.default_max_load_percentage);
 const EnvsGenerated = std.HashMap(EnvApp, ?Unique, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
 const TypesGenerated = std.HashMap(ast.TypeApplication, Unique, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
 const AnonsGenerated = std.HashMap([]Field, Unique, struct {
@@ -364,8 +365,9 @@ const Parameter = struct {
 
 const UnionCName = "struct envunion";
 const EnvCName = "struct env";
-const UnionInstCName = "unioninst";
+const UnionInstCName = "union unioninst";
 const EnvInstCName = "envinst";
+const EnvMemCName = "envmem";
 
 // generate the env struct
 pub fn genEnvStruct(self: *Self, envfun: ast.EnvFun, um: *const ast.Match) !?Unique {
@@ -420,69 +422,127 @@ pub fn genEnvStruct(self: *Self, envfun: ast.EnvFun, um: *const ast.Match) !?Uni
 }
 
 // gen env inst struct if not generated AND create an instantiation in "current place"
-pub fn genUnionInst(self: *Self, t: ast.Type) !?Unique {
+pub fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
     const funty = (try getTypeMapped(self, t)).Fun;
     const params = funty.args;
     const ret = funty.ret;
     const yunion = funty.env;
     const unionApp = try UnionApp.fromUnion(self, yunion);
-    const nuId = b: {
-        if (self.backend.unionsGenerated.get(unionApp)) |muid| {
-            return muid;
-        }
-
-        const eu = getUnion(self, yunion);
-        switch (try areAllEnvsEmptyT(self, &eu.yunion)) {
-            .AllEmpty => {
-                try self.backend.unionsGenerated.put(unionApp, null);
-                return null;
-            },
-            .OneEnv => |oneEnv| {
-                const tmp = try genEnvStruct(self, .{ .env = oneEnv.env, .fun = oneEnv.fun }, oneEnv.match);
-                try self.backend.unionsGenerated.put(unionApp, tmp);
-                if (tmp) |uid| {
-                    break :b uid;
-                } else {
-                    return null;
-                }
-            },
-            else => unreachable,
-        }
-    };
-
-    // generate the env inst thing
-    {
-        const oldCW = self.backend.cur;
-        self.backend.cur = CW.init(self.backend.al);
-        defer self.backend.cur = oldCW;
-
-        var e = startLine(self);
-        try e.p(.{"struct"});
-        try e.j(.{ "envunion", nuId });
-        try e.beginBody();
-
-        var ifun = startLine(self);
-
-        try ifun.definition(ret, Tuple(.{
-            "(*fun)",
-            "(",
-            Join(.{ "struct env", nuId, "*" }),
-            PrependAll(", ", params),
-            ")",
-        }));
-        try ifun.finishStmt();
-
-        var ienv = startLine(self);
-        try ienv.p(.{"struct"});
-        try ienv.j(.{ "env", nuId });
-        try ienv.p("env");
-        try ienv.finishStmt();
-
-        try endBodyAndFinishStmt(self);
-        try self.backend.parts.append(self.backend.cur);
+    if (self.backend.unionsGenerated.get(unionApp)) |muid| {
+        return muid;
     }
 
-    return nuId;
+    const eu = getUnion(self, yunion);
+    const ut = try areAllEnvsEmptyT(self, &eu.yunion);
+    switch (ut) {
+        .AllEmpty => {
+            try self.backend.unionsGenerated.put(unionApp, null);
+            return null;
+        },
+        .OneEnv => |oneEnv| {
+            const mnuId = try genEnvStruct(self, .{ .env = oneEnv.env, .fun = oneEnv.fun }, oneEnv.match);
+            if (mnuId == null) {
+                try self.backend.unionsGenerated.put(unionApp, null);
+                return null;
+            }
+
+            const nuId = mnuId.?;
+            try self.backend.unionsGenerated.put(unionApp, .{ .id = nuId, .ut = .OneEnv });
+
+            // generate the env inst thing
+            {
+                const oldCW = self.backend.cur;
+                self.backend.cur = CW.init(self.backend.al);
+                defer self.backend.cur = oldCW;
+
+                var e = startLine(self);
+                try e.j(.{ UnionCName, nuId });
+                try e.beginBody();
+
+                var ifun = startLine(self);
+
+                try ifun.definition(ret, Tuple(.{
+                    "(*fun)",
+                    "(",
+                    Join(.{ EnvCName, nuId, "*" }),
+                    PrependAll(", ", params),
+                    ")",
+                }));
+                try ifun.finishStmt();
+
+                var ienv = startLine(self);
+                try ienv.j(.{ EnvCName, nuId });
+                try ienv.p("env");
+                try ienv.finishStmt();
+
+                try endBodyAndFinishStmt(self);
+                try self.backend.parts.append(self.backend.cur);
+            }
+
+            return .{ .id = nuId, .ut = .OneEnv };
+        },
+        .MoreEnvs => {
+            const nuId = self.backend.tempgen.newUnique();
+            try self.backend.unionsGenerated.put(unionApp, .{ .id = nuId, .ut = .MoreEnvs });
+
+            // generate union type
+            {
+                const oldCW = self.backend.cur;
+                self.backend.cur = CW.init(self.backend.al);
+                defer self.backend.cur = oldCW;
+
+                var e = startLine(self);
+                try e.j(.{ UnionInstCName, nuId });
+                try e.beginBody();
+
+                for (eu.yunion.envs.items) |*env| {
+                    var envl = startLine(self);
+                    const menvId = try genEnvStruct(self, .{ .env = env.env, .fun = env.fun }, env.match);
+                    if (menvId == null) continue;
+                    const envId = menvId.?;
+
+                    try envl.j(.{ EnvCName, envId });
+                    try envl.j(.{ EnvMemCName, envId });
+                    try envl.finishStmt();
+                }
+
+                try endBodyAndFinishStmt(self);
+                try self.backend.parts.append(self.backend.cur);
+            }
+
+            // generate inst type
+            {
+                const oldCW = self.backend.cur;
+                self.backend.cur = CW.init(self.backend.al);
+                defer self.backend.cur = oldCW;
+
+                var e = startLine(self);
+                try e.j(.{ UnionCName, nuId });
+                try e.beginBody();
+
+                var ifun = startLine(self);
+
+                try ifun.definition(ret, Tuple(.{
+                    "(*fun)",
+                    "(",
+                    Join(.{ UnionInstCName, nuId, "*" }),
+                    PrependAll(", ", params),
+                    ")",
+                }));
+                try ifun.finishStmt();
+
+                var ienv = startLine(self);
+                try ienv.j(.{ UnionInstCName, nuId });
+                try ienv.p("env");
+                try ienv.finishStmt();
+
+                try endBodyAndFinishStmt(self);
+                try self.backend.parts.append(self.backend.cur);
+            }
+
+            return .{ .id = nuId, .ut = .MoreEnvs };
+        },
+    }
 }
 
 pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
@@ -1213,7 +1273,7 @@ const Stmt = struct {
 
                         try stmt.p(")");
                     },
-                    .OneEnv => {
+                    .OneEnv, .MoreEnvs => {
                         const t = try stmt.tempExpr(funcall.callee);
                         try stmt.j(.{ t, ".fun" });
 
@@ -1226,7 +1286,6 @@ const Stmt = struct {
                         }
                         try stmt.p(")");
                     },
-                    .MoreEnvs => unreachable,
                 }
             },
             .Str => |s| {
@@ -1804,25 +1863,29 @@ const Stmt = struct {
         try call(stmt, fun.name.name, funNuId, munionId, fun.env, locality, functionTy);
     }
 
-    fn call(stmt: *@This(), funname: Str, fungen: FunGen, munionId: ?Unique, env: *ast.Env, locality: ast.Locality, t: ast.Type) !void {
-        const hasEnv = munionId != null;
+    fn call(stmt: *@This(), funname: Str, fungen: FunGen, unionInstType: ?UnionInstType, env: *ast.Env, locality: ast.Locality, t: ast.Type) !void {
+        const hasEnv = unionInstType != null;
         const nuId = fungen.id;
 
         if (!hasEnv) {
             try stmt.p(.{ast.Var{ .name = funname, .uid = nuId }});
         } else {
+            const unionId = unionInstType.?.id;
             // CRINGE
             try stmt.p(.{"(struct"});
             try stmt.j(.{
                 "envunion",
-                munionId.?,
+                unionId,
                 "){ .fun = (",
             });
             const ty = (try getTypeMapped(stmt.ctx, t)).Fun;
             try stmt.definition(ty.ret, Tuple(.{
                 "(*)",
                 "(",
-                Join(.{ "struct env", munionId.?, "*" }),
+                Join(.{ switch (unionInstType.?.ut) {
+                    .OneEnv => EnvCName,
+                    .MoreEnvs => UnionInstCName,
+                }, unionId, "*" }),
                 PrependAll(", ", ty.args),
                 ")",
             }));
@@ -1831,9 +1894,22 @@ const Stmt = struct {
                 ast.Var{ .name = funname, .uid = nuId },
             });
             if (!try isEnvEmpty(stmt.ctx, env)) {
-                try stmt.j(.{
-                    ", .env = ",
-                });
+                switch (unionInstType.?.ut) {
+                    .OneEnv => {
+                        try stmt.j(.{
+                            ", .env = ",
+                        });
+                    },
+
+                    .MoreEnvs => {
+                        try stmt.j(.{
+                            ", .env.",
+                            EnvMemCName,
+                            nuId,
+                            " = ",
+                        });
+                    },
+                }
                 if (fungen.type == .Recursive) {
                     try stmt.j(.{"env"});
                 } else {
@@ -1904,9 +1980,8 @@ const Stmt = struct {
             },
             .Fun => |fun| {
                 const mNuId = try genUnionInst(stmt.ctx, t);
-                if (mNuId) |nuId| {
-                    try stmt.p(.{"struct"});
-                    try stmt.j(.{ "envunion", nuId });
+                if (mNuId) |unionInstType| {
+                    try stmt.j(.{ UnionCName, unionInstType.id });
                 } else {
                     try stmt.definitionBegin(fun.ret);
                     try stmt.p(.{"(*"});
@@ -2285,9 +2360,9 @@ const Stmt = struct {
                 .Fun => |fun| {
                     const mnuId = try genEnvStruct(self.ctx, .{ .env = fun.env, .fun = fun }, inst.m);
                     if (mnuId) |_| {
-                        const unionId = (try genUnionInst(self.ctx, inst.t)).?;
-                        try self.j(.{ EnvCName, unionId });
-                        try self.j(.{ EnvInstCName, unionId });
+                        const uit = (try genUnionInst(self.ctx, inst.t)).?;
+                        try self.j(.{ EnvCName, uit.id });
+                        try self.j(.{ EnvInstCName, uit.id });
                     }
                 },
                 .ClassFun => |cfun| {
@@ -2297,10 +2372,9 @@ const Stmt = struct {
                             const fun = funm.fun;
                             const mnuId = try genEnvStruct(self.ctx, .{ .env = fun.env, .fun = fun }, funm.m);
                             if (mnuId) |_| {
-                                const unionId = (try genUnionInst(self.ctx, inst.t)).?;
-                                try self.p(.{"struct"});
-                                try self.j(.{ "env", unionId });
-                                try self.j(.{ "envinst", unionId });
+                                const unionId = (try genUnionInst(self.ctx, inst.t)).?.id;
+                                try self.j(.{ EnvCName, unionId });
+                                try self.j(.{ EnvInstCName, unionId });
                             }
                         },
                         .InstFun => unreachable,
