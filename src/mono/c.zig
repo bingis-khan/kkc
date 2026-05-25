@@ -20,6 +20,10 @@ const Debug = mono.Debug;
 const Self = mono.Mono(@This());
 pub const Mono = Self;
 
+// reexports for backwards compatibility
+const getTypeMapped = Mono.getTypeMapped;
+const getUnion = Mono.getUnion;
+
 // out: Writer,
 imports: Set(Str, std.hash_map.StringContext),
 coptions: Set(Str, std.hash_map.StringContext),
@@ -142,7 +146,7 @@ pub fn genFunctionForRealForReal(self: *Self, fun: *ast.Function, hasEnv: bool) 
 }
 
 fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.Type, env: *ast.Env, fun: ?*ast.Function, body: union(enum) { Expr: *ast.Expr, Body: []*ast.Stmt }, hasEnv: bool) !FunGen {
-    const isFunEnvEmpty = try isEnvEmpty(self, env);
+    const isFunEnvEmpty = try Mono.isEnvEmpty(self, env);
 
     const m = self.tymap.match;
 
@@ -376,7 +380,7 @@ pub fn genEnvStruct(self: *Self, envfun: ast.EnvFun, um: *const ast.Match) !?Uni
     const m = try self.typeContext.mapMatch(self.tymap, um);
     self.tymap = &TypeMap.init(m, self.tymap);
 
-    if (try isEnvEmpty(self, envfun.env)) {
+    if (try Mono.isEnvEmpty(self, envfun.env)) {
         return null;
     }
 
@@ -433,7 +437,7 @@ pub fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
     }
 
     const eu = getUnion(self, yunion);
-    const ut = try areAllEnvsEmptyT(self, &eu.yunion);
+    const ut = try Mono.areAllEnvsEmptyT(self, &eu.yunion);
     switch (ut) {
         .AllEmpty => {
             try self.backend.unionsGenerated.put(unionApp, null);
@@ -1123,7 +1127,7 @@ fn ifElseStmt(self: *Self, cond: *ast.Expr, ifTrue: []*ast.Stmt, elifs: []ast.St
 
 pub fn genEnvCompletion(self: *Self, incompleteEnv: ast.Function.FunApp, completedEnv: ast.Function.FunApp) !void {
     // if the function has an effectively completed env, just ignore it.
-    if (try isEnvEmpty(self, completedEnv.fun.env)) {
+    if (try Mono.isEnvEmpty(self, completedEnv.fun.env)) {
         return;
     }
 
@@ -1257,7 +1261,7 @@ const Stmt = struct {
                 const funTy = (try getType(stmt.ctx, funcall.callee.t)).Fun;
                 const envm = getUnion(stmt.ctx, funTy.env).yunion;
 
-                switch (try areAllEnvsEmptyT(stmt.ctx, &envm)) {
+                switch (try Mono.areAllEnvsEmptyT(stmt.ctx, &envm)) {
                     .AllEmpty => {
                         try genExpr(stmt, funcall.callee);
 
@@ -1446,7 +1450,7 @@ const Stmt = struct {
                                     const sigFunTy = (try getType(self, funTy)).Fun;
                                     const eu = getUnion(self, sigFunTy.env);
 
-                                    switch (try areAllEnvsEmptyT(self, &eu.yunion)) {
+                                    switch (try Mono.areAllEnvsEmptyT(self, &eu.yunion)) {
                                         .AllEmpty => {
                                             var sigarrsetln = startLine(self);
                                             const t = self.backend.temp();
@@ -1893,7 +1897,7 @@ const Stmt = struct {
                 ")",
                 ast.Var{ .name = funname, .uid = nuId },
             });
-            if (!try isEnvEmpty(stmt.ctx, env)) {
+            if (!try Mono.isEnvEmpty(stmt.ctx, env)) {
                 switch (unionInstType.?.ut) {
                     .OneEnv => {
                         try stmt.j(.{
@@ -2017,7 +2021,7 @@ const Stmt = struct {
         switch (try getType(stmt.ctx, t)) {
             .Fun => |fun| {
                 const envm = getUnion(stmt.ctx, fun.env);
-                if ((try areAllEnvsEmptyT(stmt.ctx, &envm.yunion)) == .AllEmpty) {
+                if ((try Mono.areAllEnvsEmptyT(stmt.ctx, &envm.yunion)) == .AllEmpty) {
                     try stmt.p(.{ ")(", SepBy(", ", fun.args), ")" });
                 }
                 try stmt.definitionEnd(fun.ret);
@@ -2472,109 +2476,6 @@ fn getType(self: *const Self, ogt: ast.Type) !ast.TypeF(ast.Type) {
         .TVar => |tv| getType(self, self.tymap.mapTVar(tv) orelse unreachable),
         else => |t| t,
     };
-}
-
-// TODO: I should just have a comparison function that takes a TyMap OR have a mapMatch/mapType for a TyMap.
-fn getTypeMapped(self: *const Self, ogt: ast.Type) !ast.TypeF(ast.Type) {
-    const ty = try self.typeContext.mapType(self.tymap, ogt);
-    return self.typeContext.getType(ty);
-}
-
-fn getUnion(self: *const Self, ogenv: ast.UnionRef) struct { base: ast.UnionRef, yunion: TypeContext.Union } {
-    const base = self.typeContext.getUnion(ogenv).base;
-    const all = self.typeContext.getUnion(self.tymap.mapUnion(base) orelse base);
-    return .{ .base = all.base, .yunion = all.env.* };
-}
-
-const UnionEmptiness = union(enum) {
-    AllEmpty, // generate
-    OneEnv: *const TypeContext.Env, // generate an env struct only
-    MoreEnvs, // generate union
-
-    fn hasEnv(self: @This()) bool {
-        return self != .AllEmpty;
-    }
-};
-
-fn areAllEnvsEmptyTOfFunType(self: *Self, t: ast.Type) !UnionEmptiness {
-    const yunion = getUnion(self, (try getType(self, t)).Fun.env).yunion;
-    return try areAllEnvsEmptyT(self, &yunion);
-}
-
-fn areAllEnvsEmptyT(self: *Self, eu: *const TypeContext.Union) !UnionEmptiness {
-    std.debug.assert(eu.envs.items.len > 0);
-
-    var nonEmptyEnvs: u32 = 0;
-    var firstNonEmptyEnv: *const TypeContext.Env = undefined;
-    for (eu.envs.items) |*e| {
-        if (!try isEnvEmptyT(self, e)) {
-            if (nonEmptyEnvs == 0) {
-                firstNonEmptyEnv = e;
-            }
-
-            nonEmptyEnvs += 1;
-        }
-    }
-
-    return switch (nonEmptyEnvs) {
-        0 => .AllEmpty,
-        1 => .{ .OneEnv = firstNonEmptyEnv },
-        else => .MoreEnvs,
-    };
-}
-
-fn isEnvEmptyT(self: *Self, env: *const TypeContext.Env) !bool {
-    const oldTymap = self.tymap;
-    defer self.tymap = oldTymap;
-    self.tymap = &TypeMap.init(env.match, self.tymap);
-    return try isEnvEmpty(self, env.env);
-}
-
-fn isEnvEmpty(self: *Self, env: *ast.Env) !bool {
-    if (env.monoFinished) {
-        // self.ctx.print(.{ env, "\n" });
-        var it = env.monoInsts.iterator();
-        while (it.next()) |inst| {
-            switch (inst.v) {
-                .Var => return false,
-                .Fun => |fun| {
-                    const oldTymap = self.tymap;
-                    defer self.tymap = oldTymap;
-                    self.tymap = &TypeMap.init(inst.m, self.tymap); // TODO: map match?
-
-                    if (!try isEnvEmpty(self, fun.env)) return false;
-                },
-                .ClassFun => |cfun| {
-                    switch (cfun.ref.*.?) {
-                        .Id => |id| {
-                            if (self.tymap.tryGetFunctionByID(id)) |ip| {
-                                const oldTymap = self.tymap;
-                                defer self.tymap = oldTymap;
-                                self.tymap = &TypeMap.init(ip.m, self.tymap); // TODO: map match?
-
-                                if (!try isEnvEmpty(self, ip.fun.env)) return false;
-                            } else {
-                                unreachable;
-                            }
-                        },
-                        .InstFun => unreachable,
-                    }
-                },
-                .TNum => unreachable,
-            }
-        }
-
-        return true;
-    } else {
-        // finish the env thing.
-        for (env.insts.items) |inst| {
-            try env.monoInsts.insert(inst);
-        }
-
-        env.monoFinished = true;
-
-        return try isEnvEmpty(self, env);
-    }
 }
 
 ///

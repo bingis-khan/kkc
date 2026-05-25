@@ -113,7 +113,6 @@ pub fn Mono(Back: type) type {
                         while (it.next()) |kv| {
                             const m = kv.key_ptr.*.m;
                             const mm = try self.typeContext.mapMatch(self.tymap, m);
-                            const hasEnv = false; // TEMP.
                             const funapp = ast.Function.FunApp{ .fun = fun, .m = mm };
                             if (Debug) {
                                 self.ctx.print(.{ "gen fun: ", fun.name, " ", fun.env, " ", mm, "\n" });
@@ -131,7 +130,18 @@ pub fn Mono(Back: type) type {
                                 defer self.tymap = oldM;
                                 self.tymap = &TypeMap.init(mm, oldM);
 
-                                try Backend.genFunction(self, fun, hasEnv);
+                                const variation = try FunctionVariations.allVariations(
+                                    self,
+                                    kv.value_ptr.callingUnions.iterator(),
+                                );
+
+                                // now, realize these variations.
+                                if (variation.noEnv) {
+                                    try Backend.genFunction(self, fun, false);
+                                }
+                                if (variation.withEnv) {
+                                    try Backend.genFunction(self, fun, true);
+                                }
                                 // try self.genEnv(&fun.env.monoInsts, m, null);
                             }
                         }
@@ -158,7 +168,6 @@ pub fn Mono(Back: type) type {
                             while (it.next()) |kv| {
                                 const m = kv.key_ptr.m;
                                 const mm = try self.typeContext.mapMatch(self.tymap, m);
-                                const hasEnv = false; // TEMP
                                 const funapp = ast.Function.FunApp{
                                     .fun = instFun.fun,
                                     .m = mm,
@@ -175,7 +184,18 @@ pub fn Mono(Back: type) type {
                                     defer self.tymap = oldM;
                                     self.tymap = &TypeMap.init(mm, oldM);
 
-                                    try Backend.genFunction(self, instFun.fun, hasEnv);
+                                    const variation = try FunctionVariations.allVariations(
+                                        self,
+                                        kv.value_ptr.callingUnions.iterator(),
+                                    );
+
+                                    // now, realize these variations.
+                                    if (variation.noEnv) {
+                                        try Backend.genFunction(self, instFun.fun, false);
+                                    }
+                                    if (variation.withEnv) {
+                                        try Backend.genFunction(self, instFun.fun, true);
+                                    }
 
                                     const use = try self.useScope.findUses(.{
                                         .fun = instFun.fun,
@@ -219,6 +239,142 @@ pub fn Mono(Back: type) type {
             }
         }
 
+        const FunctionVariations = struct {
+            withEnv: bool,
+            noEnv: bool,
+
+            // actually, we can do all of this inside a function and just return variations.
+            fn allVariations(ctx: *Self, itt: anytype) !@This() { // too lazy to type out the type :)
+                var variations = FunctionVariations.init();
+                var it = itt;
+                while (it.next()) |baseRefPtr| {
+                    const baseRef = baseRefPtr.*;
+                    const mappedUnionRef = getUnion(ctx, baseRef);
+                    const yunion = mappedUnionRef.yunion;
+                    const hasEnv = (try areAllEnvsEmptyT(ctx, &yunion)).hasEnv();
+
+                    if (hasEnv) {
+                        variations.withEnv = true;
+                    } else {
+                        variations.noEnv = true;
+                    }
+
+                    if (variations.isFullyVariated()) break;
+                }
+
+                return variations;
+            }
+
+            fn init() @This() {
+                return .{ .withEnv = false, .noEnv = false };
+            }
+
+            fn isFullyVariated(self: *const @This()) bool { // this is english.
+                return self.withEnv and self.noEnv;
+            }
+        };
+
+        pub const UnionEmptiness = union(enum) {
+            AllEmpty, // generate
+            OneEnv: *const TypeContext.Env, // generate an env struct only
+            MoreEnvs, // generate union
+
+            fn hasEnv(self: @This()) bool {
+                return self != .AllEmpty;
+            }
+        };
+        pub fn areAllEnvsEmptyTOfFunType(self: *Self, t: ast.Type) !mono.UnionEmptiness {
+            const yunion = getUnion(self, (try getTypeMapped(self, t)).Fun.env).yunion;
+            return try mono.areAllEnvsEmptyT(self, &yunion);
+        }
+        pub fn areAllEnvsEmptyT(self: *Self, eu: *const TypeContext.Union) !UnionEmptiness {
+            std.debug.assert(eu.envs.items.len > 0);
+
+            var nonEmptyEnvs: u32 = 0;
+            var firstNonEmptyEnv: *const TypeContext.Env = undefined;
+            for (eu.envs.items) |*e| {
+                if (!try isEnvEmptyT(self, e)) {
+                    if (nonEmptyEnvs == 0) {
+                        firstNonEmptyEnv = e;
+                    }
+
+                    nonEmptyEnvs += 1;
+                }
+            }
+
+            return switch (nonEmptyEnvs) {
+                0 => .AllEmpty,
+                1 => .{ .OneEnv = firstNonEmptyEnv },
+                else => .MoreEnvs,
+            };
+        }
+
+        pub fn isEnvEmptyT(self: *Self, env: *const TypeContext.Env) !bool {
+            const oldTymap = self.tymap;
+            defer self.tymap = oldTymap;
+            self.tymap = &TypeMap.init(env.match, self.tymap);
+            return try isEnvEmpty(self, env.env);
+        }
+
+        pub fn isEnvEmpty(self: *Self, env: *ast.Env) !bool {
+            if (env.monoFinished) {
+                // self.ctx.print(.{ env, "\n" });
+                var it = env.monoInsts.iterator();
+                while (it.next()) |inst| {
+                    switch (inst.v) {
+                        .Var => return false,
+                        .Fun => |fun| {
+                            const oldTymap = self.tymap;
+                            defer self.tymap = oldTymap;
+                            self.tymap = &TypeMap.init(inst.m, self.tymap); // TODO: map match?
+
+                            if (!try isEnvEmpty(self, fun.env)) return false;
+                        },
+                        .ClassFun => |cfun| {
+                            switch (cfun.ref.*.?) {
+                                .Id => |id| {
+                                    if (self.tymap.tryGetFunctionByID(id)) |ip| {
+                                        const oldTymap = self.tymap;
+                                        defer self.tymap = oldTymap;
+                                        self.tymap = &TypeMap.init(ip.m, self.tymap); // TODO: map match?
+
+                                        if (!try isEnvEmpty(self, ip.fun.env)) return false;
+                                    } else {
+                                        unreachable;
+                                    }
+                                },
+                                .InstFun => unreachable,
+                            }
+                        },
+                        .TNum => unreachable,
+                    }
+                }
+
+                return true;
+            } else {
+                // finish the env thing.
+                for (env.insts.items) |inst| {
+                    try env.monoInsts.insert(inst);
+                }
+
+                env.monoFinished = true;
+
+                return try isEnvEmpty(self, env);
+            }
+        }
+
+        // TODO: I should just have a comparison function that takes a TyMap OR have a mapMatch/mapType for a TyMap.
+        pub fn getTypeMapped(self: *const Self, ogt: ast.Type) !ast.TypeF(ast.Type) {
+            const ty = try self.typeContext.mapType(self.tymap, ogt);
+            return self.typeContext.getType(ty);
+        }
+
+        pub fn getUnion(self: *const Self, ogenv: ast.UnionRef) struct { base: ast.UnionRef, yunion: TypeContext.Union } {
+            const base = self.typeContext.getUnion(ogenv).base;
+            const all = self.typeContext.getUnion(self.tymap.mapUnion(base) orelse base);
+            return .{ .base = all.base, .yunion = all.env.* };
+        }
+
         // Q: can a function's uses depend on the type of the enclosing function?
         // A: actually, no. instances can "conditionally" call functions depending on if they are selected,
         //    but when a tyvar gets generalized, the instance resolution happens at callsite of the function that got generalized.
@@ -250,7 +406,7 @@ pub fn Mono(Back: type) type {
         const MonoStuff = struct {
             al: std.mem.Allocator,
             typeContext: *TypeContext,
-            match: *const ast.Match,
+            // match: *const ast.Match,
             // typeMap: ?*const TypeMap,
             // TEMP: for now, we are using the monoenv in *Env.
             // functionEnvs: Envs,
@@ -258,35 +414,35 @@ pub fn Mono(Back: type) type {
             // const Envs = std.AutoHashMap(*ast.Function, *ast.Env);
             const Error = error{OutOfMemory};
 
-            fn init(tc: *TypeContext, al: std.mem.Allocator) !@This() {
-                return .{
-                    .typeContext = tc,
-                    .tymap = TypeMap.init(&ast.Match.Empty, null),
-                    .al = al,
-                };
-            }
+            // fn init(tc: *TypeContext, al: std.mem.Allocator) !@This() {
+            //     return .{
+            //         .typeContext = tc,
+            //         .tymap = TypeMap.init(&ast.Match.Empty, null),
+            //         .al = al,
+            //     };
+            // }
 
             // fn expandRoot(self: *@This(), root: ast.Function.Use) Error!void {
             //     const ifn = self.usePair(root);
             //     try self.expandFunction(ifn.fun, ifn.m);
             // }
 
-            fn usePair(self: *@This(), use: ast.Function.Use) struct {
-                fun: *ast.Function,
-                m: *const ast.Match,
-            } {
-                return switch (use) {
-                    .ClassFun => |cfun| switch (cfun.ref.*.?) {
-                        .InstFun => |ifn| .{ .fun = ifn.fun, .m = ifn.m },
-                        .Id => |iid| {
-                            // ast.Ctx.pp(self.typeContext, .{ cfun.cfun.name, ": ", self.match.* });
-                            const ifn = self.tymap.tryGetFunctionByID(iid).?;
-                            return .{ .fun = ifn.fun, .m = ifn.m };
-                        },
-                    },
-                    .Fun => |fun| .{ .fun = fun.fun, .m = fun.m },
-                };
-            }
+            // fn usePair(self: *@This(), use: ast.Function.Use) struct {
+            //     fun: *ast.Function,
+            //     m: *const ast.Match,
+            // } {
+            //     return switch (use) {
+            //         .ClassFun => |cfun| switch (cfun.ref.*.?) {
+            //             .InstFun => |ifn| .{ .fun = ifn.fun, .m = ifn.m },
+            //             .Id => |iid| {
+            //                 // ast.Ctx.pp(self.typeContext, .{ cfun.cfun.name, ": ", self.match.* });
+            //                 const ifn = self.tymap.tryGetFunctionByID(iid).?;
+            //                 return .{ .fun = ifn.fun, .m = ifn.m };
+            //             },
+            //         },
+            //         .Fun => |fun| .{ .fun = fun.fun, .m = fun.m },
+            //     };
+            // }
 
             fn expandFunction(self: *@This(), fun: *ast.Function, um: *const ast.Match, baseUnionId: ast.UnionRef) Error!void {
                 if (!fun.env.monoFinished) {
@@ -357,7 +513,7 @@ pub fn Mono(Back: type) type {
                         switch (use) {
                             .Fun => |calledFun| {
                                 if (calledFun.fun.env.level > fun.env.level) {
-                                    try self.expandFunction(calledFun.fun, calledFun.m, unreachable);
+                                    try self.expandFunction(calledFun.fun, calledFun.m, getMapBaseUnionRef(self.typeContext, calledFun.t, um));
                                 }
                             },
                             .ClassFun => |cfun| {
@@ -367,7 +523,7 @@ pub fn Mono(Back: type) type {
                                     }, //{}, // don't do anything, since it's a function from outside.
                                     .InstFun => |calledFun| {
                                         if (calledFun.fun.env.level > fun.env.level) {
-                                            try self.expandFunction(calledFun.fun, calledFun.m, unreachable);
+                                            try self.expandFunction(calledFun.fun, calledFun.m, getMapBaseUnionRef(self.typeContext, calledFun.t, um));
                                         }
                                     },
                                 }
@@ -406,7 +562,7 @@ pub fn Mono(Back: type) type {
                         switch (inst.v) {
                             .Fun => |ifn| {
                                 if (ifn.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
-                                    try self.expandFunction(ifn, iinst.m, getBaseUnionRef(self.typeContext, inst.t));
+                                    try self.expandFunction(ifn, iinst.m, getMapBaseUnionRef(self.typeContext, inst.t, um));
                                 } else {
                                     try self.addToEnv(fun.env.outer, iinst);
                                 }
@@ -419,7 +575,7 @@ pub fn Mono(Back: type) type {
                                                 .InstFun => |ipair| {
                                                     const ifn = ipair.fun;
                                                     if (ifn.env.nextFunction() == fun.env.nextFunction()) { // if in the same scope.
-                                                        try self.expandFunction(ifn, ipair.m, getBaseUnionRef(self.typeContext, inst.t));
+                                                        try self.expandFunction(ifn, ipair.m, getMapBaseUnionRef(self.typeContext, inst.t, um));
                                                     } else {
                                                         // try self.addToEnv(fun.env.outer, iinst);
                                                     }
@@ -501,7 +657,7 @@ pub fn Mono(Back: type) type {
                 const mms = fun.temp__mono.matches.getPtr(.{
                     .m = um,
                 }).?;
-                try mms.callingUnions.insert(baseUnionId);
+                try mms.callingUnions.insert(um.mapUnion(baseUnionId) orelse baseUnionId);
             }
 
             fn addToEnv(self: *@This(), startEnv: ?ast.EnvFun, umInst: ast.EnvVar) !void {
@@ -530,7 +686,7 @@ pub fn Mono(Back: type) type {
         fn findFullFunctionEnvs(tc: *TypeContext, al: std.mem.Allocator, roots: []ast.Function.Use) !MonoStuff {
             var monoStuff = MonoStuff{
                 .al = al,
-                .match = &ast.Match.Empty,
+                // .match = &ast.Match.Empty,
                 .typeContext = tc,
             };
             for (roots) |root| {
@@ -577,6 +733,15 @@ pub fn Mono(Back: type) type {
             return tsz.getFieldOffsetFromType(t, mem);
         }
     };
+}
+
+// I don't think this totally solves the problem
+//  25.05.26 which problem? the calling union may require an env from a "much lower" environment.
+//            it's not part of the function's match, so we may require a match from a different env level at all.
+fn getMapBaseUnionRef(tc: *const TypeContext, t: ast.Type, m: *const ast.Match) ast.UnionRef {
+    const baseURef = tc.getUnion(tc.getType(t).Fun.env).base;
+    const baseRef = tc.getUnion(m.mapUnion(baseURef) orelse return baseURef).base;
+    return baseRef;
 }
 
 fn getBaseUnionRef(tc: *const TypeContext, t: ast.Type) ast.UnionRef {

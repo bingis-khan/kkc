@@ -1342,6 +1342,7 @@ pub const UnionRef = struct {
     pub fn print(eid: @This(), c: Ctx) void {
         const eu = c.typeContext.getUnion(eid);
 
+        c.print(eu.base.id);
         c.print("{");
         for (eu.env.envs.items, 0..) |env, i| {
             if (i > 0) {

@@ -1,5 +1,18 @@
 x = 2
-f = fn m: m + x
+fn a(m): m + x
+f = a
+
 y = 1
-f <= fn m: m + y
-println(f(2))
+fn b(m): m + y
+f <= b
+
+
+class A
+	fun-a (x _) -> I32
+
+inst A I32
+	fun-a (x): x
+
+fn do-thing(x): fun-a(x)
+
+do-thing(1)

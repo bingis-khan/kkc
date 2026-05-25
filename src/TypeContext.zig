@@ -44,6 +44,7 @@ pub const Env = struct {
 
 pub const Union = struct {
     envs: std.ArrayList(Env), // NOTE(11.05.26): the problem is that we can't really compare envs before. we can, i guess, compare ids, but this would require us to store IDs here (which might not be a bad idea thooooo. like, unification will be faster, because we'll be moving less memory.).
+    // mono__used: Set(UnionRef, UnionRef.Comparator),
 
     fn init(al: std.mem.Allocator) @This() {
         return .{ .envs = std.ArrayList(Env).init(al) };
