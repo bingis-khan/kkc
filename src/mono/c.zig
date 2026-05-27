@@ -78,7 +78,13 @@ const FunGen = struct {
         Recursive,
     },
 };
-const UnionInstType = struct { id: Unique, ut: enum { OneEnv, MoreEnvs } };
+const UnionInstType = struct {
+    id: Unique,
+    ut: union(enum) {
+        OneEnv: Unique, // TEMP(27.05.26): we use the funenv thing rn and it's wrong, but I don't feel like fixing it rn
+        MoreEnvs,
+    },
+};
 const UnionsGenerated = std.HashMap(UnionApp, ?UnionInstType, UnionApp.Comparator, std.hash_map.default_max_load_percentage);
 const EnvsGenerated = std.HashMap(EnvApp, ?Unique, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
 const TypesGenerated = std.HashMap(ast.TypeApplication, Unique, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
@@ -449,8 +455,8 @@ fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
             }
 
             const nuId = self.backend.tempgen.newUnique();
-            try self.backend.unionsGenerated.put(unionApp, .{ .id = nuId, .ut = .OneEnv });
             const envId = menvId.?;
+            try self.backend.unionsGenerated.put(unionApp, .{ .id = nuId, .ut = .{ .OneEnv = envId } });
 
             if (Debug) {
                 self.ctx.print(.{ "new union oneenv: ", nuId, " for env ", envId, "\n" });
@@ -488,7 +494,7 @@ fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
                 try self.backend.parts.append(self.backend.cur);
             }
 
-            return .{ .id = nuId, .ut = .OneEnv };
+            return .{ .id = nuId, .ut = .{ .OneEnv = envId } };
         },
         .MoreEnvs => {
             const nuId = self.backend.tempgen.newUnique();
@@ -1888,23 +1894,41 @@ const Stmt = struct {
                 unionId,
                 "){ .fun = (",
             });
+            const isFunEnvEmpty = fungen.envId == null;
             const ty = (try getTypeMapped(stmt.ctx, t)).Fun;
-            try stmt.definition(ty.ret, Tuple(.{
-                "(*)",
-                "(",
-                Join(.{ switch (unionInstType.?.ut) {
-                    .OneEnv => EnvCName,
-                    .MoreEnvs => UnionInstCName,
-                }, fungen.envId.?, "*" }),
-                PrependAll(", ", ty.args),
-                ")",
-            }));
+            switch (unionInstType.?.ut) {
+                .OneEnv => |envid| {
+                    try stmt.definition(ty.ret, Tuple(.{
+                        "(*)",
+                        "(",
+                        Join(.{
+                            EnvCName,
+                            envid,
+                            "*",
+                        }),
+                        PrependAll(", ", ty.args),
+                        ")",
+                    }));
+                },
+                .MoreEnvs => {
+                    try stmt.definition(ty.ret, Tuple(.{
+                        "(*)",
+                        "(",
+                        Join(.{
+                            UnionInstCName,
+                            fungen.envId.?,
+                            "*",
+                        }),
+                        PrependAll(", ", ty.args),
+                        ")",
+                    }));
+                },
+            }
             try stmt.j(.{
                 ")",
                 ast.Var{ .name = funname, .uid = nuId },
             });
 
-            const isFunEnvEmpty = fungen.envId == null;
             if (!isFunEnvEmpty) {
                 switch (unionInstType.?.ut) {
                     .OneEnv => {
