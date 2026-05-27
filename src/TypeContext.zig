@@ -43,15 +43,17 @@ pub const Env = struct {
 };
 
 pub const Union = struct {
+    uid: Unique,
     envs: std.ArrayList(Env), // NOTE(11.05.26): the problem is that we can't really compare envs before. we can, i guess, compare ids, but this would require us to store IDs here (which might not be a bad idea thooooo. like, unification will be faster, because we'll be moving less memory.).
     // mono__used: Set(UnionRef, UnionRef.Comparator),
 
-    fn init(al: std.mem.Allocator) @This() {
-        return .{ .envs = std.ArrayList(Env).init(al) };
+    fn init(self: *Self) @This() {
+        return .{ .envs = std.ArrayList(Env).init(self.arena), .uid = self.gen.newUnique() };
     }
 
-    fn initCapacity(al: std.mem.Allocator, cap: usize) !@This() {
-        return .{ .envs = try std.ArrayList(Env).initCapacity(al, cap) };
+    // allocates a new union, but keeps the ID. used when mapping unions.
+    fn mappedUnion(self: *Self, og: *const Union) !@This() {
+        return .{ .envs = try std.ArrayList(Env).initCapacity(self.arena, og.envs.items.len), .uid = og.uid };
     }
 };
 
@@ -204,7 +206,7 @@ pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
 }
 
 pub fn newEnv(self: *Self, e: ?Env) !ast.UnionRef {
-    var envUnion = Union.init(self.arena);
+    var envUnion = Union.init(self);
     if (e) |ee| {
         try envUnion.envs.append(ee);
     }
@@ -216,7 +218,7 @@ pub fn newEnv(self: *Self, e: ?Env) !ast.UnionRef {
 
 pub fn cloneMapUnion(self: *Self, match: anytype, euRef: ast.UnionRef) !ast.UnionRef {
     const eu = self.getUnion(euRef).env;
-    var nueu = Union.init(self.arena);
+    var nueu = Union.init(self);
     for (eu.envs.items) |env| {
         try nueu.envs.append(.{
             .env = env.env,
@@ -1080,11 +1082,10 @@ pub const AllStore = struct {
     assocs: Set(ast.Association.ID, std.hash_map.AutoContext(ast.Association.ID)),
 
     pub fn init(al: std.mem.Allocator, tc: *const Self) @This() {
-        _ = tc;
         return .{
             .al = al,
             .tvars = Set(ast.TVarOrNum, ast.TVarOrNum.comparator()).init(al),
-            .envs = Set(ast.UnionRef, ast.UnionRef.Comparator).init(al),
+            .envs = Set(ast.UnionRef, ast.UnionRef.Comparator).initContext(al, .{ .tc = tc }),
             .assocs = Set(ast.Association.ID, std.hash_map.AutoContext(ast.Association.ID)).init(al),
         };
     }
@@ -1270,7 +1271,7 @@ pub const FTVs = struct {
             return k.tyv.uid;
         }
     });
-    const Envs = Set(ast.UnionRef, ast.UnionRef.Comparator);
+    const Envs = Set(ast.UnionRef, ast.UnionRef.UidComparator);
     const Nums = Set(ast.NumRef, struct {
         pub fn eql(ctx: @This(), a: ast.NumRef, b: ast.NumRef) bool {
             _ = ctx;
@@ -1287,10 +1288,10 @@ pub const FTVs = struct {
     envs: Envs,
     nums: Nums,
 
-    pub fn init(al: std.mem.Allocator) @This() {
+    pub fn init(al: std.mem.Allocator, tc: *Self) @This() {
         return .{
             .tyvars = TyVars.init(al),
-            .envs = Envs.init(al),
+            .envs = Envs.initContext(al, .{ .tc = tc }),
             .nums = Nums.init(al),
         };
     }
@@ -1539,7 +1540,7 @@ fn mapUnion(self: *Self, match: anytype, envref: ast.UnionRef) error{OutOfMemory
         return nue;
     } else {
         var changed = false;
-        var nueu = try Union.initCapacity(self.arena, envAndBase.env.envs.items.len);
+        var nueu = try Union.mappedUnion(self, envAndBase.env);
         for (envAndBase.env.envs.items) |env| {
             const menvMatch = try self.mapMatch_(match, env.match);
             try nueu.envs.append(if (menvMatch) |envMatch| b: {

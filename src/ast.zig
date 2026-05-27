@@ -270,7 +270,7 @@ pub const Function = struct {
                     .typeContext = tc,
                 }),
                 .uses = 0,
-                .callingUnions = CallingUnions.init(al),
+                .callingUnions = CallingUnions.initContext(al, .{ .tc = tc }),
             };
         }
     };
@@ -1327,15 +1327,45 @@ pub const UnionRef = struct {
     id: usize,
 
     pub const Comparator = struct {
-        // tc: *const TypeContext,
-        pub fn eql(self: @This(), le: UnionRef, re: UnionRef) bool {
-            _ = self;
-            return le.id == re.id;
+        tc: *const TypeContext,
+        pub fn eql(self: @This(), lur: UnionRef, rur: UnionRef) bool {
+            const l = self.tc.getUnion(lur);
+            const r = self.tc.getUnion(rur);
+
+            // NOTE(27.05.26): SPECIAL CASE for comparison to match old behavior (and maybe it'll be faster bruh.)
+            if (l.env.envs.items.len == 1 and r.env.envs.items.len == 1) {
+                const le = l.env.envs.items[0];
+                const re = r.env.envs.items[0];
+                // currently, we don't care about structural equality that much, especially if we're gonna implement unions.
+                if (le.env.id != re.env.id) return false;
+                // Ctx.pp(ctx.typeContext, a);
+                return Match.Comparator.eql(.{ .typeContext = self.tc }, le.match, re.match);
+            } else {
+                return l.env.uid == r.env.uid;
+            }
         }
 
         pub fn hash(ctx: @This(), k: UnionRef) u64 {
             _ = ctx;
-            return k.id;
+            _ = k;
+            return 0;
+        }
+    };
+
+    // TEMP(27.05.26): only for ftvs
+    pub const UidComparator = struct {
+        tc: *const TypeContext,
+        pub fn eql(self: @This(), lur: UnionRef, rur: UnionRef) bool {
+            const l = self.tc.getUnion(lur);
+            const r = self.tc.getUnion(rur);
+
+            return l.env.uid == r.env.uid;
+        }
+
+        pub fn hash(ctx: @This(), k: UnionRef) u64 {
+            _ = ctx;
+            _ = k;
+            return 0;
         }
     };
 
@@ -1344,14 +1374,16 @@ pub const UnionRef = struct {
 
         c.print(eu.base.id);
         c.print("{");
-        for (eu.env.envs.items, 0..) |env, i| {
-            if (i > 0) {
-                c.print(", ");
-            }
+        c.print(eu.env.uid);
 
-            c.print(.{ "(", env.env.id, ")", "(", env.match, ")" });
-            // env.env.print(c);
-        }
+        // for (eu.env.envs.items, 0..) |env, i| {
+        //     if (i > 0) {
+        //         c.print(", ");
+        //     }
+
+        //     c.print(.{ "(", env.env.id, ")", "(", env.match, ")" });
+        //     // env.env.print(c);
+        // }
         c.print("}");
     }
 
@@ -2130,9 +2162,6 @@ pub const Match = struct {
         typeContext: *const TypeContext,
 
         pub fn eql(ctx: @This(), a: *const Match, b: *const Match) bool {
-            // TODO: this condition may hide bugs and I'm not sure if it should even be triggered in a well formed program.
-            if (a.tvars.len != b.tvars.len) return false;
-
             for (a.tvars, b.tvars) |ltv, rtv| {
                 switch (ltv) {
                     .Type => |lt| if (!lt.tyEq(rtv.Type, ctx.typeContext)) return false,
@@ -2142,7 +2171,7 @@ pub const Match = struct {
 
             for (a.envVars, b.envVars) |leRef, reRef| {
                 // ENV SHOULD BE THE SAME SIZE (thats what I'm )
-                if (!UnionRef.unionEq(leRef, reRef, ctx.typeContext)) return false;
+                if (!UnionRef.Comparator.eql(.{ .tc = ctx.typeContext }, leRef, reRef)) return false;
             }
 
             for (a.assocs, b.assocs) |mla, mra| {

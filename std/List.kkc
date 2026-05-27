@@ -91,7 +91,8 @@ fn grow-if-full (list Ptr (List alloc a)) -> Unit <= Allocator alloc
 		# NOTE: a lot of this stuff would be better with memmove/memcpy and realloc, but i want to minimize external dependencies as much as possible
 		# still, the external interface and usage needs some contemplation
 		# copy to old slice
-		list&.elements zip(from(0)) for-each(fn Tuple2(x, i): Slice.set(new-slice, Mem.i32-size(i), x))
+		fun = fn Tuple2(x, i): Slice.set(new-slice, Mem.i32-size(i), x)
+		list&.elements zip(from(0)) for-each(fun)
 		list&.al Alloc.free(list&.elements)
 		list <&.elements= new-slice
 

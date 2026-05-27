@@ -142,6 +142,7 @@ external
 
 	remove (s ConstStr) -> CInt
 
+	#[cstdinclude 'time.h']
 	time (p Ptr Void) -> CInt
 
 	#[cstdinclude 'time.h', cfunname 'clock_gettime']

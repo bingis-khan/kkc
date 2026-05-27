@@ -72,6 +72,7 @@ const FunApp = struct {
 };
 const FunGen = struct {
     id: Unique,
+    envId: ?Unique,
     type: enum {
         Function,
         Recursive,
@@ -137,17 +138,15 @@ pub fn writeTo(self: *const @This(), writer: anytype) anyerror!void {
     try writer.print("}}\n", .{});
 }
 
-pub fn genFunction(self: *Self, fun: *ast.Function, hasEnv: bool) GenError!void { // TODO: params
+fn genFunction(self: *Self, fun: *ast.Function, hasEnv: bool) GenError!void { // TODO: params
     _ = try genFunctionForRealForReal(self, fun, hasEnv);
 }
 
-pub fn genFunctionForRealForReal(self: *Self, fun: *ast.Function, hasEnv: bool) GenError!FunGen {
+fn genFunctionForRealForReal(self: *Self, fun: *ast.Function, hasEnv: bool) GenError!FunGen {
     return try genFunctionForReal(self, fun.name.name, fun.params, fun.ret, fun.env, fun, .{ .Body = fun.body }, hasEnv);
 }
 
 fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.Type, env: *ast.Env, fun: ?*ast.Function, body: union(enum) { Expr: *ast.Expr, Body: []*ast.Stmt }, hasEnv: bool) !FunGen {
-    const isFunEnvEmpty = try Mono.isEnvEmpty(self, env);
-
     const m = self.tymap.match;
 
     if (Debug) {
@@ -170,19 +169,11 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         gp.value_ptr.* = null;
     }
 
-    // const funt = FunInst{
-    //     .args = funtParams,
-    //     .ret = try self.typeContext.mapType(m, ret),
-    //     .env = try self.typeContext.newEnv(.{
-    //         .env = env,
-    //         .fun = fun,
-    //         .match = m,
-    //         .level = env.level,
-    //     }),
-    // };
+    const envId = try genEnvStruct(self, .{ .env = env, .fun = fun }, self.tymap.match);
+    const isFunEnvEmpty = envId == null;
 
-    const nuId = (try genEnvStruct(self, .{ .env = env, .fun = fun }, m)) orelse self.backend.tempgen.newUnique();
-    try self.backend.functionsGenerated.put(.{ .app = envapp, .hasEnv = hasEnv }, .{ .id = nuId, .type = .Recursive });
+    const nuId = self.backend.tempgen.newUnique();
+    try self.backend.functionsGenerated.put(.{ .app = envapp, .hasEnv = hasEnv }, .{ .id = nuId, .envId = envId, .type = .Recursive });
 
     {
         // decl
@@ -193,7 +184,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         var typarams = std.ArrayList(Parameter).init(self.backend.al);
 
         if (hasEnv) {
-            try typarams.append(.{ .v = if (isFunEnvEmpty) .PlaceholderEnv else .{ .Env = nuId }, .t = undefined });
+            try typarams.append(.{ .v = if (isFunEnvEmpty) .PlaceholderEnv else .{ .Env = envId.? }, .t = undefined });
         }
 
         for (params) |param| {
@@ -267,78 +258,10 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
 
         // add the function to places.
         try self.backend.parts.append(self.backend.cur);
-        try self.backend.functionsGenerated.put(.{ .app = envapp, .hasEnv = hasEnv }, .{ .id = nuId, .type = .Function });
+        try self.backend.functionsGenerated.put(.{ .app = envapp, .hasEnv = hasEnv }, .{ .id = nuId, .envId = envId, .type = .Function });
     }
 
-    // generate env inst
-    if (!isFunEnvEmpty) {
-        var ei = startLine(self);
-        try ei.p(.{"struct"});
-        try ei.j(.{ "env", nuId });
-        try ei.j(.{ "envinst", nuId });
-        try ei.p("=");
-        try ei.beginBody();
-
-        var deduppedEnv = try env.deduplicatedEnvInsts(self.backend.al, self.tymap, self.typeContext);
-        defer deduppedEnv.deinit();
-        var envIt = deduppedEnv.iterator();
-        while (envIt.next()) |inst| {
-            var i = startLine(self);
-            switch (inst.v) {
-                .Var => |v| {
-                    try i.j(.{ ".", v.v });
-                    try i.p("=");
-                    switch (inst.locality(env)) {
-                        .Local => try i.localVarThatCouldPossiblyBeDeconed(v),
-                        .External => {
-                            try i.j(.{ "env->", v.v });
-                        },
-                    }
-                },
-                .Fun => |instfun| {
-                    const mFunNuId = try genEnvStruct(self, .{ .fun = instfun, .env = instfun.env }, inst.m);
-                    if (mFunNuId) |funNuId| {
-                        try i.j(.{ ".", EnvInstCName, funNuId });
-                        try i.p(.{"="});
-                        switch (inst.locality(env)) {
-                            .Local => try i.j(.{ EnvInstCName, funNuId }),
-                            .External => {
-                                try i.j(.{ "env->", EnvInstCName, funNuId });
-                            },
-                        }
-                    } else continue;
-                },
-                .ClassFun => |cfun| {
-                    switch (cfun.ref.*.?) {
-                        .Id => |id| {
-                            const funm = self.tymap.tryGetFunctionByID(id).?;
-                            const instfun = funm.fun;
-                            const mFunNuId = (try genEnvStruct(self, .{ .env = instfun.env, .fun = instfun }, funm.m));
-                            if (mFunNuId) |funNuId| {
-                                try i.j(.{ ".envinst", funNuId });
-                                try i.p(.{"="});
-                                switch (inst.locality(env)) {
-                                    .Local => try i.j(.{ "envinst", funNuId }),
-                                    .External => {
-                                        try i.j(.{ "env->", "envinst", funNuId });
-                                    },
-                                }
-                            } else continue;
-                        },
-                        .InstFun => unreachable,
-                    }
-                },
-                else => unreachable,
-            }
-
-            try i.j(",");
-            try i.finish();
-        }
-
-        try endBodyAndFinishStmt(self);
-    }
-
-    return .{ .id = nuId, .type = .Function };
+    return .{ .id = nuId, .envId = envId, .type = .Function };
 }
 // prepare paramteres for deconstruction.
 const Parameter = struct {
@@ -365,7 +288,81 @@ const Parameter = struct {
     }
 };
 
-// TODO: merge with genUnionInst
+pub fn genEnv(self: *Self, env: *ast.Env, fun: ?*ast.Function) !?Unique {
+    const m = self.tymap.match;
+    const mnuId = try genEnvStruct(self, .{ .env = env, .fun = fun }, m);
+
+    const isFunEnvEmpty = mnuId == null;
+    if (isFunEnvEmpty) return null;
+    const nuId = mnuId.?;
+
+    // generate env inst
+    var ei = startLine(self);
+    try ei.p(.{"struct"});
+    try ei.j(.{ "env", nuId });
+    try ei.j(.{ "envinst", nuId });
+    try ei.p("=");
+    try ei.beginBody();
+
+    var deduppedEnv = try env.deduplicatedEnvInsts(self.backend.al, self.tymap, self.typeContext);
+    defer deduppedEnv.deinit();
+    var envIt = deduppedEnv.iterator();
+    while (envIt.next()) |inst| {
+        var i = startLine(self);
+        switch (inst.v) {
+            .Var => |v| {
+                try i.j(.{ ".", v.v });
+                try i.p("=");
+                switch (inst.locality(env)) {
+                    .Local => try i.localVarThatCouldPossiblyBeDeconed(v),
+                    .External => {
+                        try i.j(.{ "env->", v.v });
+                    },
+                }
+            },
+            .Fun => |instfun| {
+                const mFunNuId = try genEnvStruct(self, .{ .fun = instfun, .env = instfun.env }, inst.m);
+                if (mFunNuId) |funNuId| {
+                    try i.j(.{ ".", EnvInstCName, funNuId });
+                    try i.p(.{"="});
+                    switch (inst.locality(env)) {
+                        .Local => try i.j(.{ EnvInstCName, funNuId }),
+                        .External => {
+                            try i.j(.{ "env->", EnvInstCName, funNuId });
+                        },
+                    }
+                } else continue;
+            },
+            .ClassFun => |cfun| {
+                switch (cfun.ref.*.?) {
+                    .Id => |id| {
+                        const funm = self.tymap.tryGetFunctionByID(id).?;
+                        const instfun = funm.fun;
+                        const mFunNuId = (try genEnvStruct(self, .{ .env = instfun.env, .fun = instfun }, funm.m));
+                        if (mFunNuId) |funNuId| {
+                            try i.j(.{ ".envinst", funNuId });
+                            try i.p(.{"="});
+                            switch (inst.locality(env)) {
+                                .Local => try i.j(.{ "envinst", funNuId }),
+                                .External => {
+                                    try i.j(.{ "env->", "envinst", funNuId });
+                                },
+                            }
+                        } else continue;
+                    },
+                    .InstFun => unreachable,
+                }
+            },
+            else => unreachable,
+        }
+
+        try i.j(",");
+        try i.finish();
+    }
+
+    try endBodyAndFinishStmt(self);
+    return mnuId.?;
+}
 
 const UnionCName = "struct envunion";
 const EnvCName = "struct env";
@@ -426,11 +423,12 @@ pub fn genEnvStruct(self: *Self, envfun: ast.EnvFun, um: *const ast.Match) !?Uni
 }
 
 // gen env inst struct if not generated AND create an instantiation in "current place"
-pub fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
+fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
     const funty = (try getTypeMapped(self, t)).Fun;
     const params = funty.args;
     const ret = funty.ret;
     const yunion = funty.env;
+
     const unionApp = try UnionApp.fromUnion(self, yunion);
     if (self.backend.unionsGenerated.get(unionApp)) |muid| {
         return muid;
@@ -444,14 +442,21 @@ pub fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
             return null;
         },
         .OneEnv => |oneEnv| {
-            const mnuId = try genEnvStruct(self, .{ .env = oneEnv.env, .fun = oneEnv.fun }, oneEnv.match);
-            if (mnuId == null) {
+            const menvId = try genEnvStruct(self, .{ .env = oneEnv.env, .fun = oneEnv.fun }, oneEnv.match);
+            if (menvId == null) {
                 try self.backend.unionsGenerated.put(unionApp, null);
                 return null;
             }
 
-            const nuId = mnuId.?;
+            const nuId = self.backend.tempgen.newUnique();
             try self.backend.unionsGenerated.put(unionApp, .{ .id = nuId, .ut = .OneEnv });
+            const envId = menvId.?;
+
+            if (Debug) {
+                self.ctx.print(.{ "new union oneenv: ", nuId, " for env ", envId, "\n" });
+                self.ctx.print(.{ "  ", unionApp.unionUid, "\n" });
+                self.ctx.print(.{ "  max union id:", self.typeContext.envContext.items.len, "\n" });
+            }
 
             // generate the env inst thing
             {
@@ -468,14 +473,14 @@ pub fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
                 try ifun.definition(ret, Tuple(.{
                     "(*fun)",
                     "(",
-                    Join(.{ EnvCName, nuId, "*" }),
+                    Join(.{ EnvCName, envId, "*" }),
                     PrependAll(", ", params),
                     ")",
                 }));
                 try ifun.finishStmt();
 
                 var ienv = startLine(self);
-                try ienv.j(.{ EnvCName, nuId });
+                try ienv.j(.{ EnvCName, envId });
                 try ienv.p("env");
                 try ienv.finishStmt();
 
@@ -1453,6 +1458,12 @@ const Stmt = struct {
                                     switch (try Mono.areAllEnvsEmptyT(self, &eu.yunion)) {
                                         .AllEmpty => {
                                             var sigarrsetln = startLine(self);
+                                            try sigarrsetln.p(.{ sigarrname, "[", sigv, "]" });
+                                            try sigarrsetln.p(.{ "(", sigv, ")" });
+                                            try sigarrsetln.finishStmt();
+                                        },
+                                        .OneEnv => {
+                                            var sigarrsetln = startLine(self);
                                             const t = self.backend.temp();
                                             try sigarrsetln.definition(funTy, t);
                                             try sigarrsetln.p(.{ "=", sigarrname, "[", sigv, "]" });
@@ -1462,16 +1473,10 @@ const Stmt = struct {
                                             try callln.j(.{ t, ".fun" });
 
                                             try callln.p("(");
-                                            try callln.j(.{ t, ".env" });
+                                            try callln.j(.{ "&", t, ".env" });
 
                                             try callln.p(.{ ",", sigv, ")" });
                                             try callln.finishStmt();
-                                        },
-                                        .OneEnv => {
-                                            var sigarrsetln = startLine(self);
-                                            try sigarrsetln.p(.{ sigarrname, "[", sigv, "]" });
-                                            try sigarrsetln.p(.{ "(", sigv, ")" });
-                                            try sigarrsetln.finishStmt();
                                         },
                                         .MoreEnvs => unreachable,
                                     }
@@ -1698,6 +1703,7 @@ const Stmt = struct {
                 }
             },
             .Lam => |lam| {
+                _ = try genEnv(stmt.ctx, lam.env, null);
                 const munionId = try genUnionInst(stmt.ctx, expr.t);
                 const hasEnv = munionId != null;
                 const fungen = (try genFunctionForReal(stmt.ctx, "lam", lam.params, lam.returnType(), lam.env, null, switch (lam.body) {
@@ -1705,7 +1711,7 @@ const Stmt = struct {
                     .Body => |bod| .{ .Body = bod.stmts },
                 }, hasEnv));
 
-                try call(stmt, "lam", fungen, munionId, lam.env, .Local, expr.t);
+                try instantiateFunction(stmt, "lam", fungen, munionId, .Local, expr.t);
             },
             .AnonymousRecord => |rec| {
                 switch (try getTypeMapped(stmt.ctx, expr.t)) {
@@ -1864,10 +1870,10 @@ const Stmt = struct {
         const hasEnv = munionId != null;
         const funNuId = try genFunctionForRealForReal(stmt.ctx, fun, hasEnv);
 
-        try call(stmt, fun.name.name, funNuId, munionId, fun.env, locality, functionTy);
+        try instantiateFunction(stmt, fun.name.name, funNuId, munionId, locality, functionTy);
     }
 
-    fn call(stmt: *@This(), funname: Str, fungen: FunGen, unionInstType: ?UnionInstType, env: *ast.Env, locality: ast.Locality, t: ast.Type) !void {
+    fn instantiateFunction(stmt: *@This(), funname: Str, fungen: FunGen, unionInstType: ?UnionInstType, locality: ast.Locality, t: ast.Type) !void {
         const hasEnv = unionInstType != null;
         const nuId = fungen.id;
 
@@ -1889,7 +1895,7 @@ const Stmt = struct {
                 Join(.{ switch (unionInstType.?.ut) {
                     .OneEnv => EnvCName,
                     .MoreEnvs => UnionInstCName,
-                }, unionId, "*" }),
+                }, fungen.envId.?, "*" }),
                 PrependAll(", ", ty.args),
                 ")",
             }));
@@ -1897,7 +1903,9 @@ const Stmt = struct {
                 ")",
                 ast.Var{ .name = funname, .uid = nuId },
             });
-            if (!try Mono.isEnvEmpty(stmt.ctx, env)) {
+
+            const isFunEnvEmpty = fungen.envId == null;
+            if (!isFunEnvEmpty) {
                 switch (unionInstType.?.ut) {
                     .OneEnv => {
                         try stmt.j(.{
@@ -1920,7 +1928,7 @@ const Stmt = struct {
                     try stmt.j(.{
                         if (locality == .Local) "" else "env->",
                         "envinst",
-                        nuId,
+                        fungen.envId.?,
                     });
                 }
             }
@@ -2363,10 +2371,11 @@ const Stmt = struct {
                 .Var => |v| try self.definition(inst.t, v.v),
                 .Fun => |fun| {
                     const mnuId = try genEnvStruct(self.ctx, .{ .env = fun.env, .fun = fun }, inst.m);
-                    if (mnuId) |_| {
+                    if (mnuId) |envId| {
                         const uit = (try genUnionInst(self.ctx, inst.t)).?;
-                        try self.j(.{ EnvCName, uit.id });
-                        try self.j(.{ EnvInstCName, uit.id });
+                        _ = uit;
+                        try self.j(.{ EnvCName, envId });
+                        try self.j(.{ EnvInstCName, envId });
                     }
                 },
                 .ClassFun => |cfun| {
@@ -2375,10 +2384,11 @@ const Stmt = struct {
                             const funm = self.ctx.tymap.tryGetFunctionByID(id).?;
                             const fun = funm.fun;
                             const mnuId = try genEnvStruct(self.ctx, .{ .env = fun.env, .fun = fun }, funm.m);
-                            if (mnuId) |_| {
+                            if (mnuId) |envId| {
                                 const unionId = (try genUnionInst(self.ctx, inst.t)).?.id;
-                                try self.j(.{ EnvCName, unionId });
-                                try self.j(.{ EnvInstCName, unionId });
+                                _ = unionId;
+                                try self.j(.{ EnvCName, envId });
+                                try self.j(.{ EnvInstCName, envId });
                             }
                         },
                         .InstFun => unreachable,
@@ -3247,30 +3257,32 @@ pub const EnvApp = struct {
 
 // Hacky.
 const UnionApp = struct {
-    baseref: ast.UnionRef,
-    lowestEnvApp: EnvApp,
+    unionUid: Unique,
+    highestEnvApp: EnvApp, // NOTE(26.05.25): this should actually be highest level. that's because this would be the "most" applied function which would define the union.
 
     pub fn fromUnion(self: *Self, ref: ast.UnionRef) !@This() {
         const unionBase = getUnion(self, ref);
-        const baseRef = unionBase.base;
 
         // find "lowest" env.
-        var lowestEnv: ?*const TypeContext.Env = null;
+        var highestEnv: ?*const TypeContext.Env = null;
         for (unionBase.yunion.envs.items) |*env| {
-            if (lowestEnv) |le| {
-                if (env.level < le.level) {
-                    lowestEnv = env;
+            if (highestEnv) |le| {
+                if (env.level > le.level) {
+                    highestEnv = env;
                 }
             } else {
-                lowestEnv = env;
+                highestEnv = env;
             }
         }
 
-        std.debug.assert(lowestEnv != null);
-        const lowestEnvApp = try EnvApp.fromEnv(self, .{ .env = lowestEnv.?.env, .fun = lowestEnv.?.fun }, self.tymap.match);
+        std.debug.assert(highestEnv != null);
+
+        // NOTE(26.05.26): this is funny, because we have to remember to map match that env. We should do it in fromEnv.
+        const m = try self.typeContext.mapMatch(self.tymap, highestEnv.?.match);
+        const highestEnvApp = try EnvApp.fromEnv(self, .{ .env = highestEnv.?.env, .fun = highestEnv.?.fun }, m);
         return .{
-            .baseref = baseRef,
-            .lowestEnvApp = lowestEnvApp,
+            .unionUid = unionBase.yunion.uid,
+            .highestEnvApp = highestEnvApp,
         };
     }
 
@@ -3278,7 +3290,7 @@ const UnionApp = struct {
         typeContext: *const TypeContext,
 
         pub fn eql(ctx: @This(), a: UnionApp, b: UnionApp) bool {
-            return a.baseref.id == b.baseref.id and EnvApp.Comparator.eql(.{ .typeContext = ctx.typeContext }, a.lowestEnvApp, b.lowestEnvApp);
+            return a.unionUid == b.unionUid and EnvApp.Comparator.eql(.{ .typeContext = ctx.typeContext }, a.highestEnvApp, b.highestEnvApp);
         }
 
         pub fn hash(ctx: @This(), k: UnionApp) u64 {

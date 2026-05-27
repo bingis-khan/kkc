@@ -130,19 +130,12 @@ pub fn Mono(Back: type) type {
                                 defer self.tymap = oldM;
                                 self.tymap = &TypeMap.init(mm, oldM);
 
-                                const variation = try FunctionVariations.allVariations(
-                                    self,
-                                    kv.value_ptr.callingUnions.iterator(),
-                                );
+                                // const variation = try FunctionVariations.allVariations(
+                                //     self,
+                                //     kv.value_ptr.callingUnions.iterator(),
+                                // );
 
-                                // now, realize these variations.
-                                if (variation.noEnv) {
-                                    try Backend.genFunction(self, fun, false);
-                                }
-                                if (variation.withEnv) {
-                                    try Backend.genFunction(self, fun, true);
-                                }
-                                // try self.genEnv(&fun.env.monoInsts, m, null);
+                                _ = try Backend.genEnv(self, fun.env, fun);
                             }
                         }
                     },
@@ -184,18 +177,13 @@ pub fn Mono(Back: type) type {
                                     defer self.tymap = oldM;
                                     self.tymap = &TypeMap.init(mm, oldM);
 
-                                    const variation = try FunctionVariations.allVariations(
-                                        self,
-                                        kv.value_ptr.callingUnions.iterator(),
-                                    );
+                                    // const variation = try FunctionVariations.allVariations(
+                                    //     self,
+                                    //     kv.value_ptr.callingUnions.iterator(),
+                                    // );
 
                                     // now, realize these variations.
-                                    if (variation.noEnv) {
-                                        try Backend.genFunction(self, instFun.fun, false);
-                                    }
-                                    if (variation.withEnv) {
-                                        try Backend.genFunction(self, instFun.fun, true);
-                                    }
+                                    _ = try Backend.genEnv(self, instFun.fun.env, instFun.fun);
 
                                     const use = try self.useScope.findUses(.{
                                         .fun = instFun.fun,
@@ -450,7 +438,7 @@ pub fn Mono(Back: type) type {
 
                     // add stuff from the environment here
                     // NOTE(env-escaping): check for envs from the inside.
-                    var outerFTVs = TypeContext.FTVs.init(self.al);
+                    var outerFTVs = TypeContext.FTVs.init(self.al, self.typeContext);
                     defer outerFTVs.deinit();
                     for (fun.env.insts.items) |inst| {
                         // JUST IN CASE DON'T ADD INSTS HERE, BECAUSE MATCH CAN CHANGE.
@@ -654,10 +642,11 @@ pub fn Mono(Back: type) type {
 
                 // if there was already a match, no need to expand.
                 // we also add the current union to this yo.
-                const mms = fun.temp__mono.matches.getPtr(.{
-                    .m = um,
-                }).?;
-                try mms.callingUnions.insert(um.mapUnion(baseUnionId) orelse baseUnionId);
+                // const mms = fun.temp__mono.matches.getPtr(.{
+                //     .m = um,
+                // }).?;
+                // try mms.callingUnions.insert(um.mapUnion(baseUnionId) orelse baseUnionId);
+                _ = baseUnionId;
             }
 
             fn addToEnv(self: *@This(), startEnv: ?ast.EnvFun, umInst: ast.EnvVar) !void {

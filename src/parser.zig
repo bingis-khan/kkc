@@ -220,7 +220,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         var tag: u32 = 0;
         var assocs = std.ArrayList(AST.Association).init(self.arena);
         const tyconstr = Type.Constrain{ .Data = .{ .uid = data.uid, .assocs = &assocs } };
-        var ftvs = TypeContext.FTVs.init(self.arena); // TODO: this is slow. We should add a pointer to an arraylist to the Type(..) constructor. FTV also does deduplication which is not needed here.
+        var ftvs = TypeContext.FTVs.init(self.arena, self.typeContext); // TODO: this is slow. We should add a pointer to an arraylist to the Type(..) constructor. FTV also does deduplication which is not needed here.
         var outerTVarSet = Set(AST.TVarOrNum, AST.TVarOrNum.comparator()).init(self.arena);
         while (!self.check(.DEDENT)) {
             const conAnnotations = try self.parseAnnotation();
@@ -4956,14 +4956,14 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
     };
 
     // Function local stuff.
-    var funftvs = TypeContext.FTVs.init(self.arena);
+    var funftvs = TypeContext.FTVs.init(self.arena, self.typeContext);
     try self.typeContext.ftvs(&funftvs, ret);
     for (params) |p| {
         try self.typeContext.ftvs(&funftvs, p.d.t);
     }
 
     // environment stuff.
-    var envftvs = TypeContext.FTVs.init(self.arena);
+    var envftvs = TypeContext.FTVs.init(self.arena, self.typeContext);
     try self.typeContext.ftvsFromEnv(&envftvs, env);
 
     // TEMP: detect free type variables and apply defaults in case they are not from outside.
@@ -5078,7 +5078,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                     if (assoc.concrete) |conc| {
 
                         // make sure to check it's actually bound to a function.
-                        var assocFTVs = TypeContext.FTVs.init(self.arena); // TODO: this is kinda fugly. I should reuse the general ftvs.
+                        var assocFTVs = TypeContext.FTVs.init(self.arena, self.typeContext); // TODO: this is kinda fugly. I should reuse the general ftvs.
                         defer assocFTVs.deinit();
                         try self.typeContext.ftvs(&assocFTVs, conc.to);
 

@@ -51,3 +51,69 @@ but a union can be of multiple things.
 
 for mono-unions, we just make a second mono-set.
 at function expansion, when we operate with a match, we add the finished mono-set of scheme unions into current unions (mapped obviously.)
+
+---
+
+27.05.26
+
+I really need to compile all the notes now. check the next "part" for what i mean.
+
+I've managed to bring in the second, unionfull version up to speed with the current one.
+obviously, the implementation is still scuffed. env expansion will be broken.
+
+
+but, there is a serious (200%) monomorphisation slowdown - I don't know why that happens.
+I'll keep the old kkc as a sanity check as `kkc-env`.
+
+
+compilation of kd.kkc:
+
+=== compilation time: 165ms ===
+=== mono call graph: 23ms ===
+=== mono compilation: 222ms ===
+=== writing and compiling (C) time: 1207ms ===
+
+
+=== compilation time: 155ms ===
+=== mono call graph: 27ms ===
+=== mono compilation: 455ms ===
+=== writing and compiling (C) time: 1191ms ===
+
+--
+
+about the notes and stuff.
+*complete with one hack. In UnionRef Comparator, there is a hack to compare the union STRUCTURALLY if it only has one env, like in most cases.
+all of my programs compile now, including kd.
+
+the thing is, check this:
+
+```
+fn a(al)
+	_ = al allocate(420) as Slice U8
+
+al = Alloc.idc()
+a(al)
+a(al)
+```
+
+If we *don't* compare unions structurally, we will generate two a() functions. that's because we call `instantiateFunction` for `allocate` twice when instantiating `a`. These create new unions (it also created new env slots in TypeContext, but we later compared structurally anyway, because it was cheap). So, the end goal is to either compare structurally
+
+OR
+
+unions should probably be used pretty sparingly (unless the allocator interface)
+we can then optimize for the happy path, by just having two (or three counting the special empty case) cases for a union:
+
+Empty
+OneEnv
+MoreEnvs
+
+This may also allow me to implement the union stuff gradually so I don't get burned out like right now.
+
+But yeah, there is a lot of small stuff.
+
+--
+
+Like env expansion.
+
+We should probably keep track of union level, so that we can make a "subslice" of environments which "matter" in the environment.
+If not, the mono thing will contain all env instantiations including the outer env's stuff.
