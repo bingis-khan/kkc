@@ -100,7 +100,7 @@ Dirent
 	d-off I64
 	d-reclen U16
 	d-type U8
-	d-name Array 256 Char
+	d-name Array 256 AsciiChar
 
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
@@ -121,7 +121,7 @@ external
 	fprintf1 (file Ptr FILE, format ConstStr, x a) -> CInt
 
 	#[cfunname 'snprintf', cstdinclude 'stdio.h']
-	snprintf1 (p Ptr Char, n CInt, format ConstStr, x a) -> CInt
+	snprintf1 (p Ptr AsciiChar, n CInt, format ConstStr, x a) -> CInt
 
 
 	#[cstdinclude 'stdlib.h']

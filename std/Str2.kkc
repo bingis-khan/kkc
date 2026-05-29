@@ -7,7 +7,6 @@ use Iter
 	drop
 use Str
 	Str
-	print-str
 	chars
 use Iter
 	head
@@ -32,13 +31,13 @@ use Math
 ##### F64 crap yooo
 
 F64StrIter
-	buf Array 32 Char  # seems to be max possible?
+	buf Array 32 AsciiChar  # seems to be max possible?
 	i I32
 
 inst IntoIter F64
 	into-iter (f)
-		buf =& @undefined as Array 32 Char
-		p = Mem.cast(buf) as Ptr Char
+		buf =& @undefined as Array 32 AsciiChar
+		p = Mem.cast(buf) as Ptr AsciiChar
 		Cnile.snprintf1(p, 32, '%g', f)
 		return F64StrIter { buf: buf&, i: 0 }
 
@@ -55,8 +54,9 @@ inst Iter F64StrIter
 		return c Just()
 
 inst Str F64
-	print-str (self)
-		Cnile.printf1('%g', self)
+	# write-str (self)
+	# 	# Cnile.printf1('%g', self)
+	# 	todo()
 
 	chars (self): self into-iter()
 
@@ -67,19 +67,19 @@ DisplayList it
 	it it
 
 inst Str DisplayList
-	print-str (self)
-		print-str('[')
-		case self.it head()
-			Just(first)
-				print-str(first)
+	# print-str (self)
+	# 	print-str('[')
+	# 	case self.it head()
+	# 		Just(first)
+	# 			print-str(first)
 
-				self.it drop(1) for-each(fn(x))
-					print-str(', \(x)')
+	# 			self.it drop(1) for-each(fn(x))
+	# 				print-str(', \(x)')
 
-			None
-				pass
+	# 		None
+	# 			pass
 
-		print-str(']')
+	# 	print-str(']')
 
 	chars (self): todo()
 
@@ -89,17 +89,14 @@ fn as-if-list(it):
 
 ##### Functions
 # BUG: does not work for nullchars (due to our string representation still lacking length)
-fn allocate-str (s, al) -> ConstStr
-	len = s chars() count()
-	str = al Alloc.allocate(len + 1)
-	s chars()
-		zip(from(0))
-		for-each(fn Tuple2(c, i): str Slice.set(Mem.i32-size(i), c))
-
-	str Slice.set(len, Str.nullchar())
-	return str.ptr Mem.cast()
+fn allocate-str (s, al) -> ConstStr:
+	s StrBuilder.mk-const-str(al)
 
 fn newline() -> Char: '\n'
+fn newline() -> U8
+	case '\n' as Char
+		Char(x)
+			return Mem.u32-u8(x)
 
 fn is-whitespace (c Char):
 	c == ' ' or c == '\n' or c == '\t'
@@ -137,7 +134,7 @@ inst IntoIter LineIter
 inst Iter LineIter
 	next (self Ptr LineIter) -> Maybe DynStr
 		# should consume the last trailing newline
-		if self&.last >= self&.og.contents.count or self&.og.contents Slice.get(self&.last) == Str.nullchar()
+		if self&.last >= self&.og.contents.count or self&.og.contents Slice.get(self&.last) == Str.nullchar-u8()
 			return None
 
 		# iterator is left after last encountered newline

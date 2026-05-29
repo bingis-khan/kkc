@@ -16,7 +16,6 @@ use Iter
 	all
 use Str
 	Str
-	print-str
 use Misc
 	is-just
 
@@ -143,8 +142,8 @@ inst Iter SliceIter
 
 # SHITTY STR INST (Item = Cnile.Char)
 inst Str SliceIter
-	print-str (self)
-		self for-each(print-str)
+	# print-str (self)
+	# 	self for-each(print-str)
 
 	chars (self): self
 
@@ -190,8 +189,10 @@ inst Indexable Slice
 	elem-get (self, idx): get(self, idx)
 
 inst Str Slice
-	print-str (self): self
-		Str.print-as-list()
+	# write-str (wr, self)
+	# 	Error.todo()
+	# print-str (self): self
+	# 	ProtoTerm.print-as-list()
 
 	chars (self): Error.todo()
 

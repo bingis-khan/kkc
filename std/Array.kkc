@@ -7,7 +7,6 @@ use Iter
 use Slice
 	Slice
 use Str
-	print-str
 	chars
 use Mem
 	i32-size

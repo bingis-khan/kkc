@@ -14,9 +14,9 @@ fn mk(chs Array n Char) -> SmolStr
 	return Mem.cast-on-zeroed(chs)
 
 inst Str SmolStr
-	print-str (self _)
-		cs = Mem.cast(&self) as ConstStr
-		Str.print-str(cs)
+	# print-str (self _)
+	# 	cs = Mem.cast(&self) as ConstStr
+	# 	ProtoTerm.print-str(cs)
 
 	chars (self _)
 		cs = Mem.cast(&self) as ConstStr

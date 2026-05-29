@@ -1685,10 +1685,6 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
                 return ffi.types.pointer;
             }
 
-            if (c.type.eq(self.prelude.defined(.Char))) {
-                return ffi.types.schar;
-            }
-
             if (ast.Annotation.find(c.type.annotations, "ctype")) |ann| {
                 // bruh. maybe I should just put void in prelude?
                 if (common.streq(ann.params[0], "void")) {
@@ -1716,6 +1712,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 
                 if (common.streq(c.type.name, "U64")) {
                     return ffi.types.uint64;
+                }
+
+                if (common.streq(c.type.name, "AsciiChar")) {
+                    return ffi.types.schar;
                 }
 
                 if (common.streq(c.type.name, "CInt")) {

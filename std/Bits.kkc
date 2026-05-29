@@ -38,3 +38,4 @@ inst Iter BitIter
 
 fn bits(x U32) -> BitIter: BitIter { x, size: None }
 fn bits'(x U32, expected-size Maybe I32) -> BitIter: BitIter { x, size: expected-size }
+

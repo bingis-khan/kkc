@@ -92,6 +92,8 @@ fn command-exists (cmd Str, al Allocator) -> Bool
 	fn check-and-clear () -> Bool
 		dir StrBuilder.write-char('/')
 		dir StrBuilder.write(cmd)
+
+		# TODO: wtf? mr claudius???
 		candidate = dir StrBuilder.as-str() StrBuilder.mk-const-str(al)
 		result = Cnile.access(candidate, 1) == 0  # X_OK = 1
 		candidate StrBuilder.free-const-str(al)

@@ -57,8 +57,10 @@ ConstStr  # TODO: later, make a ptr + length struct string.
 # also FromChar should not have type SmolStr -> Char tho, because its easy to ConstStr -> SmolStr, but not the other way around.
 # SmolStr
 
+Char: U32
+
 #[ctype 'char', bytes '1']
-Char  # later change to RUNE!
+AsciiChar
 
 
 # stolen from Str std module. used in string interpolation
@@ -195,8 +197,8 @@ Either e a
 inst FromChar ConstStr
 	from-charlike (s): s
 
-inst FromChar Char
-	from-charlike (s): (@cast(s) as Ptr Char)&
+inst FromChar AsciiChar
+	from-charlike (s): (@cast(s) as Ptr AsciiChar)&
 
 
 inst Indexable Ptr

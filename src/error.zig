@@ -136,6 +136,19 @@ pub const Error = union(enum) {
         loc: Loc,
     },
 
+    MissingInstanceFunction: struct {
+        data: *const ast.Data,
+        classFun: *ast.ClassFun,
+        loc: Loc,
+    },
+
+    InstanceFunctionDoesNotMatchClassFunction: struct {
+        data: *const ast.Data,
+        class: *const ast.Class,
+        fun: *const ast.Function,
+        loc: Loc,
+    },
+
     ConstraintsLeft: []parser.Association,
 
     TVarDoesNotImplementClass: struct {
@@ -357,6 +370,12 @@ pub const Error = union(enum) {
                         .label = .{ "Could not find instance of ", e.class, " for type ", e.data, ". No instances found." },
                     });
                 }
+            },
+            .MissingInstanceFunction => |e| {
+                err.atLocation(e.loc, .{ .label = .{ "Missing instance function ", e.classFun.name.name, " for datatype ", e.data.name, "." } });
+            },
+            .InstanceFunctionDoesNotMatchClassFunction => |e| {
+                err.atLocation(e.loc, .{ .label = .{ "Function ", e.fun.name, " of ", e.data.name, " instance is not part of class ", e.class, "." } });
             },
             .ConstraintsLeft => |e| {
                 p("{s}: constraints left {}:", .{ module.name, e.len });

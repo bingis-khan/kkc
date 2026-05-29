@@ -172,9 +172,10 @@ fn scopeToExports(self: *Self) Module.Exports {
 }
 
 fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.Annotation) !void {
+    const dataName = typename.literal(self.lexer.source);
     const data = try Common.allocOne(self.arena, AST.Data{
         .uid = self.gen.vars.newUnique(),
-        .name = typename.literal(self.lexer.source),
+        .name = dataName,
         .scheme = undefined,
         .outerTVars = undefined, // ERROR: when self referencing the type, there will be an undefined value. I guess we can make it a pointer, which we will instantiate later.
         .stuff = undefined,
@@ -198,7 +199,8 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
             }
         }
 
-        if (!self.check(.INDENT)) {
+        const ddt = self.peek();
+        if (!(ddt.type == .COLON or ddt.type == .INDENT)) {
             // Add type without any constructors
             data.* = AST.Data{
                 .uid = data.uid,
@@ -215,6 +217,8 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
             break :b;
         }
 
+        self.skip();
+
         var cons = std.ArrayList(AST.Con).init(self.arena);
         var recs = std.ArrayList(AST.Data.DecRecord).init(self.arena);
         var tag: u32 = 0;
@@ -222,27 +226,60 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
         const tyconstr = Type.Constrain{ .Data = .{ .uid = data.uid, .assocs = &assocs } };
         var ftvs = TypeContext.FTVs.init(self.arena, self.typeContext); // TODO: this is slow. We should add a pointer to an arraylist to the Type(..) constructor. FTV also does deduplication which is not needed here.
         var outerTVarSet = Set(AST.TVarOrNum, AST.TVarOrNum.comparator()).init(self.arena);
-        while (!self.check(.DEDENT)) {
-            const conAnnotations = try self.parseAnnotation();
-            if (self.consume(.IDENTIFIER)) |recname| {
-                // record
-                const t = try Type.init(self, tyconstr).sepTyo();
+        if (ddt.type == .INDENT) {
+            while (!self.check(.DEDENT)) {
+                const conAnnotations = try self.parseAnnotation();
+                if (self.consume(.IDENTIFIER)) |recname| {
+                    // record
+                    const t = try Type.init(self, tyconstr).sepTyo();
 
-                try self.typeContext.ftvs(&ftvs, t.e);
-                try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, t.e);
+                    try self.typeContext.ftvs(&ftvs, t.e);
+                    try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, t.e);
 
-                try recs.append(.{
-                    .rec = .{
-                        .field = recname.literal(self.lexer.source),
-                        .t = t.e,
-                    },
-                    .anns = conAnnotations,
-                });
-                try self.endStmt();
-            } else if (self.consume(.TYPE)) |conName| {
+                    try recs.append(.{
+                        .rec = .{
+                            .field = recname.literal(self.lexer.source),
+                            .t = t.e,
+                        },
+                        .anns = conAnnotations,
+                    });
+                    try self.endStmt();
+                } else if (self.consume(.TYPE)) |conName| {
+                    // constructor
+                    var tys = std.ArrayList(AST.Type).init(self.arena);
+                    while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
+                        const ty = try Type.init(self, tyconstr).typ();
+
+                        try self.typeContext.ftvs(&ftvs, ty.e);
+                        try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, ty.e);
+
+                        try tys.append(ty.e);
+                    }
+                    self.consumeSeps();
+
+                    try cons.append(.{
+                        .uid = self.gen.cons.newUnique(),
+                        .name = conName.literal(self.lexer.source),
+                        .tys = tys.items,
+                        .data = data,
+                        .tagValue = tag,
+                        .anns = conAnnotations,
+                    });
+
+                    tag += 1;
+                } else {
+                    unreachable; // TODO: ERROR!
+                }
+            }
+        } else {
+            std.debug.assert(ddt.type == .COLON);
+
+            const l = self.foldFromHere();
+            {
+
                 // constructor
                 var tys = std.ArrayList(AST.Type).init(self.arena);
-                while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
+                while (!(self.peek().type == .STMT_SEP or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                     const ty = try Type.init(self, tyconstr).typ();
 
                     try self.typeContext.ftvs(&ftvs, ty.e);
@@ -250,21 +287,19 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.A
 
                     try tys.append(ty.e);
                 }
-                self.consumeSeps();
 
                 try cons.append(.{
                     .uid = self.gen.cons.newUnique(),
-                    .name = conName.literal(self.lexer.source),
+                    .name = dataName,
                     .tys = tys.items,
                     .data = data,
                     .tagValue = tag,
-                    .anns = conAnnotations,
+                    .anns = &.{}, // TODO(29.05.26): parse annotations bruh.
                 });
 
                 tag += 1;
-            } else {
-                unreachable; // TODO: ERROR!
             }
+            try self.finishFold(l);
         }
 
         // scheme
@@ -891,7 +926,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             if (self.check(.EQUALS)) {
                 try self.typeSynonym(typename, tvars.items, annotations);
                 break :b null;
-            } else if (self.peek().type == .INDENT or self.peek().type == .STMT_SEP or tvars.items.len > 0) { // basically in these conditions, we can be sure that we're trying to parse a datatype.
+            } else if (self.peek().type == .COLON or self.peek().type == .INDENT or self.peek().type == .STMT_SEP or tvars.items.len > 0) { // basically in these conditions, we can be sure that we're trying to parse a datatype.
                 try self.dataDef(typename, tvars.items, annotations);
                 break :b null;
             }
@@ -1117,9 +1152,15 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                     break;
                 } else {
                     // error that instance function is not found.
-                    // TODO: I might need to add a placeholder function (based on the class declaration), which is a lot of work, so whatever.
-                    try self.errorExpect("could not find instance of function (IMPLEMENT THIS PART BRUH!!)");
-                    unreachable;
+                    // should we do anything more?
+                    try self.reportError(.{
+                        .InstanceFunctionDoesNotMatchClassFunction = .{
+                            .data = data,
+                            .class = class,
+                            .fun = fun,
+                            .loc = self.loc(funName),
+                        },
+                    });
                 }
 
                 if (self.check(.DEDENT)) break;
@@ -4465,7 +4506,7 @@ fn solveAvailableConstraints(self: *Self) !void {
             defer i +%= 1;
             switch (self.typeContext.getType(assoc.from)) {
                 .Con => |con| {
-                    if (if (assoc.instances.getPtr(assoc.class)) |dataInstances| dataInstances.get(con.type) else null) |inst| {
+                    if (if (assoc.instances.getPtr(assoc.class)) |dataInstances| dataInstances.get(con.type) else null) |inst| errexit: {
                         if (assoc.concrete) |conc| {
                             const fun: *AST.Function = b: {
                                 for (inst.instFuns) |instFun| {
@@ -4478,7 +4519,16 @@ fn solveAvailableConstraints(self: *Self) !void {
                                 // TODO: compiler error: could not find instance function.
                                 //  This case should be checked when parsing the selected instance.
                                 //  Then here, we would return some placeholder (or the placeholder will be provided then)
-                                unreachable;
+                                try self.reportError(.{ // so this is TEMP
+                                    .MissingInstanceFunction = .{
+                                        .data = con.type,
+                                        .classFun = conc.classFun,
+                                        .loc = assoc.loc.?,
+                                    },
+                                });
+
+                                conc.ref.* = null;
+                                break :errexit;
                             };
                             const funTyAndMatch = try self.instantiateFunction(fun, assoc.instances, assoc.loc);
                             const funTy = funTyAndMatch.t;
@@ -5477,7 +5527,6 @@ fn finishFold(self: *Self, mode: ParsingMode) !void {
 
 fn expect(self: *Self, tt: TokenType) !Token {
     return self.consume(tt) orelse {
-        // unreachable;
         try self.parseError(.{ .UnexpectedToken = .{
             .got = self.currentToken,
             .expected = tt,
