@@ -106,7 +106,7 @@ fn char-to-zt-buf(Char(cc)) -> (Array 5 U8, Size)
 inst Str Char
 	write-str (wr, self) -> Unit
 		buf-sz = char-to-zt-buf(self)
-		wr write(buf-sz fst() Mem.cast() as Ptr U8, buf-sz snd())
+		wr write((&buf-sz fst()) Mem.cast() as Ptr U8, buf-sz snd())
 
 	chars (self _):
 		Iter.single(self)

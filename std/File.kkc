@@ -55,7 +55,7 @@ fn try-write-contents (filename, contents) -> Bool
 				file Cnile.fclose()
 				return True
 			Just(c)
-				chars-written = Cnile.fprintf1(file, '%c', c)
+				chars-written = Cnile.fprintf1(file, '%s', (&Str.char-to-zt-buf(c) Misc.fst()) Mem.cast-ptr())
 				if chars-written < 0
 					return False
 
