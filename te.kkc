@@ -1,6 +1,3 @@
-# 'ąabćd' chars() for-each(fn(Char(u32)))
-# 	println(u32)
-# 	println(Char(u32))
 al = Alloc.idc()
 home = Env.get('HOME') or-else('.')
 filename = '\(home)/reminders' allocate-str(al)

@@ -4,12 +4,18 @@ use Iter
 	into-iter
 	next
 	to
+	zip
+	all
 use Slice
 	Slice
 use Str
+	print-str
 	chars
 use Mem
 	i32-size
+use Error
+	or-fail
+	panic
 
 fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
 	if i < 0 or i >= @cast(count)
@@ -39,26 +45,64 @@ fn map-array (arr Array count a, fun a -> b) -> Array count b
 
 fn map(arr, fun): map-array(arr, fun)
 
-# ARRAY YAH
-# It's here, because why not. It's still imported by default.
+fn fill-default (default a) -> Array count a
+	arr =& @undefined
+	for i in 0 to (count - 1)
+		arr set(Mem.i32-size(i), default)
+	return arr&
 
-SmolArrayIter ^count a
-	backing SmolArray count a
+
+# converts iterator into an array.
+# NOTE: fails if the length of the iterator does not exactly match
+# the array length.
+fn from-iter (it it) -> Array count a <= IntoIter it
+	arr =& @undefined
+	it =& it into-iter()
+	for i in 0 to (count - 1)
+		el = next(it) or-fail('(Array.from-iter) expect iter of length \(count), but no elements after \(i)')
+		arr set(i Mem.i32-size(), el)
+	if Misc.is-just(next(it))
+		panic('(Array.from-iter) iter too long. expect only \(count) elements')
+	return arr&
+
+# converts iterator into an array
+# NOTE: this fails only if there is too much stuff. missing stuff will be filled with default.
+fn fill-iter (it it, default a) -> Array count a <= IntoIter it
+	arr =& fill-default(default)
+	it =& it into-iter()
+	for i in 0 to (count - 1)
+		case next(it)
+			None
+				return arr&
+			Just(x)
+				arr set(i Mem.i32-size(), x)
+	if Misc.is-just(next(it))
+		panic('(Array.from-iter) iter too long. expect only \(count) elements')
+	return arr&
+
+
+ArrayIter ^count a
+	backing Array count a
 	cur Size
 
-inst IntoIter SmolArray
+inst IntoIter Array
 	into-iter (self):
-		SmolArrayIter { backing: self, cur: 0 }
+		ArrayIter { backing: self, cur: 0 }
 
-inst IntoIter SmolArrayIter
+inst IntoIter ArrayIter
 	into-iter (self): self
 
-inst Iter SmolArrayIter
-	next (self Ptr (SmolArrayIter count a))
+inst Iter ArrayIter
+	next (self Ptr (ArrayIter count a))
 		if self&.cur >= @cast(count)
 			return None
 
-		e = (&self&.backing.arr) get(self&.cur)
+		e = (&self&.backing) get(self&.cur)
 		self <&.cur= self&.cur + 1
 		return Just(e)
+
+
+inst Eq Array
+	eq (l Array len a, r Array len a) -> Bool <= Eq a:
+		l zip (r) all(fn ((l, r)): l == r)
 

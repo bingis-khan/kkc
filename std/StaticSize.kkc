@@ -1,0 +1,5 @@
+StaticSize ^size
+	StaticSize
+
+fn get (_ StaticSize size): Mem.i32-size(size)
+fn mk (): StaticSize

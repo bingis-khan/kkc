@@ -1,0 +1,210 @@
+use Slice
+	Slice
+use Error
+	panic
+use Iter
+	IntoIter
+	into-iter
+	zip
+	from
+	for-each
+	drop
+use Alloc
+	Allocator
+	allocate
+use Str
+	Str
+use Mem
+	i32-size
+
+
+Idx = Size
+
+List alloc a
+	al alloc
+	elements Slice a  # elements.count ~ capacity
+	count Idx
+
+fn get-ptr (list Ptr (List alloc a), i Idx) -> Ptr a
+	if i < 0 or i >= list&.count
+		panic('Access to list at index \(i) (count: \(list&.count))')
+
+	return Slice.get-ptr(list&.elements, i)
+
+fn try-get-ptr (list Ptr (List alloc a), i Idx) -> Maybe (Ptr a)
+	if i >= list&.count
+		return None
+	return list get-ptr(i) Just()
+
+fn get (list Ptr (List alloc a), i Idx) -> a:
+	list get-ptr(i)&
+
+fn try-get (list Ptr (List alloc a), i Idx) -> Maybe a
+	if i >= list&.count
+		return None
+	return list get(i) Just()
+
+fn set (list Ptr (List alloc a), i Idx, elem a) -> Unit
+	if i < 0 or i >= list&.count
+		panic('Tried setting a list element at index \(i) (count: \(list&.count))')
+
+	Slice.set(list&.elements, i, elem)
+	# i guess i can also return the old value here.
+
+
+
+inst IntoIter List
+	into-iter (self):
+		self.elements
+
+		# just create a subslice with the required capacity and iterate.
+		Slice.subslice(0, self.count)
+		into-iter()
+
+
+
+# kek, should be `new`, but I'm trying out a new convention.
+fn mk (al alloc) -> List alloc a
+	elements = Slice.empty()
+	return List { al, elements, count: 0 }
+
+fn free (list Ptr (List alloc a)) -> Unit <= Allocator alloc
+	list&.al Alloc.free(list&.elements)
+	return
+
+
+
+starting-size = 8 as Size
+growth-factor = 2 as Size
+shrink-factor = 8 as Size
+
+fn grow-if-full (list Ptr (List alloc a)) -> Unit <= Allocator alloc
+	# check if the list is empty
+	if list&.count == 0
+		list <&.elements= list&.al allocate(starting-size)
+
+	# resize it
+	elif list&.count == list&.elements.count
+		new-slice = list&.al allocate(list&.count * growth-factor)
+
+		# NOTE: a lot of this stuff would be better with memmove/memcpy and realloc, but i want to minimize external dependencies as much as possible
+		# still, the external interface and usage needs some contemplation
+		# copy to old slice
+		fun = fn Tuple2(x, i): Slice.set(new-slice, Mem.i32-size(i), x)
+		list&.elements zip(from(0)) for-each(fun)
+		list&.al Alloc.free(list&.elements)
+		list <&.elements= new-slice
+
+fn add (list Ptr (List alloc a), elem a) -> Unit <= Allocator alloc
+	list grow-if-full()
+	Slice.set(list&.elements, list&.count, elem)
+	list <&.count= list&.count + 1
+
+fn insert (list Ptr (List alloc a), i Idx, elem a) -> Unit <= Allocator alloc
+	if i < 0 or i > list&.count
+		panic('Insertion at list index \(i) (count: \(list&.count))')
+
+	if list&.count == 0
+		list add(elem)
+		return
+
+	list grow-if-full()
+	# move elements back
+	# (maybe should use a reversed list iterator?)
+	ii = list&.count - 1  # (grow-if-full ensures that ii + 1 will be okay)
+	while ii >= i
+		list&.elements Slice.set(ii + 1, list get(ii))
+
+		if ii == 0
+			break
+		ii <= ii - 1
+
+	list&.elements Slice.set(i, elem)
+	list <&.count= list&.count + 1
+
+
+fn remove (list Ptr (List alloc a), i Idx) -> Unit <= Allocator alloc
+	if i < 0 or i >= list&.count
+		panic('Removal at list index \(i) (count: \(list&.count))')
+
+	# move elements back
+	list&
+		zip(from(0))
+		drop(i + 1)
+		for-each(fn Tuple2(elem, n): set(list, Mem.i32-size(n - 1), elem))  # pointlessly complex to stress-test the compiler.
+
+	list <&.count= list&.count - 1
+
+	# optionally shrink it
+	capacity = list&.elements.count
+	if list&.count * shrink-factor < capacity
+		if list&.count == 0
+			list&.al Alloc.free(list&.elements)
+			list <&.elements= Slice.empty()
+			return
+
+		new-size = (list&.count / shrink-factor + 1) * shrink-factor  # a multiple of shrink factor yo
+		new-slice = list&.al allocate(new-size)
+		list&.elements
+			Slice.subslice(0, list&.count)
+			Slice.copy-to(new-slice)
+
+		list&.al Alloc.free(list&.elements)
+		list <&.elements= new-slice
+
+	return
+
+
+inst Indexable List
+	elem-get (self, k): get(&self, k)
+
+inst Str List
+	# print-str (self)
+	# 	self.elements Slice.subslice(0, self.count) print-str()
+	# write-str (wr, self)
+	# 	wr write-str(self.elements Slice.subslice(0, self.count))
+	chars (self): Error.todo()
+
+
+# more misc functions that build upon the previous ones.
+fn first (list)
+	if list&.count == 0
+		return None
+	else
+		return list get(0) Just()
+
+fn pop (list)
+	if list&.count == 0
+		panic('List.pop() called on empty list.')
+	return remove(list, list&.count - 1)
+
+fn top (list)
+	if list&.count == 0
+		return None
+	else
+		return Just(list get(list&.count - 1))
+
+fn add-all(list, it)
+	it for-each(fn x: list add(x))
+
+fn insert-all(list, idx, it)
+	it zip(from(0)) for-each(fn ((x, i)): list insert(idx + i i32-size(), x))  # TODO: SLOW
+
+# for now, don't shrink, since I'm using it in kd
+fn trim(l Ptr (List al a), new-count)
+	l <&.count= Math.min(new-count, l&.count)
+
+fn to-list(it, al)
+	l =& mk(al)
+	l add-all(it)
+	return l&
+
+fn to-slice(l List al a) -> Slice a
+	ptr = l.elements.ptr
+	return Slice { ptr, count: l.count  }
+
+fn addresses (l): l
+	to-slice()
+	Slice.addresses()
+
+fn size (l Ptr (List al a)): l&.count

@@ -69,6 +69,10 @@ Is this good? Or should I just cave in and just implement an IntoIter for a norm
 
 Since it's an experiment, I've decided on the funny option. But I'm thinking I'll remove the SmolArray in the future, and just let people iterate over big big arrays and let em reap what their ignorance has sown.
 
+---
+
+Actually, I've removed `SmolArray`, because it was just annoying. It still is a footgun to compare large arrays tho.
+
 
 # Replace `for .. in` loop with a normal `for-each()` + multiline lambda?
 

@@ -1,30 +1,40 @@
 use Str
 	chars
 	Str
+	print-str
 use Mem
 	cast
 use Convert
 	from-hex
 use Math
 	rshift
-use Writer
-	Writer
+# use Writer
+# 	Writer
+use Iter
+	for-each
+
 
 # basic stuff
 
-CPrintWriter
-	CPrintWriter
+# CPrintWriter
+	# CPrintWriter
 
-inst Writer CPrintWriter
-	write (wr _, ptr Ptr item, count Size)
-		Cnile.printf2('%.*s', count Mem.size-i32(), ptr)
+# inst Writer CPrintWriter
+	# write (wr _, ptr Ptr item, count Size)
+		# Cnile.printf2('%.*s', count Mem.size-i32(), ptr)
 
-	write-cformat1 (wr _, cs ConstStr, x a)
-		Cnile.printf1(cs, x)
+	# write-cformat1 (wr _, cs ConstStr, x a)
+		# Cnile.printf1(cs, x)
+
+fn print-char (c Char)
+	Cnile.printf1('%c', c)
 
 fn print(s)
-	ProtoTerm.print-str(s)
+	# Display.display(s)
+	# ProtoTerm.print-str(s)
 	# Str.write-str(CPrintWriter, s)
+	# Str.print-str(s)
+	s chars() for-each(print-char)
 	
 fn println (s)
 	print('\(s)\n')

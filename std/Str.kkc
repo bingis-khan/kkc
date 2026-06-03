@@ -14,46 +14,13 @@ use Iter
 	drop
 	AppendIter
 	count
-	to
 use Mem
 use Math
-use Misc
-	fst
-	snd
-use Bits
-use Writer
-	Writer
-	write
 
 class Str
-	# when we add Writers and default instances.
-	# Writer
-	write-str(w Writer, self _) -> ()
-
+	# later should write to some buffer instead of printing directly.
+	print-str (self _) -> Unit
 	chars (self _) -> iter
-
-
-##### Charsheet #####
-
-fn scan-char-from-mem(p Ptr U8) -> (Char, Size)
-	clen = 0
-	while p Mem.offset-ptr(clen)& >= (128 + 64)
-		clen <= clen + 1
-	clen <= clen + 1
-
-	if clen > 4
-		@panic('UTF8 STRING TOO LONG')
-
-	ci = 0 as U32
-	for i in 0 to (Mem.i64-i32(clen )- 1)
-		ci <= ci Bits.u32-or(p Mem.offset-ptr(Mem.i32-i64(i))& Mem.u8-u32() Math.lshift(8 * i))
-
-	c = Char(ci)
-	return (c, clen Mem.i64-size())
-
-inst FromChar Char
-	from-charlike (s): scan-char-from-mem(s Mem.cast()) fst()
-
 
 
 ##### ConstStr ######
@@ -73,47 +40,22 @@ inst Iter ConstStrIter
 		if self&.i >= Mem.i32-size(Cnile.strlen(self&.ogstr))  # later this will be good, when the default string will also have a length.
 			return None
 
-		char-ptr = Mem.cast(self&.ogstr) Mem.offset-ptr(Mem.size-i64(self&.i)) as Ptr U8
-		char-and-off = scan-char-from-mem(char-ptr)
-		c = char-and-off fst()
-		off = char-and-off snd()
-		self <&.i= self&.i + off
+		char-ptr = Mem.cast(self&.ogstr) as Ptr Cnile.Char
+		c = (char-ptr Mem.offset-ptr(Mem.size-i64(self&.i)))&
+		self <&.i= self&.i + 1
 		return Just(c)
 
 inst Str ConstStr
-	write-str (wr, self _) -> Unit
-		wr write(self Mem.cast() as Ptr AsciiChar, Cnile.strlen(self) Mem.i32-size())
-
+	print-str (self _) -> Unit
+		Cnile.printf1('%s', self)
 	chars (self _) -> ConstStrIter:
 		self into-iter()
 
 
 
-fn char-to-zt-buf(Char(cc)) -> (Array 5 U8, Size)
-	buf =& Mem.zeroed() as Array 5 U8
-	written = 0
-	for i in 0 to (4 - 1)
-		c = cc Bits.u32-and(255) Mem.u32-u8()
-		cc <= cc Math.rshift(8)
-		if c == Mem.cast(0)
-			break
-		xp = buf Mem.cast-ptr() Mem.offset-ptr(Mem.i32-i64(i)) as Ptr U8
-		xp <&= c
-		written <= written + 1
-	return (buf&, Math.max(1, written))
-
-
 inst Str Char
-	write-str (wr, self) -> Unit
-		buf-sz = char-to-zt-buf(self)
-		wr write((&buf-sz fst()) Mem.cast() as Ptr U8, buf-sz snd())
-
-	chars (self _):
-		Iter.single(self)
-
-inst Str AsciiChar
-	write-str (wr, self _) -> Unit
-		wr write(&self, 1)
+	print-str (self _) -> Unit
+		Cnile.printf1('%c', self)
 
 	chars (self _):
 		Iter.single(self)
@@ -161,36 +103,36 @@ fn count-digits (self)
 	return digits
 
 inst Str I32
-	write-str (wr, self I32) -> Unit
-		wr Writer.write-cformat1('%d', self)
+	print-str (self I32) -> Unit
+		Cnile.printf1('%d', self)
 
 	chars (self I32):
 		IntStrIter { int: self, len: self count-digits() }
 
 inst Str U32
-	write-str (wr, self U32) -> Unit
-		wr Writer.write-cformat1('%u', self)
+	print-str (self U32) -> Unit
+		Cnile.printf1('%u', self)
 
 	chars (self U32):
 		IntStrIter { int: self, len: self count-digits() }
 
 inst Str U8
-	write-str (wr, self U8) -> Unit
-		wr Writer.write-cformat1('%u', Mem.u8-i32(self))
+	print-str (self U8) -> Unit
+		Cnile.printf1('%d', Mem.u8-i32(self))
 
 	chars (self U8):
 		IntStrIter { int: self, len: self count-digits() }
 
 inst Str I64
-	write-str (wr, self I64) -> Unit
-		wr Writer.write-cformat1('%ld', self)
+	print-str (self I64) -> Unit
+		Cnile.printf1('%ld', self)
 
 	chars (self I64):
 		IntStrIter { int: self, len: self count-digits() }
 
 inst Str Size
-	write-str (wr, self Size) -> Unit
-		wr Writer.write-cformat1('%lu', self)
+	print-str (self Size) -> Unit
+		Cnile.printf1('%lu', self)
 
 	chars (self Size):
 		IntStrIter { int: self, len: self count-digits() }
@@ -200,13 +142,11 @@ inst Str Size
 ####### Others, non-polymorphic #######
 
 inst Str Bool
-	# write-str (wr, self Bool)
-	# 	@panic('todo')
-	# print-str (self Bool) -> Unit
-	# 	if self
-	# 		print-str('True')
-	# 	else
-	# 		print-str('False')
+	print-str (self Bool) -> Unit
+		if self
+			print-str('True')
+		else
+			print-str('False')
 
 	chars (self)
 		if self
@@ -215,22 +155,20 @@ inst Str Bool
 			return 'False' chars()
 
 inst Str Unit
-	# write-str (wr, self Unit) -> Unit
-	# 	@panic('todo')
-		# print-str('()')
+	print-str (self Unit) -> Unit
+		print-str('()')
 
 	chars (self): '()' chars()
 
 inst Str Ordering
-	# write-str (wr, self)
-	# 	@panic('todo')
-	# 	case self
-	# 		LT
-	# 			print-str('LT')
-	# 		EQ
-	# 			print-str('EQ')
-	# 		GT
-	# 			print-str('GT')
+	print-str (self)
+		case self
+			LT
+				print-str('LT')
+			EQ
+				print-str('EQ')
+			GT
+				print-str('GT')
 
 	chars (self)
 		case self
@@ -264,9 +202,11 @@ inst IntoIter StrConcat
 	into-iter (StrConcat(left, right)): StrConcatIter { left: left chars(), right: right chars() }
 
 inst Str StrConcat
-	write-str (wr, StrConcat(l, r))
-		wr write-str(l)
-		wr write-str(r)
+	print-str (self _) -> Unit
+		case self
+			StrConcat(l, r)
+				print-str(l)
+				print-str(r)
 
 	chars (self): self into-iter()
 
@@ -292,7 +232,7 @@ inst Iter StrCaseIter
 
 
 # before it was this, but it acted differently on different backends.
-# @panic:'todo' I SHOULD CODIFY THESE SEMANTICS FINALLY
+# TODO: I SHOULD CODIFY THESE SEMANTICS FINALLY
 # case self&
 # 	StrCaseIter1(c)
 # 		return next(&c)
@@ -307,15 +247,14 @@ inst IntoIter StrCase
 				return StrCaseIter1(c1 chars())
 			StrCase2(c2)
 				return StrCaseIter2(c2 chars())
-
 inst Str StrCase
-	# write-str (wr, self)
-	# 	case self
-	# 		StrCase1(c)
-	# 			wr write-str(c)
+	print-str (self)
+		case self
+			StrCase1(c)
+				c print-str()
 
-	# 		StrCase2(c)
-	# 			wr write-str(c)
+			StrCase2(c)
+				c print-str()
 
 	chars (self): self into-iter()
 
@@ -324,21 +263,21 @@ inst Str StrCase
 
 
 inst Str Ptr
-	# write-str (wr, self _)
-	# 	_ = wr write-str(self&)
+	print-str (self _)
+		_ = print-str(self&)
 
 	chars (self): self& chars()
 
 
 
 inst Str Maybe
-	write-str (wr, self _)
+	print-str (self _)
 		case self
 			None
-				wr write-str('None')
+				print-str('None')
 
 			Just(x)
-				wr write-str('Just(\(x))')
+				print-str('Just(\(x))')
 
 	chars (self)
 		c = @undefined
@@ -353,32 +292,93 @@ inst Str Maybe
 
 
 inst Str Tuple2
-	write-str (wr, (l, r))
-		wr write-str('(\(l), \(r))')
-
+	print-str (tup)
+		case tup
+			Tuple2(l, r)
+				print-str('(\(l), \(r))')
 	chars ((l, r)):
 		'(\(l), \(r))' chars()
 
 inst Str Tuple3
-	# write-str (wr, self _)
-	# 	@panic('todo')
-	# print-str (tup)
-	# 	case tup
-	# 		Tuple3(a, b, c)
-	# 			print-str('(\(a), \(b), \(c))')
-	chars ((a1, a2, a3)):
-		'(\(a1), \(a2), \(a3))' chars()
+	print-str (tup)
+		case tup
+			Tuple3(a, b, c)
+				print-str('(\(a), \(b), \(c))')
 
 inst Str Tuple4
-	# write-str (wr, self _)
-	# 	@panic('todo')
-	# print-str (tup)
-	# 	case tup
-	# 		Tuple4(a, b, c, d)
-	# 			print-str('(\(a), \(b), \(c), \(d))')
-	chars ((a1, a2, a3, a4)):
-		'(\(a1), \(a2), \(a3), \(a4))' chars()
+	print-str (tup)
+		case tup
+			Tuple4(a, b, c, d)
+				print-str('(\(a), \(b), \(c), \(d))')
 
+
+### StrSepBy
+
+
+WhichStrSepIter
+	StrSepElem
+	StrSepSep
+
+StrSepByIter se si sepe sepi
+	cur-elem-it Maybe se
+	elem-it si
+	cur-sep-it sepe
+	sep-it sepi
+	which-iter WhichStrSepIter
+
+inst Iter StrSepByIter
+	next (self Ptr _) -> Maybe Char
+		while True
+			case self&.which-iter
+				StrSepSep
+					case self&.cur-elem-it
+						None
+							return None
+						Just(_)
+							pass
+
+					case next(&self&.cur-sep-it)
+						Just(se)
+							return Just(se)
+						None
+							self <&.cur-sep-it= self&.sep-it chars()
+							self <&.which-iter= StrSepElem
+
+				StrSepElem
+					case self&.cur-elem-it
+						None
+							return None
+						Just(elem-it)
+							case next(&elem-it)
+								Just(se)
+									return Just(se)
+								None
+									self <&.cur-elem-it= next(&self&.elem-it) Misc.fmap-maybe(chars)
+									self <&.which-iter= StrSepSep
+
+inst IntoIter StrSepByIter
+	into-iter (self _): self
+
+
+StrSepBy s sep
+	s s
+	sep sep
+
+inst Str StrSepBy
+	print-str (self _)
+		@panic('StrSepBy: print-str')
+
+	chars (self StrSepBy s sep) <= IntoIter s, Str sep
+		elem-it = self.s into-iter()
+		cur-elem-it = next(&elem-it) Misc.fmap-maybe(chars)
+		sep-it = self.sep
+		cur-sep-it = sep-it chars()
+		return StrSepByIter { elem-it, cur-elem-it, sep-it, cur-sep-it, which-iter: StrSepElem }
+
+fn sep-by (s, sep): StrSepBy { s, sep }
+
+
+### PadZeroes
 
 PadZeroes
 	x I32
@@ -403,8 +403,8 @@ inst Iter PadZeroes
 		return Just(digit-char)
 
 inst Str PadZeroes
-	# write-str (wr, self _)
-	# 	@panic('todo')
+	print-str (pz)
+		@panic('todo')
 
 	chars (self PadZeroes): self
 
@@ -414,41 +414,34 @@ fn pad-zeroes(x I32, num-zeroes U8, trim-larger Bool):
 ##### Iterators (rn I've decided that treating strings as iterators should *just work* for strings(TM)) (this MIGHT CHANGE IN THE FUTURE)
 
 inst Str Take
-	# write-str (wr, self _)
-# 	@panic('todo')
-	# print-str (self)
-	# 	self for-each(print-str)
+	print-str (self)
+		self for-each(print-str)
 
 	chars (self): self
 	
 inst Str Drop
 	# this is barely typed. Assumes Item = Char
-	# write-str (wr, self _)
-	# 	@panic('todo')
-	# print-str (self)
-	# 	self for-each(print-str)
+	print-str (self)
+		self for-each(print-str)
 
 	chars (self): self
 
 inst Str TakeWhile
-	# write-str (wr, self _)
-	# 	@panic('todo')
-	# print-str (self)
-	# 	self for-each(print-str)
+	print-str (self)
+		self for-each(print-str)
 
 	chars (self): self
 
 inst Str AppendIter
-	# print-str (self): self for-each(print-str)
-	# write-str (wr, self _)
-	# 	@panic('todo')
+	print-str (self): self for-each(print-str)
 	chars (self): self
+
+
 
 
 ###### Functions ######
 
-fn nullchar() -> Char: Mem.zeroed()  # HACK!!
-fn nullchar-u8() -> U8: Mem.zeroed()  # HACK!!
+fn nullchar() -> Cnile.Char: Mem.zeroed()  # HACK!!
 # fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this is incorrect, because zip() trims!
 fn eq(l, r)
 	l =& l chars()
@@ -480,6 +473,20 @@ fn u8-char(c U8) -> Char:
 fn i32-char(i I32) -> Char:
 	Mem.cast(i)
 
+fn print-as-list(it)
+	print-str('[')
+	case it head()
+		None
+			pass
+		Just(x)
+			print-str(x)
+
+	it drop(1) for-each(fn x: ', \(x)' print-str())
+	print-str(']')
+
+fn list-chars (it)
+	seps = it sep-by(', ')
+	return '[\(seps)]' chars()
 
 fn const-str-len (s ConstStr):
 	s chars() count()  # SIKE. Im using iterators.

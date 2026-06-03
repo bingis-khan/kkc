@@ -227,7 +227,27 @@ pub const Lexer = struct {
                 break :b .TYPE;
             },
 
-            '0'...'9' => b: {
+            '0' => b: {
+                if (self.check('x')) {
+                    while (std.ascii.isHex(self.curChar())) : (self.currentIndex += 1) {}
+                    self.endNumberLiteral();
+
+                    break :b .HEX_INTEGER;
+                } else if (self.check('o')) {
+                    while (isOctal(self.curChar())) : (self.currentIndex += 1) {}
+                    self.endNumberLiteral();
+
+                    break :b .OCTAL_INTEGER;
+                } else {
+                    const numtype = self.number();
+                    break :b switch (numtype) {
+                        .Integral => .INTEGER,
+                        .Fractional => .FRACTIONAL,
+                    };
+                }
+            },
+
+            '1'...'9' => b: {
                 const numtype = self.number();
                 break :b switch (numtype) {
                     .Integral => .INTEGER,
@@ -307,11 +327,34 @@ pub const Lexer = struct {
     }
 
     fn number(self: *Self) enum { Integral, Fractional } {
+        defer self.endNumberLiteral();
+
         self.integer();
         if (self.curChar() != '.') return .Integral;
         _ = self.nextChar();
         self.integer();
+
         return .Fractional;
+    }
+
+    fn endNumberLiteral(self: *Self) void {
+        switch (self.curChar()) {
+            'a'...'z', 'A'...'Z', '0'...'9', '.', '\'' => self.reportError(.{
+                .UnexpectedCharacter = .{
+                    .unexpected = self.curChar(),
+                    .loc = .{
+                        .from = self.currentIndex,
+                        .to = self.currentIndex + 1, // TODO(utf8)
+                        .line = self.line,
+                        .module = .{
+                            .name = self.moduleName,
+                            .source = self.source,
+                        },
+                    },
+                },
+            }),
+            else => {},
+        }
     }
 
     fn integer(self: *Self) void {
@@ -389,3 +432,10 @@ pub const Lexer = struct {
         }
     }
 };
+
+fn isOctal(c: u8) bool {
+    return switch (c) {
+        '0'...'7' => true,
+        else => false,
+    };
+}

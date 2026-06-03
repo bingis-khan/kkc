@@ -6,19 +6,40 @@ use Str
 SmolStr
 	SmolStr Size
 
+fn max-sz (): (Mem.get-typesize() as Mem.TypeSize Size).size - 1
 fn mk(chs Array n Char) -> SmolStr
-	max-sz = (Mem.get-typesize() as Mem.TypeSize SmolStr).size - 1
+	max-sz = max-sz()
 	if n Mem.i32-size() > max-sz
 		panic('too big for smol str. given \(n), but gotten \(max-sz)')
 
-	return Mem.cast-on-zeroed(chs)
+	backing = 0
+	Cnile.memcpy(Mem.cast-ptr(&backing), Mem.cast-ptr(&chs), n Mem.i32-size())
+	return SmolStr(backing)
+
+fn from-const-str(c ConstStr) -> SmolStr
+	max-sz = max-sz()
+	backing = 0  # zero backing out!
+	strlen = Cnile.strlen(c) Mem.i32-size()
+	if strlen >= max-sz
+		panic('(SmolStr.from-const-str) const str too large yo')
+	Cnile.memcpy(Mem.cast-ptr(&backing), Mem.cast(c), strlen)
+	return SmolStr(backing)
+
+fn from-iter(it it) -> SmolStr <= IntoIter it
+	maxsz = max-sz()
+	Error.assert(max-sz() == 7, '(SmolStr.from-iter) current backing size is assumed to be 7, but got \(maxsz)')
+	return (Array.fill-iter(it, Str.nullchar()) as Array 7 Char) mk()
+
 
 inst Str SmolStr
-	# print-str (self _)
-	# 	cs = Mem.cast(&self) as ConstStr
-	# 	ProtoTerm.print-str(cs)
+	print-str (self _)
+		cs = Mem.cast(&self) as ConstStr
+		Str.print-str(cs)
 
 	chars (self _)
 		cs = Mem.cast(&self) as ConstStr
 		return cs Str.chars()
 
+inst Eq SmolStr
+	eq (SmolStr(l), SmolStr(r)) -> Bool:
+		l == r

@@ -14,6 +14,7 @@ use Alloc
 	allocate
 use Str
 	Str
+	print-str
 use Mem
 	i32-size
 
@@ -159,11 +160,8 @@ inst Indexable List
 	elem-get (self, k): get(&self, k)
 
 inst Str List
-	# print-str (self)
-	# 	self.elements Slice.subslice(0, self.count) print-str()
-	# write-str (wr, self)
-	# 	wr write-str(self.elements Slice.subslice(0, self.count))
-	chars (self): Error.todo()
+	print-str (self)
+		self.elements Slice.subslice(0, self.count) print-str()
 
 
 # more misc functions that build upon the previous ones.

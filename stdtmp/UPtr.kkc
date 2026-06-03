@@ -1,0 +1,18 @@
+# MODULE IDEA. A special pointer type, which is a normal pointer, but has an Eq instance, which directly compares only the addresses.
+# Used when creating datatypes which will for sure be unique
+
+# (I haven't needed to use it yet)
+
+UPtr a
+	ptr Ptr a
+
+fn mk(x):
+	UPtr { ptr: x }
+
+fn unique-ptr(x): mk(x)  # possible redef for global export?
+
+fn deref (p UPtr a):
+	p.ptr&
+
+inst Eq UPtr
+	eq (l, r): @memeq(l.ptr, r.ptr)

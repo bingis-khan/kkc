@@ -1,0 +1,5 @@
+use Cnile
+
+fn cock()
+	Cnile.printf0('COCK!!!!\n')
+	return

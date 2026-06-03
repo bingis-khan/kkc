@@ -1,0 +1,60 @@
+use Iter
+	to
+
+fn pow (base, p):
+	0 to (p - 1) Iter.reduce(1, fn(item, x): x * base)
+
+fn lshift (x, am): x * (2 pow(am))
+fn rshift (x, am): x / (2 pow(am))
+
+
+fn mod(l, d)
+	r = l / d
+	# There should be an assert that r >= 0...
+	m = l - r * d
+
+	if m < 0
+		return d + m
+	else
+		return m
+
+fn min(l, r)
+	if l < r
+		return l
+	else
+		return r
+
+fn minimum(it): it Iter.reduce(None, fn(x, last-min): Misc.maybe(last-min, fn(lm): Just(min(lm,x)), Just(x)))
+
+
+fn max(l, r)
+	if l > r
+		return l
+	else
+		return r
+
+fn maximum(it): it Iter.reduce(None, fn(x, last-max): Misc.maybe(last-max, fn(lm): Just(max(lm,x)), Just(x)))
+
+
+fn abs(x):
+	if x >= 0: x
+	else -x
+
+fn between(c, l, r)
+	from = min(l, r)
+	to = max(l, r)
+	return from <= c and c <= to
+	
+
+fn sqrt(f F64):
+	Cnile.sqrt(f)  # geeeeeeg
+
+fn floor(f F64): @f64-i64-floor(f)
+
+fn clamp(x, mn, mx)
+	if x < mn
+		return mn
+	elif x > mx
+		return mx
+	else
+		return x

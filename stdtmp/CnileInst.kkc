@@ -1,0 +1,23 @@
+use Cnile
+	Timespec
+
+inst Ord Timespec
+	cmp (l, r)
+		ls = l.tv-sec
+		rs = r.tv-sec
+
+		if ls > rs
+			return GT
+		elif ls < rs
+			return LT
+		else
+			ln = l.tv-nsec
+			rn = r.tv-nsec
+
+			if ln > rn
+				return GT
+			elif ln < rn
+				return LT
+			else
+				return EQ
+

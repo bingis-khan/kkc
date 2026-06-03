@@ -51,6 +51,8 @@ pub const TokenType = enum {
 
     INTEGER,
     FRACTIONAL,
+    HEX_INTEGER,
+    OCTAL_INTEGER,
     STRING,
     PASS,
 

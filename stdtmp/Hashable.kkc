@@ -1,0 +1,23 @@
+
+class Hashable
+	hash (self _) -> Size
+
+inst Hashable Size
+	hash (self): self
+
+inst Hashable I32
+	hash (self _): Mem.u32-size(@cast(self))
+
+inst Hashable U32
+	hash (self _): Mem.u32-size(self)
+
+inst Hashable I64
+	hash (self _): @cast(self) # not using the normal conversion function, since I don't yet know if they should throw conversion errors or not.
+
+inst Hashable Unit
+	hash (_): 0
+
+inst Hashable Char
+	hash (c): c
+		Str.char-i32()
+		Mem.i32-size()

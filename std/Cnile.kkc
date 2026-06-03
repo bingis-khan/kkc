@@ -134,6 +134,9 @@ external
 	#[cstdinclude 'string.h']
 	memset (dest Ptr Void, byte CInt, count Size) -> Ptr Void
 
+	#[cstdinclude 'string.h']
+	memcpy (dest Ptr Void, src Ptr Void, count Size) -> Ptr Void
+
 	#[cstdinclude 'stdlib.h']
 	exit (status CInt) -> Void
 
@@ -171,6 +174,8 @@ external
 	ftell (file Ptr FILE) -> CInt
 	fread (buf Ptr a, size CInt, count CInt, stream Ptr FILE) -> CInt
 	fflush (file Ptr FILE) -> CInt
+
+	fwrite (buf Ptr Void, size Size, count Size, file Ptr FILE) -> CInt
 
 	#[cstdinclude 'stdlib.h']
 	getenv (s ConstStr) -> ConstStr

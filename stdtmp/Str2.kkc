@@ -1,0 +1,211 @@
+use Iter
+	Iter
+	IntoIter
+	into-iter
+	all
+	reduce
+	drop
+use Str
+	Str
+	chars
+use Iter
+	head
+	count
+	zip
+	from
+	for-each
+	drop-while'
+use Error
+	panic
+	todo
+use Alloc
+use Slice
+use Mem
+use DynStr
+	DynStr
+	substr
+use Math
+	between
+
+
+##### F64 crap yooo
+
+F64StrIter
+	buf Array 32 AsciiChar  # seems to be max possible?
+	i I32
+
+inst IntoIter F64
+	into-iter (f)
+		buf =& @undefined as Array 32 AsciiChar
+		p = Mem.cast(buf) as Ptr AsciiChar
+		Cnile.snprintf1(p, 32, '%g', f)
+		return F64StrIter { buf: buf&, i: 0 }
+
+inst IntoIter F64StrIter
+	into-iter (self): self
+
+inst Iter F64StrIter
+	next (self) -> Maybe Char
+		buf = &self&.buf
+		c = buf Array.get(self&.i)
+		if c == '\0'
+			return None
+		self <&.i= self&.i + 1
+		return c Just()
+
+inst Str F64
+	# write-str (self)
+	# 	# Cnile.printf1('%g', self)
+	# 	todo()
+
+	chars (self): self into-iter()
+
+
+##### Display
+## In case we want to print the contents of an iterator like a list, make a special consumer (name TBD)
+DisplayList it
+	it it
+
+inst Str DisplayList
+	# print-str (self)
+	# 	print-str('[')
+	# 	case self.it head()
+	# 		Just(first)
+	# 			print-str(first)
+
+	# 			self.it drop(1) for-each(fn(x))
+	# 				print-str(', \(x)')
+
+	# 		None
+	# 			pass
+
+	# 	print-str(']')
+
+	chars (self): todo()
+
+fn as-if-list(it):
+	DisplayList { it: it into-iter() }
+
+
+##### Functions
+# BUG: does not work for nullchars (due to our string representation still lacking length)
+fn allocate-str (s, al) -> ConstStr:
+	s StrBuilder.mk-const-str(al)
+
+fn newline() -> Char: '\n'
+fn newline() -> U8
+	case '\n' as Char
+		Char(x)
+			return Mem.u32-u8(x)
+
+fn is-whitespace (c Char):
+	c == ' ' or c == '\n' or c == '\t'
+
+fn is-not-whitespace (c): not is-whitespace(c)
+
+fn is-blank (s): s
+	chars()
+	all(is-whitespace)
+
+
+fn is-alpha (c Char):
+	c between('a', 'z') or c between ('A', 'Z')
+
+fn is-digit (c Char):
+	c between('0', '9')
+
+fn is-alphanumeric(c Char):
+	c is-alpha() or c is-digit()
+
+
+#### Instances
+
+LineIter
+	og DynStr
+	last Size
+
+fn lines (s DynStr): LineIter { og: s, last: 0 }
+
+inst IntoIter LineIter
+	into-iter (self LineIter): self
+
+
+
+inst Iter LineIter
+	next (self Ptr LineIter) -> Maybe DynStr
+		# should consume the last trailing newline
+		if self&.last >= self&.og.contents.count or self&.og.contents Slice.get(self&.last) == Str.nullchar-u8()
+			return None
+
+		# iterator is left after last encountered newline
+		i = self&.last
+		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= newline()
+			i <= i + 1
+
+		line = self&.og substr(self&.last, i)
+		if i < self&.og.contents.count # when i < slice.count, then we encountered a newline.
+			i <= i + 1  # skip past the newline
+
+		# modify the state
+		self <&.last= i
+
+		return Just(line)
+
+
+
+SplitWhitespaceIter it
+	it it
+	# TODO: in the future, add custom separator function.
+
+fn split(it)
+	it = it into-iter()
+	it = it drop-while'(is-whitespace)
+	return SplitWhitespaceIter { it }
+
+inst IntoIter SplitWhitespaceIter
+	into-iter (self): self
+
+inst Iter SplitWhitespaceIter
+	next (self Ptr (SplitWhitespaceIter it)) <= Iter it, IntoIter it
+		if self&.it Iter.null()
+			return None
+
+		itAndTaken = self&.it Iter.take-while'(fn x: not x is-whitespace())
+		case itAndTaken
+			Tuple2(it, taken)
+				self <&.it= it drop-while'(is-whitespace)
+				return Just(taken)
+
+
+
+###### Functions ######
+
+# kekkekekekekkekekek
+fn is-digit (c):
+	Str.char-i32(c) >= Str.char-i32('0') and Str.char-i32(c) <= Str.char-i32('9')
+
+
+fn parse-digit (c)
+	if is-digit(c)
+		return Just(Str.char-i32(c) - Str.char-i32('0'))
+	else
+		return None
+
+fn parse-int(s)
+	fn sequence-maybe (e, b)
+		case b
+			None
+				return None
+			Just(x)
+				case parse-digit(e)
+					None
+						return None
+					Just(xe)
+						return Just(x * 10 + Mem.i32-i64(xe))
+
+	cs = s chars()
+	case cs head()
+		Just(x)
+			return cs reduce(Just(0), sequence-maybe)
+		None
+			return None

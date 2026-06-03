@@ -57,7 +57,9 @@ ConstStr  # TODO: later, make a ptr + length struct string.
 # also FromChar should not have type SmolStr -> Char tho, because its easy to ConstStr -> SmolStr, but not the other way around.
 # SmolStr
 
-Char: U32
+#[ctype 'char', bytes '1']
+Char
+	# codepoint U32
 
 #[ctype 'char', bytes '1']
 AsciiChar
@@ -138,12 +140,7 @@ class Indexable
 
 # List construction (but actually Array bruhhhhhh)
 
-# smol array type to seperate arrays that were created with an array literal.
-# the only difference is that a smol array can be iterated over (since we know a user typed it out, so it's probably small, like a makefile dependency list)
-SmolArray ^count a
-	arr Array count a
-
-class ListLike: SmolArray
+class ListLike: Array
 	# type Elem
 	# maybe take in pointer to it?
 	from-listlike (arr Array count elem) -> _
@@ -196,6 +193,9 @@ Either e a
 
 inst FromChar ConstStr
 	from-charlike (s): s
+
+inst FromChar Char # TMP!
+	from-charlike (s): (@cast(s) as Ptr Char)&
 
 inst FromChar AsciiChar
 	from-charlike (s): (@cast(s) as Ptr AsciiChar)&
@@ -415,9 +415,6 @@ inst Division F64
 
 inst ListLike Array
 	from-listlike (self Array n a): self
-
-inst ListLike SmolArray
-	from-listlike (arr Array n a): SmolArray { arr }
 
 
 

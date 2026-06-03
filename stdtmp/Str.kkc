@@ -1,0 +1,493 @@
+use Cnile
+use Iter
+	Iter
+	IntoIter
+	into-iter
+	next
+	head
+	zip
+	all
+	for-each
+	Drop
+	Take
+	TakeWhile
+	drop
+	AppendIter
+	count
+	to
+use Mem
+use Math
+use Misc
+	fst
+	snd
+use Bits
+use Writer
+	Writer
+	write
+
+class Str
+	# when we add Writers and default instances.
+	# Writer
+	write-str(w Writer, self _) -> ()
+
+	chars (self _) -> iter
+
+
+##### Charsheet #####
+
+fn scan-char-from-mem(p Ptr U8) -> (Char, Size)
+	clen = 0
+	while p Mem.offset-ptr(clen)& >= (128 + 64)
+		clen <= clen + 1
+	clen <= clen + 1
+
+	if clen > 4
+		@panic('UTF8 STRING TOO LONG')
+
+	ci = 0 as U32
+	for i in 0 to (Mem.i64-i32(clen )- 1)
+		ci <= ci Bits.u32-or(p Mem.offset-ptr(Mem.i32-i64(i))& Mem.u8-u32() Math.lshift(8 * i))
+
+	c = Char(ci)
+	return (c, clen Mem.i64-size())
+
+inst FromChar Char
+	from-charlike (s): scan-char-from-mem(s Mem.cast()) fst()
+
+
+
+##### ConstStr ######
+
+ConstStrIter
+	ogstr ConstStr
+	i Size
+
+inst IntoIter ConstStr
+	into-iter (self): ConstStrIter { ogstr: self, i: 0 }
+
+inst IntoIter ConstStrIter
+	into-iter (self): self
+
+inst Iter ConstStrIter
+	next (self)
+		if self&.i >= Mem.i32-size(Cnile.strlen(self&.ogstr))  # later this will be good, when the default string will also have a length.
+			return None
+
+		char-ptr = Mem.cast(self&.ogstr) Mem.offset-ptr(Mem.size-i64(self&.i)) as Ptr U8
+		char-and-off = scan-char-from-mem(char-ptr)
+		c = char-and-off fst()
+		off = char-and-off snd()
+		self <&.i= self&.i + off
+		return Just(c)
+
+inst Str ConstStr
+	write-str (wr, self _) -> Unit
+		wr write(self Mem.cast() as Ptr AsciiChar, Cnile.strlen(self) Mem.i32-size())
+
+	chars (self _) -> ConstStrIter:
+		self into-iter()
+
+
+
+fn char-to-zt-buf(Char(cc)) -> (Array 5 U8, Size)
+	buf =& Mem.zeroed() as Array 5 U8
+	written = 0
+	for i in 0 to (4 - 1)
+		c = cc Bits.u32-and(255) Mem.u32-u8()
+		cc <= cc Math.rshift(8)
+		if c == Mem.cast(0)
+			break
+		xp = buf Mem.cast-ptr() Mem.offset-ptr(Mem.i32-i64(i)) as Ptr U8
+		xp <&= c
+		written <= written + 1
+	return (buf&, Math.max(1, written))
+
+
+inst Str Char
+	write-str (wr, self) -> Unit
+		buf-sz = char-to-zt-buf(self)
+		wr write((&buf-sz fst()) Mem.cast() as Ptr U8, buf-sz snd())
+
+	chars (self _):
+		Iter.single(self)
+
+inst Str AsciiChar
+	write-str (wr, self _) -> Unit
+		wr write(&self, 1)
+
+	chars (self _):
+		Iter.single(self)
+
+inst Indexable ConstStr
+	elem-get (self _, sz Size) -> Char
+		return Mem.offset-ptr(self Mem.cast() as Ptr Char, sz Mem.size-i64())&
+
+
+####### Int #######
+
+IntStrIter i
+	int i
+	len I32  # should this be U8?
+
+inst IntoIter IntStrIter
+	into-iter(self): self
+
+inst Iter IntStrIter
+	next (self Ptr _) -> Maybe Cnile.Char
+		if self&.len <= 0
+			return None
+
+		trim-down = 10 Math.pow (self&.len - 1)
+		upper = self&.int / trim-down
+		upper-mask = (upper / 10) * 10
+		digit = upper - upper-mask
+
+		self <&.len= self&.len - 1
+
+		digit-char = Mem.cast(digit + 48)
+		return Just(digit-char)
+
+
+# funny :)
+fn count-digits (self)
+	if self == 0
+		return 1
+
+	digits = 0
+	while self > 0
+		self <= self / 10
+		digits <= digits + 1
+
+	return digits
+
+inst Str I32
+	write-str (wr, self I32) -> Unit
+		wr Writer.write-cformat1('%d', self)
+
+	chars (self I32):
+		IntStrIter { int: self, len: self count-digits() }
+
+inst Str U32
+	write-str (wr, self U32) -> Unit
+		wr Writer.write-cformat1('%u', self)
+
+	chars (self U32):
+		IntStrIter { int: self, len: self count-digits() }
+
+inst Str U8
+	write-str (wr, self U8) -> Unit
+		wr Writer.write-cformat1('%u', Mem.u8-i32(self))
+
+	chars (self U8):
+		IntStrIter { int: self, len: self count-digits() }
+
+inst Str I64
+	write-str (wr, self I64) -> Unit
+		wr Writer.write-cformat1('%ld', self)
+
+	chars (self I64):
+		IntStrIter { int: self, len: self count-digits() }
+
+inst Str Size
+	write-str (wr, self Size) -> Unit
+		wr Writer.write-cformat1('%lu', self)
+
+	chars (self Size):
+		IntStrIter { int: self, len: self count-digits() }
+
+
+
+####### Others, non-polymorphic #######
+
+inst Str Bool
+	# write-str (wr, self Bool)
+	# 	@panic('todo')
+	# print-str (self Bool) -> Unit
+	# 	if self
+	# 		print-str('True')
+	# 	else
+	# 		print-str('False')
+
+	chars (self)
+		if self
+			return 'True' chars()
+		else
+			return 'False' chars()
+
+inst Str Unit
+	# write-str (wr, self Unit) -> Unit
+	# 	@panic('todo')
+		# print-str('()')
+
+	chars (self): '()' chars()
+
+inst Str Ordering
+	# write-str (wr, self)
+	# 	@panic('todo')
+	# 	case self
+	# 		LT
+	# 			print-str('LT')
+	# 		EQ
+	# 			print-str('EQ')
+	# 		GT
+	# 			print-str('GT')
+
+	chars (self)
+		case self
+			LT
+				return 'LT' chars()
+			EQ
+				return 'EQ' chars()
+			GT
+				return 'GT' chars()
+
+
+
+######## StrConcat #########
+
+StrConcatIter l r
+	left l
+	right r
+
+inst IntoIter StrConcatIter
+	into-iter (self): self
+
+inst Iter StrConcatIter
+	next (self)
+		case next(&self&.left)
+			Just(s)
+				return Just(s)
+			None
+				return next(&self&.right)
+
+inst IntoIter StrConcat
+	into-iter (StrConcat(left, right)): StrConcatIter { left: left chars(), right: right chars() }
+
+inst Str StrConcat
+	write-str (wr, StrConcat(l, r))
+		wr write-str(l)
+		wr write-str(r)
+
+	chars (self): self into-iter()
+
+
+
+####### StrCase #######
+
+StrCaseIter c1 c2
+	StrCaseIter1 c1
+	StrCaseIter2 c2
+
+inst IntoIter StrCaseIter
+	into-iter(self): self
+
+inst Iter StrCaseIter
+	next(self)
+		case self
+			Ptr(StrCaseIter1(c))
+				return next(&c)
+
+			Ptr(StrCaseIter2(c))
+				return next(&c)
+
+
+# before it was this, but it acted differently on different backends.
+# @panic:'todo' I SHOULD CODIFY THESE SEMANTICS FINALLY
+# case self&
+# 	StrCaseIter1(c)
+# 		return next(&c)
+
+# 	StrCaseIter2(c)
+# 		return next(&c)
+
+inst IntoIter StrCase
+	into-iter (self)
+		case self
+			StrCase1(c1)
+				return StrCaseIter1(c1 chars())
+			StrCase2(c2)
+				return StrCaseIter2(c2 chars())
+
+inst Str StrCase
+	# write-str (wr, self)
+	# 	case self
+	# 		StrCase1(c)
+	# 			wr write-str(c)
+
+	# 		StrCase2(c)
+	# 			wr write-str(c)
+
+	chars (self): self into-iter()
+
+
+
+
+
+inst Str Ptr
+	# write-str (wr, self _)
+	# 	_ = wr write-str(self&)
+
+	chars (self): self& chars()
+
+
+
+inst Str Maybe
+	write-str (wr, self _)
+		case self
+			None
+				wr write-str('None')
+
+			Just(x)
+				wr write-str('Just(\(x))')
+
+	chars (self)
+		c = @undefined
+		case self
+			None
+				c <= 'None' StrCase1()
+
+			Just(x)
+				c <= 'Just(\(x))' StrCase2()
+
+		return c chars()
+
+
+inst Str Tuple2
+	write-str (wr, (l, r))
+		wr write-str('(\(l), \(r))')
+
+	chars ((l, r)):
+		'(\(l), \(r))' chars()
+
+inst Str Tuple3
+	# write-str (wr, self _)
+	# 	@panic('todo')
+	# print-str (tup)
+	# 	case tup
+	# 		Tuple3(a, b, c)
+	# 			print-str('(\(a), \(b), \(c))')
+	chars ((a1, a2, a3)):
+		'(\(a1), \(a2), \(a3))' chars()
+
+inst Str Tuple4
+	# write-str (wr, self _)
+	# 	@panic('todo')
+	# print-str (tup)
+	# 	case tup
+	# 		Tuple4(a, b, c, d)
+	# 			print-str('(\(a), \(b), \(c), \(d))')
+	chars ((a1, a2, a3, a4)):
+		'(\(a1), \(a2), \(a3), \(a4))' chars()
+
+
+PadZeroes
+	x I32
+	len U8
+
+inst IntoIter PadZeroes
+	into-iter(self): self
+
+inst Iter PadZeroes
+	next (self Ptr _) -> Maybe Cnile.Char
+		if self&.len <= 0
+			return None
+
+		trim-down = 10 Math.pow (self&.len Mem.u8-i32() - 1)
+		upper = self&.x / trim-down
+		upper-mask = (upper / 10) * 10
+		digit = upper - upper-mask
+
+		self <&.len= self&.len - 1
+
+		digit-char = Mem.cast(digit + 48)
+		return Just(digit-char)
+
+inst Str PadZeroes
+	# write-str (wr, self _)
+	# 	@panic('todo')
+
+	chars (self PadZeroes): self
+
+fn pad-zeroes(x I32, num-zeroes U8, trim-larger Bool):
+	PadZeroes { x, len: if not trim-larger: num-zeroes else Math.max(num-zeroes, x count-digits() Mem.i32-u8())  }
+
+##### Iterators (rn I've decided that treating strings as iterators should *just work* for strings(TM)) (this MIGHT CHANGE IN THE FUTURE)
+
+inst Str Take
+	# write-str (wr, self _)
+# 	@panic('todo')
+	# print-str (self)
+	# 	self for-each(print-str)
+
+	chars (self): self
+	
+inst Str Drop
+	# this is barely typed. Assumes Item = Char
+	# write-str (wr, self _)
+	# 	@panic('todo')
+	# print-str (self)
+	# 	self for-each(print-str)
+
+	chars (self): self
+
+inst Str TakeWhile
+	# write-str (wr, self _)
+	# 	@panic('todo')
+	# print-str (self)
+	# 	self for-each(print-str)
+
+	chars (self): self
+
+inst Str AppendIter
+	# print-str (self): self for-each(print-str)
+	# write-str (wr, self _)
+	# 	@panic('todo')
+	chars (self): self
+
+
+###### Functions ######
+
+fn nullchar() -> Char: Mem.zeroed()  # HACK!!
+fn nullchar-u8() -> U8: Mem.zeroed()  # HACK!!
+# fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this is incorrect, because zip() trims!
+fn eq(l, r)
+	l =& l chars()
+	r =& r chars()
+
+	while True
+		mlc = l next()
+		mrc = r next()
+
+		case (mlc, mrc)
+			(None, None)
+				return True
+
+			(Just(lc), Just(rc))
+				if lc /= rc
+					return False
+
+			_
+				return False
+
+
+fn streq(l, r): eq(l, r)
+fn char-i32(c Char) -> I32:
+	Mem.cast-on-zeroed(c)
+fn char-u8(c Char) -> U8:
+	Mem.cast(c)
+fn u8-char(c U8) -> Char:
+	Mem.cast(c)
+fn i32-char(i I32) -> Char:
+	Mem.cast(i)
+
+
+fn const-str-len (s ConstStr):
+	s chars() count()  # SIKE. Im using iterators.
+
+###### Other Instances #####
+
+inst Eq ConstStr
+	eq (l, r): Cnile.strcmp(l, r) == 0
+
+inst Ord Char
+	cmp (l, r): cmp(char-i32(l), char-i32(r))

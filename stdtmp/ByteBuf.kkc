@@ -1,0 +1,56 @@
+use Str
+	Str
+use List
+	List
+use Alloc
+	Allocator
+use Slice
+	Slice
+use Error
+	panic
+	todo
+use Iter
+	zip
+	from
+	map
+use Mem
+	i32-size
+use Convert
+
+# TODO: ByteBuf = List Allocator U8
+ByteBuf al
+	buf List al U8
+
+fn mk(al Allocator) -> ByteBuf Allocator: { buf: List.mk(al) }
+fn free(bb Ptr (ByteBuf Allocator)): List.free(&bb&.buf)
+
+# this should be in Mem or something (but it requires Slice, so must be somewhere else.)
+fn as-mem(x Ptr a) -> Slice U8:
+	Slice { ptr: x Mem.cast-ptr(), count: x Mem.ptr-size-of() }
+
+fn write(bb Ptr (ByteBuf al), x a) <= Allocator al
+	mem = as-mem(&x)
+	List.add-all(&bb&.buf, mem)
+
+fn patch(bb Ptr (ByteBuf al), idx List.Idx, x a) <= Allocator al
+	mem = as-mem(&x)
+	if idx + mem.count > bb&.buf.count
+		panic('Tried to patch in \(mem.count) bytes at \(idx), but the buffer is only \(bb&.buf.count) bytes long.')
+
+	for (e, i) in mem zip(from(0))
+		List.set(&bb&.buf, idx + i i32-size(), e)
+
+
+fn write-bytes(bb Ptr (ByteBuf al), xs it) <= Allocator al, IntoIter it
+	List.add-all(&bb&.buf, xs)
+
+inst IntoIter ByteBuf
+	into-iter (self _): self.buf into-iter()
+
+inst Str ByteBuf
+	print-str (self _)
+		Str.print-as-list(self map(Convert.u8-str))
+
+	chars (self _)
+		todo()
+

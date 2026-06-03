@@ -15,6 +15,7 @@ use Hashable
 	hash
 use Str
 	Str
+	print-str
 	chars
 use Str2
 	as-if-list
@@ -169,7 +170,7 @@ fn remove (self Ptr (Hash al k v), k k) -> () <= Eq k, Hashable k
 
 
 inst Str Hash
-	# print-str (self _): (&self) entries() as-if-list() print-str()
+	print-str (self _): (&self) entries() as-if-list() print-str()
 	chars (self _): (&self) entries() as-if-list() chars()
 
 inst Indexable Hash

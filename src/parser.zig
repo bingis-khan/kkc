@@ -1518,6 +1518,20 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
             .d = .{ .Num = self.parseInt(numTok) },
         };
     } // number
+    else if (self.consume(.HEX_INTEGER)) |numTok| b: {
+        break :b .{
+            .t = try self.definedType(.I32),
+            .l = self.loc(numTok),
+            .d = .{ .Num = std.fmt.parseInt(i64, numTok.literal(self.lexer.source), 16) catch unreachable },
+        };
+    } // hex number
+    else if (self.consume(.OCTAL_INTEGER)) |numTok| b: {
+        break :b .{
+            .t = try self.definedType(.I32),
+            .l = self.loc(numTok),
+            .d = .{ .Num = std.fmt.parseInt(i64, numTok.literal(self.lexer.source), 8) catch unreachable },
+        };
+    } // octal number
     else if (self.consume(.LEFT_PAREN)) |lp| b: {
         const path = try AST.Decon.Path.concat(self.arena, dp, .None);
         const first = try self.deconstruction_(path);
@@ -2633,7 +2647,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
     else if (self.consume(.TYPE)) |con| {
         return try self.qualified(con);
     } // con
-    else if (self.consume(.INTEGER)) |i| {
+    else if (self.consumeInteger()) |i| {
         const intTy = try self.definedType(.I64);
         const retTy = try self.typeContext.fresh();
         const funTy = try self.makeType(.{ .Fun = .{
@@ -5592,6 +5606,17 @@ fn consume(self: *Self, tt: TokenType) ?Token {
     }
 }
 
+fn consumeInteger(self: *Self) ?Token {
+    const tok = self.peek();
+    return switch (tok.type) {
+        .INTEGER, .HEX_INTEGER, .OCTAL_INTEGER => b: {
+            self.skip();
+            break :b tok;
+        },
+        else => null,
+    };
+}
+
 // IMPORTANT: DON'T MODIFY SKIP, SINCE AFTER PEEK/CONSUME THE MODE SHOULD BE CHANGED. LET PEEK / CONSUME CONSUME ALL THE WHITESPACE BEFOREHAND.
 // ALSO, THEY ALL DEPEND ON SKIP.
 fn skip(self: *Self) void {
@@ -5684,8 +5709,12 @@ const Fold = *u32;
 
 // assume integer is well formed because lexer guarantees it.
 fn parseInt(self: *const Self, tok: Token) i64 {
-    std.debug.assert(tok.type == .INTEGER);
-    return std.fmt.parseInt(i64, tok.literal(self.lexer.source), 10) catch unreachable;
+    return switch (tok.type) {
+        .INTEGER => std.fmt.parseInt(i64, tok.literal(self.lexer.source), 10) catch unreachable,
+        .HEX_INTEGER => std.fmt.parseInt(i64, tok.literal(self.lexer.source)[2..], 16) catch unreachable,
+        .OCTAL_INTEGER => std.fmt.parseInt(i64, tok.literal(self.lexer.source)[2..], 8) catch unreachable,
+        else => unreachable,
+    };
 }
 
 fn parseFloat(self: *const Self, tok: Token) f64 {

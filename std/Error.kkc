@@ -2,35 +2,34 @@ use Cnile
 use Mem
 use Str
 	Str
-use ProtoTerm
 
 fn todo() -> a
-	ProtoTerm.print-str('todo\n')
+	Str.print-str('todo\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn todo'(s Str) -> a
-	ProtoTerm.print-str('todo: \(s)\n')
+	Str.print-str('todo: \(s)\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn unreachable() -> a
-	ProtoTerm.print-str('unreachable\n')
+	Str.print-str('unreachable\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn panic (errmsg) -> Unit
-	ProtoTerm.print-str('PANIC: \(errmsg)\n')
+	Str.print-str('PANIC: \(errmsg)\n')
 	Cnile.exit(1)
 
 fn panic' (errmsg) -> a
-	ProtoTerm.print-str('PANIC: \(errmsg)\n')
+	Str.print-str('PANIC: \(errmsg)\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn assert(cond, msg)
 	if not cond
-		ProtoTerm.print-str('ASSERTION FAILED: \(msg)\n')
+		Str.print-str('ASSERTION FAILED: \(msg)\n')
 		Cnile.exit(1)
 
 

@@ -22,6 +22,15 @@
 		        cmp (l, r): funcmp(l, r)
 		    Slice.sort(slice)
 		```
+- [ ] pointer deconstructions are a footgun
+	```
+		NextElem(next-elem)
+			# if the line below is commented out, we overwrite memory.
+			# next-elem = next-elem
+			p <&.next-it-type= NextSep
+			return Just(next-elem)
+	```
+- [ ] module search should start at program path, not cwd.
 
 
 

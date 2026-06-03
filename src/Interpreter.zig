@@ -1718,6 +1718,11 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
                     return ffi.types.schar;
                 }
 
+                // TEMP nocheckin
+                if (common.streq(c.type.name, "Char")) {
+                    return ffi.types.schar;
+                }
+
                 if (common.streq(c.type.name, "CInt")) {
                     return ffi.types.sint;
                 }

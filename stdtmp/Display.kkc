@@ -1,0 +1,82 @@
+use Misc
+	fst
+
+# class for fast printing yo
+
+class Display
+	display (self _) -> ()
+
+inst Display ConstStr
+	display (self _)
+		Cnile.printf1('%s', self)
+
+inst Display Char
+	display (self _)
+		buf-sz = Str.char-to-zt-buf(self)
+		Cnile.printf1('%s', &buf-sz fst())
+
+inst Display AsciiChar
+	display (self _)
+		Cnile.printf1('%c', self)
+
+inst Display I32
+	display (self _)
+		Cnile.printf1('%d', self)
+
+inst Display U32
+	display (self _)
+		Cnile.printf1('%u', self)
+		
+inst Display U8
+	display (self _)
+		Cnile.printf1('%d', Mem.u8-i32(self))
+		
+inst Display I64
+	display (self _)
+		Cnile.printf1('%ld', self)
+
+inst Display Size
+	display (self _)
+		Cnile.printf1('%lu', self)
+
+
+inst Display Bool
+	display (self _)
+		if self
+			display('True')
+		else
+			display('False')
+
+inst Display Unit
+	display (_)
+		display('()')
+
+
+inst Display StrConcat
+	display (StrConcat(l, r))
+		display(l)
+		display(r)
+
+inst Display StrCase
+	display (self _)
+		case self
+			StrCase1(c)
+				display(c)
+			StrCase2(c)
+				display(c)
+
+inst Display Ptr
+	display (self _)
+		display(self&)
+
+inst Display Maybe
+	display (self _)
+		case self
+			None
+				display('None')
+			Just(x)
+				display('Just(\(x))')
+
+inst Display Tuple2
+	display ((l, r))
+		display('(\(l), \(r))')

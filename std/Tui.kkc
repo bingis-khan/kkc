@@ -1,6 +1,6 @@
 use Cnile
 	Timespec
-use Array  # SmolArray Iter instance
+use Array  # Array Iter instance
 use Bits
 	u32-and
 	u32-ors

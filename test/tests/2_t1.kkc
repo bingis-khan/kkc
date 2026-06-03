@@ -1,9 +1,8 @@
-#= disabled
 #$ Datatype with a single constructor which takes in one function. (requires unions currently :( )
 # ()
 
 Fun
-	Fun (Int -> Int)
+	Fun (I32 -> I32)
 
 fn id (x)
 	return x

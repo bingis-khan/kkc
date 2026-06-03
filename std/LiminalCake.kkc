@@ -33,7 +33,7 @@ inst Indexable Vector
 	elem-get (self, idx): Array.get(&self.backing, idx)
 
 Matrix ^col ^row a
-	backing Array col (SmolArray row a)
+	backing Array col (Array row a)
 
 fn transpose (m Matrix c r a) -> Matrix r c a
 	return Error.todo()

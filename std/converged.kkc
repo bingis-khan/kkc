@@ -28,6 +28,7 @@ use Iter
 	break'
 	zip
 	append
+	sep-by
 
 	for-each
 	for-each-break

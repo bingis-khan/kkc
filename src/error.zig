@@ -13,6 +13,11 @@ const parser = @import("parser.zig");
 pub const Error = union(enum) {
     IncorrectIndent: struct {},
 
+    UnexpectedCharacter: struct {
+        unexpected: u8,
+        loc: Loc,
+    },
+
     UnexpectedToken: struct {
         got: Token,
         expected: TokenType,
@@ -223,6 +228,9 @@ pub const Error = union(enum) {
         };
         switch (self) {
             .IncorrectIndent => p("incorrect indent", .{}),
+            .UnexpectedCharacter => |uc| {
+                err.atLocation(uc.loc, .{ .label = .{"unexpected character"} });
+            },
             .UnexpectedToken => |e| {
                 err.atLocation(e.got.toLocation(module.source, module.name), .{
                     .label = .{ "expected ", ast.Ctx.wrap(e.expected), ", but got ", ast.Ctx.wrap(e.got.type) },

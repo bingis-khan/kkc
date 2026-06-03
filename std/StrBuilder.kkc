@@ -1,5 +1,6 @@
 use Str
 	Str
+	print-str
 	chars
 use Iter
 	IntoIter
@@ -18,24 +19,18 @@ use DynStr
 use Mem
 use Slice
 	Slice
-use Misc
-	fst
-	snd
 
 StrBuilder alloc
-	chars List alloc U8
+	chars List alloc Char
 
 fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator alloc
-	for c in s chars()
-		buf-sz = Str.char-to-zt-buf(c)
-		sz = buf-sz snd()
-		(&builder&.chars) List.add-all((&buf-sz fst()) Array.as-slice() Slice.subslice(0, sz))
+	s chars() for-each(fn c: List.add(&builder&.chars, c))
 
-fn write-slice (builder Ptr (StrBuilder alloc), s Slice U8) <= Allocator alloc
+fn write-slice (builder Ptr (StrBuilder alloc), s Slice Char) <= Allocator alloc
 	List.add-all(&builder&.chars, s)
 
 fn write-char (builder Ptr (StrBuilder alloc), c Char) -> Unit <= Allocator alloc
-	builder write('\(c)')
+	List.add(&builder&.chars, c)
 
 fn writeln (builder, s):
 	builder write('\(s)\n')
@@ -62,13 +57,13 @@ fn free (builder Ptr (StrBuilder alloc)) <= Allocator alloc
 
 
 inst Str StrBuilder
-	# print-str (s)
-	# 	len = s.chars.count
-	# 	ptr = s.chars.elements.ptr
-	# 	Cnile.printf2('%.*s', len, ptr)
-	# 	return
+	print-str (s)
+		len = s.chars.count
+		ptr = s.chars.elements.ptr
+		Cnile.printf2('%.*s', len, ptr)
+		return
 
-	chars (s): as-str(&s) into-iter()
+	chars (s): s.chars into-iter()
 
 inst IntoIter StrBuilder
 	into-iter (self): self chars()
@@ -78,11 +73,11 @@ fn mk-dyn-str(s, al)
 	sb =& mk(al)
 	sb write(s)
 	sb write-char(Str.nullchar())
-	dynstr = sb as-str()  # freeing dynstr frees all memory of this sb
+	dynstr =  sb as-str()  # freeing dynstr frees all memory of this sb
 	# hide nullchar
 	return DynStr { contents: Slice { ptr: dynstr.contents.ptr, count: dynstr.contents.count - 1 } }
 
-fn mk-const-str(s Str, al):
+fn mk-const-str(s, al):
 	s mk-dyn-str(al).contents.ptr Mem.cast() as ConstStr
 
 

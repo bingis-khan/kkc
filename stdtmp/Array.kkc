@@ -1,0 +1,64 @@
+use Iter
+	IntoIter
+	Iter
+	into-iter
+	next
+	to
+use Slice
+	Slice
+use Str
+	chars
+use Mem
+	i32-size
+
+fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
+	if i < 0 or i >= @cast(count)
+		Error.panic('Access to array at index \(i). (max: \(count))')
+
+	p = Mem.cast-ptr(arr) as Ptr a
+	return Mem.offset-ptr(p, @cast(i))
+
+fn get (arr Ptr (Array count a), i Size) -> a:
+	arr get-ptr(i)&
+
+fn set (arr Ptr (Array count a), i Size, e a)
+	p = arr get-ptr(i)
+	p <&= e
+
+
+# i think it should be in Slice and called `from-array`?
+fn as-slice (arr Ptr (Array count a)) -> Slice a:
+	Slice { ptr: Mem.cast(arr), count: @cast(count) }
+
+fn map-array (arr Array count a, fun a -> b) -> Array count b
+	nuarr =& @undefined
+	for x in 0 to (count - 1)
+		x = x i32-size()
+		nuarr set(x, get(&arr, x) fun())
+	return nuarr&
+
+fn map(arr, fun): map-array(arr, fun)
+
+# ARRAY YAH
+# It's here, because why not. It's still imported by default.
+
+SmolArrayIter ^count a
+	backing SmolArray count a
+	cur Size
+
+inst IntoIter SmolArray
+	into-iter (self):
+		SmolArrayIter { backing: self, cur: 0 }
+
+inst IntoIter SmolArrayIter
+	into-iter (self): self
+
+inst Iter SmolArrayIter
+	next (self Ptr (SmolArrayIter count a))
+		if self&.cur >= @cast(count)
+			return None
+
+		e = (&self&.backing.arr) get(self&.cur)
+		self <&.cur= self&.cur + 1
+		return Just(e)
+

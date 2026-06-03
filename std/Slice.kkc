@@ -6,6 +6,7 @@ use Mem
 use Error
 	or-fail
 	panic
+	todo
 use Iter
 	IntoIter
 	Iter
@@ -16,6 +17,7 @@ use Iter
 	all
 use Str
 	Str
+	print-str
 use Misc
 	is-just
 
@@ -140,12 +142,12 @@ inst Iter SliceIter
 		return Just(elem)
 
 
-# SHITTY STR INST (Item = Cnile.Char)
 inst Str SliceIter
-	# print-str (self)
-	# 	self for-each(print-str)
+	print-str (self)
+		Str.print-as-list(self)
 
-	chars (self): self
+	chars (self)
+		todo()
 
 
 SliceAddressIter a
@@ -189,12 +191,9 @@ inst Indexable Slice
 	elem-get (self, idx): get(self, idx)
 
 inst Str Slice
-	# write-str (wr, self)
-	# 	Error.todo()
-	# print-str (self): self
-	# 	ProtoTerm.print-as-list()
+	print-str (self): Str.print-as-list(self)
 
-	chars (self): Error.todo()
+	chars (self): Str.list-chars(self)
 
 
 inst ListDecon Slice

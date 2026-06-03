@@ -374,6 +374,50 @@ inst Iter FunIter
 
 fn from-function (fun): FunIter { fun, finished: False }
 
+
+# SepBy!
+
+SepByNextIter a
+	NextSep
+	NextElem a
+
+SepByIter a it
+	all-it it
+	sep a
+	next-it-type (SepByNextIter a)
+
+inst Iter SepByIter
+	next (p Ptr _) -> Maybe item
+		case p&.next-it-type
+			NextSep
+				case next(&p&.all-it)
+					None
+						return None
+					Just(next-elem)
+						p <&.next-it-type= NextElem(next-elem)
+						return Just(p&.sep)
+
+			NextElem(next-elem)
+				next-elem = next-elem  # this shouldn't be necessary and I should test for that.
+				# (basically, what is the correct way to handle pointers from deconstructions n shi?)
+				# it "makes sense", but it's a total footgun.
+				p <&.next-it-type= NextSep
+				return Just(next-elem)
+
+inst IntoIter SepByIter
+	into-iter (self _): self
+
+fn sep-by (it, sep)
+	all-it =& it into-iter()
+	next-it-type = @undefined
+	case all-it next()
+		None
+			next-it-type <= NextSep
+		Just(x)
+			next-it-type <= NextElem(x)
+	return SepByIter { all-it: all-it&, sep, next-it-type }
+
+
 # consoomers
 
 fn for-each (iterable, fun)

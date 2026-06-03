@@ -1,0 +1,94 @@
+use Iter
+	IntoIter
+	into-iter
+	for-each
+use Cnile
+use Slice
+	Slice
+	subslice
+use Str
+	Str
+use Alloc
+	Allocator
+use Misc
+	fst
+	snd
+use Display
+	Display
+
+# should this have a separate module???
+DynStr
+	contents Slice U8
+
+
+##### ITER #####
+DynStrIter
+	ds DynStr
+	i Size
+
+inst IntoIter DynStr
+	into-iter (self): DynStrIter { ds: self, i: 0 }
+
+inst IntoIter DynStrIter
+	into-iter (self): self
+
+inst Iter DynStrIter
+	next (self) -> Maybe Char
+		if self&.i >= self&.ds.contents.count  # later this will be good, when the default string will also have a length.
+			return None
+
+		char-ptr = Mem.cast(self&.ds.contents.ptr) Mem.offset-ptr(Mem.size-i64(self&.i)) as Ptr U8
+		char-and-off = Str.scan-char-from-mem(char-ptr)
+		c = char-and-off fst()
+		off = char-and-off snd()
+		self <&.i= self&.i + off
+		return Just(c)
+
+
+inst Str DynStr
+	write-str (wr, self DynStr) -> Unit
+		wr Writer.write(self.contents.ptr, self.contents.count)
+	
+	chars (self DynStr): self into-iter()
+
+inst Display DynStr
+	display (self _) -> ()
+		Cnile.printf2('%.*s', self.contents.count, self.contents.ptr)
+
+inst IntoIter DynStr
+	into-iter (self): self Str.chars()
+		
+
+
+# i want to do substrings differently later.
+fn substr (s DynStr, from Size, to Size):
+	DynStr { contents: s.contents subslice(from, to) }
+
+fn from-const-str (s ConstStr)
+	len = Str.const-str-len(s)
+	return DynStr { contents: Slice { ptr: s Mem.cast(), count: len } }
+
+fn from-str (s Str, al)
+	l =& List.mk(al)
+	fn add-char(c)
+		buf-sz = Str.char-to-zt-buf(c)
+		sz = buf-sz snd()
+		l List.add-all((&buf-sz fst()) Array.as-slice() Slice.subslice(0, sz))
+
+	s Str.chars() for-each(add-char)
+	add-char(Str.nullchar())
+	return DynStr { contents: l& List.to-slice(), count: l List.size() - 1 }
+
+
+# special clone, where DynStr is compatible with C-style ConstStr
+fn clone-0(s DynStr, al Allocator) -> DynStr
+	cnt = s.contents.count
+	nus = al Alloc.allocate(cnt + 1)
+	s.contents Slice.copy-to(nus)
+	nus Slice.set(cnt, Str.nullchar-u8())
+	return DynStr { contents: Slice { ptr: nus.ptr, count: cnt } }
+
+fn clone(s DynStr, al Allocator): clone-0(s, al)
+
+fn free (s DynStr, al Allocator)
+	al Alloc.free({ ptr: s.contents.ptr, count: 0 })
