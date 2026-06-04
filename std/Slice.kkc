@@ -265,3 +265,18 @@ fn find-last-occurence-of-slice (haystack Slice a, needle Slice a) -> Maybe Idx 
 	return occ
 
 fn contains-slice (haystack Slice a, needle Slice a) -> Bool <= Eq a: haystack find-slice(needle) is-just()
+
+
+
+#### spiritually Char module method.
+
+fn from-char (c Char, buf Ptr U8) -> Slice U8
+	case Char.destructure(c)
+		Char.Ref(c)
+			return Slice { ptr: c.ptr, count: c.num-bytes }
+		Char.Scalar(scalar)
+			if scalar > 127
+				@panic('(Slice.from-char) non-ascii characters not yet supported')
+			buf <&= scalar Mem.u32-u8()
+			return Slice { ptr: buf, count: 1 }
+

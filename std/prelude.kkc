@@ -57,12 +57,6 @@ ConstStr  # TODO: later, make a ptr + length struct string.
 # also FromChar should not have type SmolStr -> Char tho, because its easy to ConstStr -> SmolStr, but not the other way around.
 # SmolStr
 
-#[ctype 'char', bytes '1']
-Char
-	# codepoint U32
-
-#[ctype 'char', bytes '1']
-AsciiChar
 
 
 # stolen from Str std module. used in string interpolation
@@ -80,6 +74,16 @@ StrCase c1 c2  # big hack for alternative string representations. (ex: Maybe)
 #[actual-pointer-type]
 Ptr a
 	Ptr a
+
+# TODO: move it to Str?
+# basically a slice doe
+# ref: Swift's Character.
+# I have the perfect opportunity to support Characters with grapheme clusters.
+# Also, scalar values (in Rust for example) need to be "compressed": https://www.mathly.fr/images/utf8encoding.png
+# (which I don't really care about.)
+Char
+	ptr Ptr U8  # makes it 64 bit alignmed anyway, so whatevs.
+	num-bytes Size  # all of it is basically a slice.
 
 # my array type bruh
 Array ^count a
@@ -191,20 +195,6 @@ Either e a
 
 ##### INSTANCES !!!! #######
 
-inst FromChar ConstStr
-	from-charlike (s): s
-
-inst FromChar Char # TMP!
-	from-charlike (s): (@cast(s) as Ptr Char)&
-
-inst FromChar AsciiChar
-	from-charlike (s): (@cast(s) as Ptr AsciiChar)&
-
-
-inst Indexable Ptr
-	elem-get (Ptr(self), k): self elem-get(k)
-
-
 # Num
 
 inst FromIntegral I64
@@ -233,6 +223,21 @@ inst FromIntegral Size
 
 inst FromIntegral F64
 	from-integral (x): @i64-f64(x)
+
+	
+# FromChar
+
+inst FromChar ConstStr
+	from-charlike (s): s
+
+inst FromChar Char # TMP!
+	from-charlike (s): Char { ptr: @cast(s) as Ptr U8, num-bytes: 1 }  # TEMP! num-bytes is incorrect.
+
+
+inst Indexable Ptr
+	elem-get (Ptr(self), k): self elem-get(k)
+
+
 
 # Eq
 
@@ -263,8 +268,27 @@ inst Eq Bool
 inst Eq Ordering
 	eq (l, r): @memeq(l, r)
 
+
+inst Ord Size
+	cmp (l, r): @size-cmp(l, r)
+
+inst Addition Size
+	op-add (l, r): @size-add(l, r)
+
 inst Eq Char
-	eq (l, r): @memeq(l, r)
+	eq (l Char, r Char)
+		if l.num-bytes /= r.num-bytes
+			return False
+
+		# TODO(utf8): normalize??????
+		i = 0
+		while i < l.num-bytes
+			if @offset-ptr(l.ptr, @cast(i) as I64)& /= @offset-ptr(r.ptr, @cast(i) as I64)&
+				return False
+			i <= i + 1
+		return True
+
+		
 
 inst Eq Maybe
 	eq (l, r)
@@ -284,9 +308,6 @@ inst Eq Ptr
 inst Ord I64
 	cmp (l, r)
 		return @i64-cmp(l, r)
-
-inst Ord Size
-	cmp (l, r): @size-cmp(l, r)
 
 inst Ord I32
 	cmp (l, r): @i32-cmp(l, r)
@@ -369,9 +390,6 @@ inst Division U8
 
 
 ## Size
-
-inst Addition Size
-	op-add (l, r): @size-add(l, r)
 
 inst Subtraction Size
 	op-sub (l, r): @size-sub(l, r)

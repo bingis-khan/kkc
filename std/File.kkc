@@ -25,10 +25,10 @@ fn try-read-contents (filename, al)
 	file-size = Cnile.ftell(file)
 	Cnile.fseek(file, 0, Cnile.seek-set())
 
-	file-buf = al allocate(Mem.i32-size(file-size) + 1) as Slice Cnile.Char
+	file-buf = al allocate(Mem.i32-size(file-size) + 1) as Slice U8
 
 	Cnile.fread(file-buf.ptr, 1, file-size, file)
-	file-buf Slice.set(Mem.i32-size(file-size), Str.nullchar())
+	file-buf Slice.set(Mem.i32-size(file-size), Char.nullchar() Char.char-u8())
 
 	Cnile.fclose(file)
 
@@ -55,7 +55,7 @@ fn try-write-contents (filename, contents) -> Bool
 				file Cnile.fclose()
 				return True
 			Just(c)
-				chars-written = Cnile.fprintf1(file, '%c', c)
+				chars-written = Char.fprintf-char(file, c)
 				if chars-written < 0
 					return False
 

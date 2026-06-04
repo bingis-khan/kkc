@@ -92,16 +92,11 @@ fn int-be (sc Ptr (Scanner it), num-bytes U32) <= Iter it
 	return int
 
 fn smol-str (sc Ptr (Scanner it), sz Size) -> SmolStr <= Iter it, IntoIter it
-	fn cast-same-size (x a) -> Char
-		memsz = Mem.size-of(x)
-		assert(memsz == (Mem.get-typesize() as Mem.TypeSize Char).size, '(Scan.smol-str) element cannot be cast to char (\(memsz))')
-		return Mem.cast(x)
-
 	max-ss-sz = SmolStr.max-sz()
 	if sz > max-ss-sz
 		panic('(Scan.scan-smol-str) max smol str size is \(max-ss-sz), but wanted size \(sz)')
 
-	smol-str = SmolStr.from-iter(sc&.s take(sz) map(cast-same-size))
+	smol-str = SmolStr.from-bytes(sc&.s take(sz))
 	drop'(&sc&.s, sz)
 	return smol-str
 

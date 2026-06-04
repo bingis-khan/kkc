@@ -68,6 +68,7 @@ fn size-u64(x Size) -> U64: @cast(x)
 fn size-i32(x Size) -> I32: @cast(x)
 fn size-u32(x Size) -> U32: @cast(x)
 fn size-u16(x Size) -> U16: @cast(x)
+fn size-u8(x Size) -> U8: @cast(x)
 fn u16-u32(x U16) -> U32: cast-on-zeroed(x)
 fn u16-i32(x U16) -> I32: cast-on-zeroed(x)
 fn u32-size(x U32) -> Size: cast-on-zeroed(x)
@@ -79,3 +80,14 @@ fn u8-i64(x U8) -> I64: cast-on-zeroed(x)
 fn u8-i32(x U8) -> I32: cast-on-zeroed(x)
 fn u8-u32(x U8) -> U32: cast-on-zeroed(x)
 fn i64-f64(x I64) -> F64: @i64-f64(x)
+
+
+# rewrite this function to be clearer?
+fn get-ms-byte-of-pointer (ptr Ptr a) -> U8
+	return ((@cast(ptr) as Size) / 0x100000000000000) size-u8()
+
+fn set-ms-byte-of-pointer (ptr Ptr a, b U8) -> Ptr a  # RETURNS INVALID PTR BTW
+	s = @cast(ptr) as Size
+	exp = 0x100000000000000 # 2^8^7
+	return @cast(s - ptr get-ms-byte-of-pointer() u8-size() + exp * u8-size(b))
+

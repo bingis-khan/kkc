@@ -84,35 +84,35 @@ fn run (args, al)
 
 	return ret
 
-fn command-exists (cmd Str, al Allocator) -> Bool
-	path-env = Cnile.getenv('PATH')
-	dir =& StrBuilder.mk(al)
-	found =& False
+# fn command-exists (cmd Str, al Allocator) -> Bool
+# 	path-env = Cnile.getenv('PATH')
+# 	dir =& StrBuilder.mk(al)
+# 	found =& False
 
-	fn check-and-clear () -> Bool
-		dir StrBuilder.write-char('/')
-		dir StrBuilder.write(cmd)
-		candidate = dir StrBuilder.as-str() StrBuilder.mk-const-str(al)
-		result = Cnile.access(candidate, 1) == 0  # X_OK = 1
-		candidate StrBuilder.free-const-str(al)
-		while dir StrBuilder.count() > 0
-			dir StrBuilder.pop()
-		return result
+# 	fn check-and-clear () -> Bool
+# 		dir StrBuilder.write-char('/')
+# 		dir StrBuilder.write(cmd)
+# 		candidate = dir StrBuilder.as-str() StrBuilder.mk-const-str(al)
+# 		result = Cnile.access(candidate, 1) == 0  # X_OK = 1
+# 		candidate StrBuilder.free-const-str(al)
+# 		while dir StrBuilder.count() > 0
+# 			dir StrBuilder.pop()
+# 		return result
 
-	path-env chars() for-each(fn(c))
-		if found&
-			return
-		if c == ':'
-			if check-and-clear()
-				found <&= True
-		else
-			dir StrBuilder.write-char(c)
+# 	path-env chars() for-each(fn(c))
+# 		if found&
+# 			return
+# 		if c == ':'
+# 			if check-and-clear()
+# 				found <&= True
+# 		else
+# 			dir StrBuilder.write-char(c)
 
-	if not found&
-		found <&= check-and-clear()
+# 	if not found&
+# 		found <&= check-and-clear()
 
-	StrBuilder.free(dir)
-	return found&
+# 	StrBuilder.free(dir)
+# 	return found&
 
 fn rm (s)
 	if Cnile.remove(s) /= 0
@@ -130,15 +130,15 @@ fn mkdir (path Str, al Allocator)
 			panic('mkdir() failed: path exists but is not a directory')
 	path StrBuilder.free-const-str(al)
 
-fn mkdir-p (path Str, al Allocator)
-	sb =& StrBuilder.mk(al)
-	path chars() for-each(fn(c))
-		if c == '/'
-			if sb StrBuilder.count() > 0
-				sb& mkdir(al)
-		sb StrBuilder.write-char(c)
-	sb& mkdir(al)
-	StrBuilder.free(sb)
+# fn mkdir-p (path Str, al Allocator)
+# 	sb =& StrBuilder.mk(al)
+# 	path chars() for-each(fn(c))
+# 		if c == '/'
+# 			if sb StrBuilder.count() > 0
+# 				sb& mkdir(al)
+# 		sb StrBuilder.write-char(c)
+# 	sb& mkdir(al)
+# 	StrBuilder.free(sb)
 
 fn cat(path Str, al Allocator) -> DynStr: path
 	StrBuilder.mk-const-str(al)

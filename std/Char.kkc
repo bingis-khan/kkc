@@ -1,0 +1,85 @@
+# i'll all imported modules to not accidentally cause cycles.
+# this module should be imported by Str.
+use Mem
+use Cnile
+	FILE
+
+
+fn scan-from-mem(p Ptr U8) -> Char
+	clen = 0
+	while p Mem.offset-ptr(clen Mem.i32-i64())& >= (128 + 64)
+		clen <= clen + 1
+	clen <= clen + 1
+
+	if clen > 4
+		# how relevant is this???
+		@panic('UTF8 STRING TOO LONG (is this correct utf8 string?)')
+
+	return Char { ptr: p, num-bytes: clen Mem.i32-size() }
+
+
+fn from-u8 (b U8) -> Char
+	ptr = Mem.set-ms-byte-of-pointer(b Mem.u8-size() Mem.cast() as Ptr U8, 0x67)
+	return Char { ptr, num-bytes: 1 }
+
+# TODO: from-scalar. I need to properly learn to decode it AND I must remember to set num-bytes to the correct value.
+
+CharDestructured
+	Ref Char
+	Scalar U32
+
+fn destructure(c Char) -> CharDestructured
+	if Mem.get-ms-byte-of-pointer(c.ptr) == 0x67
+		return Scalar((c.ptr Mem.cast() as Size) Mem.size-u32())
+	else
+		return Ref(c)
+
+fn scalarize (c Char) -> Char
+	@panic('(scalarize) todo')
+	return @undefined
+
+
+fn char-u8(c Char) -> U8
+	case c destructure()
+		Ref(c)
+			return c.ptr&
+		Scalar(scalar)
+			return Mem.u32-u8(scalar)
+
+fn u8-char(c U8) -> Char
+	@panic('mimauuuuuu')
+	return @undefined
+fn i32-char(i I32) -> Char:
+	Mem.cast(i)
+
+inst Ord Char
+	cmp (l _, r _)
+		if l.num-bytes /= 1 or r.num-bytes /= 1
+			@panic('(TODO) comparison of non-ascii characters not implemented')  # I think it's specified in the unicode spec?
+		return cmp(char-u8(l), char-u8(r))
+
+####
+
+fn nullchar() -> Char: '\0'
+
+
+####
+
+fn printf-char (c Char)
+	case c destructure()
+		Ref(c)
+			Cnile.printf2('%.*s', c.num-bytes Mem.size-i32(), c.ptr)
+		Scalar(scalar)
+			if scalar > 127
+				@panic('(TODO) scalar too large BRUH')
+			Cnile.printf1('%c', scalar Mem.u32-u8())
+
+fn fprintf-char (file Ptr FILE, c Char) -> I32
+	case c destructure()
+		Ref(c)
+			return Cnile.fprintf2(file, '%.*s', c.num-bytes Mem.size-i32(), c.ptr)
+
+		Scalar(scalar)
+			if scalar > 127
+				@panic('(TODO) scalar too large BRUH')
+			return Cnile.fprintf1(file, '%c', scalar Mem.u32-u8())

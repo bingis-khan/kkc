@@ -2,12 +2,14 @@ use Error
 	panic
 use Str
 	Str
+use Iter
+	to
 
 SmolStr
 	SmolStr Size
 
 fn max-sz (): (Mem.get-typesize() as Mem.TypeSize Size).size - 1
-fn mk(chs Array n Char) -> SmolStr
+fn from-byte-array(chs Array n U8) -> SmolStr
 	max-sz = max-sz()
 	if n Mem.i32-size() > max-sz
 		panic('too big for smol str. given \(n), but gotten \(max-sz)')
@@ -25,10 +27,28 @@ fn from-const-str(c ConstStr) -> SmolStr
 	Cnile.memcpy(Mem.cast-ptr(&backing), Mem.cast(c), strlen)
 	return SmolStr(backing)
 
-fn from-iter(it it) -> SmolStr <= IntoIter it
+fn from-bytes(it it) -> SmolStr <= IntoIter it
 	maxsz = max-sz()
 	Error.assert(max-sz() == 7, '(SmolStr.from-iter) current backing size is assumed to be 7, but got \(maxsz)')
-	return (Array.fill-iter(it, Str.nullchar()) as Array 7 Char) mk()
+	return (Array.fill-iter(it, Char.nullchar() Char.char-u8()) as Array 7 U8) from-byte-array()
+
+fn from-chars (it it) -> SmolStr <= IntoIter it
+	buf =& Array.fill-default(Char.nullchar() Char.char-u8()) as Array 7 U8
+
+	# TODO: use BoundedList
+	i = 0
+	for c in it
+		if i > 7
+			panic('(SmolStr.from-chars) string too long')
+
+		s = c Slice.from-char(&@undefined)
+		for ii in 0 to (Mem.size-i32(s.count) - 1)
+			ii = Mem.i32-size(ii)
+			buf Array.set(i + ii, s[ii])
+
+		i <= i + s.count
+
+	return buf& from-byte-array()
 
 
 inst Str SmolStr

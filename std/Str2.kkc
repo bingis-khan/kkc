@@ -5,6 +5,9 @@ use Iter
 	all
 	reduce
 	drop
+	map
+	sum
+	to
 use Str
 	Str
 	print-str
@@ -21,6 +24,7 @@ use Error
 	todo
 use Alloc
 use Slice
+	Slice
 use Mem
 use DynStr
 	DynStr
@@ -89,14 +93,17 @@ fn as-if-list(it):
 
 ##### Functions
 # BUG: does not work for nullchars (due to our string representation still lacking length)
+# also uggo (TODO).
 fn allocate-str (s, al) -> ConstStr
-	len = s chars() count()
-	str = al Alloc.allocate(len + 1)
-	s chars()
-		zip(from(0))
-		for-each(fn Tuple2(c, i): str Slice.set(Mem.i32-size(i), c))
+	len = s chars() map(fn c: c.num-bytes) sum()
+	str = al Alloc.allocate(len + 1) as Slice U8
+	i = 0
+	for c in s chars()
+		for ii in 0 to (c.num-bytes Mem.size-i32() - 1)
+			str Slice.set(i + ii Mem.i32-size(), c.ptr Mem.offset-ptr(ii Mem.i32-i64())&)
+		i <= i + c.num-bytes
 
-	str Slice.set(len, Str.nullchar())
+	str Slice.set(len, 0)
 	return str.ptr Mem.cast()
 
 fn newline() -> Char: '\n'
@@ -137,12 +144,12 @@ inst IntoIter LineIter
 inst Iter LineIter
 	next (self Ptr LineIter) -> Maybe DynStr
 		# should consume the last trailing newline
-		if self&.last >= self&.og.contents.count or self&.og.contents Slice.get(self&.last) == Str.nullchar()
+		if self&.last >= self&.og.contents.count or self&.og.contents[self&.last] == Char.nullchar() Char.char-u8()
 			return None
 
 		# iterator is left after last encountered newline
 		i = self&.last
-		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= newline()
+		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= newline() Char.char-u8()
 			i <= i + 1
 
 		line = self&.og substr(self&.last, i)
@@ -185,12 +192,12 @@ inst Iter SplitWhitespaceIter
 
 # kekkekekekekkekekek
 fn is-digit (c):
-	Str.char-i32(c) >= Str.char-i32('0') and Str.char-i32(c) <= Str.char-i32('9')
+	Char.char-u8(c) >= Char.char-u8('0') and Char.char-u8(c) <= Char.char-u8('9')
 
 
 fn parse-digit (c)
 	if is-digit(c)
-		return Just(Str.char-i32(c) - Str.char-i32('0'))
+		return Just(Mem.u8-i32(Char.char-u8(c) - Char.char-u8('0')))
 	else
 		return None
 

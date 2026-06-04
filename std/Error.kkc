@@ -2,28 +2,44 @@ use Cnile
 use Mem
 use Str
 	Str
+	chars
+use Iter
+	for-each
+
+# TEMP
+
+fn print(s)
+	# Display.display(s)
+	# ProtoTerm.print-str(s)
+	# Str.write-str(CPrintWriter, s)
+	# Str.print-str(s)
+	s chars() for-each(Char.printf-char)
+	
+fn println (s)
+	print('\(s)\n')
 
 fn todo() -> a
-	Str.print-str('todo\n')
+	print('todo\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn todo'(s Str) -> a
-	Str.print-str('todo: \(s)\n')
+	print('todo: \(s)\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
 fn unreachable() -> a
-	Str.print-str('unreachable\n')
+	print('unreachable\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 
+# NOTE: When we add iterator style printing to this, performance tanks!!
 fn panic (errmsg) -> Unit
 	Str.print-str('PANIC: \(errmsg)\n')
 	Cnile.exit(1)
 
 fn panic' (errmsg) -> a
-	Str.print-str('PANIC: \(errmsg)\n')
+	print('PANIC: \(errmsg)\n')
 	Cnile.exit(1)
 	return Mem.undefined()
 

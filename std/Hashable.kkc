@@ -19,5 +19,5 @@ inst Hashable Unit
 
 inst Hashable Char
 	hash (c): c
-		Str.char-i32()
-		Mem.i32-size()
+		Char.char-u8()
+		Mem.u8-size()

@@ -1,6 +1,7 @@
 use Iter
 	IntoIter
 	into-iter
+	map
 use Cnile
 use Slice
 	Slice
@@ -13,18 +14,39 @@ use Alloc
 
 # should this have a separate module???
 DynStr
-	contents Slice Cnile.Char
+	contents Slice U8
+
+
+##### ITER #####
+
+DynStrIter
+	ds DynStr
+	i Size
+
+inst IntoIter DynStr
+	into-iter (self): DynStrIter { ds: self, i: 0 }
+
+inst IntoIter DynStrIter
+	into-iter (self): self
+
+inst Iter DynStrIter
+	next (self) -> Maybe Char
+		if self&.i >= self&.ds.contents.count  # later this will be good, when the default string will also have a length.
+			return None
+
+		char-ptr = Mem.cast(self&.ds.contents.ptr) Mem.offset-ptr(Mem.size-i64(self&.i)) as Ptr U8
+		char = Char.scan-from-mem(char-ptr)
+
+		self <&.i= self&.i + char.num-bytes
+		return Just(char)
 
 
 inst Str DynStr
 	print-str (self DynStr) -> Unit
-		Cnile.printf2('%.*s', self.contents.count, self.contents.ptr)
+		Cnile.printf2('%.*s', self.contents.count Mem.size-i32(), self.contents.ptr)
 
-	chars (self DynStr): self.contents into-iter()
+	chars (self DynStr): self into-iter()
 
-inst IntoIter DynStr
-	into-iter (self):
-		self.contents into-iter()
 
 # i want to do substrings differently later.
 fn substr (s DynStr, from Size, to Size):
@@ -36,8 +58,8 @@ fn from-const-str (s ConstStr)
 
 fn from-str (s Str, al)
 	l =& List.mk(al)
-	l List.add-all(s Str.chars())
-	l List.add(Str.nullchar())
+	l List.add-all(s Str.chars() map(Char.char-u8))
+	l List.add(Char.nullchar() Char.char-u8())
 	return DynStr { contents: l& List.to-slice(), count: l List.size() - 1 }
 
 
@@ -46,7 +68,7 @@ fn clone-0(s DynStr, al Allocator) -> DynStr
 	cnt = s.contents.count
 	nus = al Alloc.allocate(cnt + 1)
 	s.contents Slice.copy-to(nus)
-	nus Slice.set(cnt, '\0')
+	nus Slice.set(cnt, '\0' Char.char-u8())
 	return DynStr { contents: Slice { ptr: nus.ptr, count: cnt } }
 
 fn clone(s DynStr, al Allocator): clone-0(s, al)

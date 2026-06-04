@@ -1,4 +1,0 @@
-# module to test imports of type synonyms.
-
-Asdasd = Int
-Miau a = Maybe a

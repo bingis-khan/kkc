@@ -26,15 +26,12 @@ use Iter
 	# write-cformat1 (wr _, cs ConstStr, x a)
 		# Cnile.printf1(cs, x)
 
-fn print-char (c Char)
-	Cnile.printf1('%c', c)
-
 fn print(s)
 	# Display.display(s)
 	# ProtoTerm.print-str(s)
 	# Str.write-str(CPrintWriter, s)
 	# Str.print-str(s)
-	s chars() for-each(print-char)
+	s chars() for-each(Char.printf-char)
 	
 fn println (s)
 	print('\(s)\n')

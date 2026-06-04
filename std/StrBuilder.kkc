@@ -8,8 +8,6 @@ use Iter
 	for-each
 use List
 	List
-use Cnile
-	Char
 use Alloc
 	Allocator
 use Slice
@@ -20,17 +18,22 @@ use Mem
 use Slice
 	Slice
 
+
+# TODO: utf8 support
+# - pop() for example.
 StrBuilder alloc
-	chars List alloc Char
+	chars List alloc U8
 
-fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator alloc
-	s chars() for-each(fn c: List.add(&builder&.chars, c))
-
-fn write-slice (builder Ptr (StrBuilder alloc), s Slice Char) <= Allocator alloc
+fn write-slice (builder Ptr (StrBuilder alloc), s Slice U8) <= Allocator alloc
 	List.add-all(&builder&.chars, s)
 
 fn write-char (builder Ptr (StrBuilder alloc), c Char) -> Unit <= Allocator alloc
-	List.add(&builder&.chars, c)
+	builder write-slice(c Slice.from-char(&@undefined))
+
+fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator alloc
+	s chars() for-each(fn c: builder write-char(c))
+
+
 
 fn writeln (builder, s):
 	builder write('\(s)\n')
@@ -47,7 +50,7 @@ fn free(sb Ptr (StrBuilder Allocator))
 
 # DOES NOT REALLOCATE!
 fn as-str (builder Ptr (StrBuilder alloc)):
-	DynStr { contents: builder&.chars.elements subslice(0, builder&.chars.count) }
+	DynStr { contents: builder&.chars.elements subslice(0, builder&.chars.count) Mem.cast() }
 
 fn as-char-slice (builder Ptr (StrBuilder alloc)):
 	builder&.chars List.to-slice()
@@ -72,7 +75,7 @@ inst IntoIter StrBuilder
 fn mk-dyn-str(s, al)
 	sb =& mk(al)
 	sb write(s)
-	sb write-char(Str.nullchar())
+	sb write-char(Char.nullchar())
 	dynstr =  sb as-str()  # freeing dynstr frees all memory of this sb
 	# hide nullchar
 	return DynStr { contents: Slice { ptr: dynstr.contents.ptr, count: dynstr.contents.count - 1 } }

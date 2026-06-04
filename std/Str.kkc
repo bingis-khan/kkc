@@ -14,14 +14,24 @@ use Iter
 	drop
 	AppendIter
 	count
+	to
 use Mem
+	TypeSize
+use Char
 use Math
+use Misc
+	fst
+	snd
 
 class Str
 	# later should write to some buffer instead of printing directly.
 	print-str (self _) -> Unit
 	chars (self _) -> iter
 
+
+##### Charsheet #####
+
+# fn char-size (): (Mem.get-typesize() as TypeSize U8).size Mem.size-i32()
 
 ##### ConstStr ######
 
@@ -37,13 +47,15 @@ inst IntoIter ConstStrIter
 
 inst Iter ConstStrIter
 	next (self)
-		if self&.i >= Mem.i32-size(Cnile.strlen(self&.ogstr))  # later this will be good, when the default string will also have a length.
+		char-ptr = Mem.cast(self&.ogstr) as Ptr U8
+		optr = (char-ptr Mem.offset-ptr(Mem.size-i64(self&.i)))
+
+		if optr& == Mem.cast(0)  # later this will be good, when the default string will also have a length.
 			return None
 
-		char-ptr = Mem.cast(self&.ogstr) as Ptr Cnile.Char
-		c = (char-ptr Mem.offset-ptr(Mem.size-i64(self&.i)))&
-		self <&.i= self&.i + 1
-		return Just(c)
+		char = optr Char.scan-from-mem()
+		self <&.i= self&.i + char.num-bytes
+		return Just(char)
 
 inst Str ConstStr
 	print-str (self _) -> Unit
@@ -55,7 +67,7 @@ inst Str ConstStr
 
 inst Str Char
 	print-str (self _) -> Unit
-		Cnile.printf1('%c', self)
+		Char.printf-char(self)
 
 	chars (self _):
 		Iter.single(self)
@@ -63,6 +75,10 @@ inst Str Char
 inst Indexable ConstStr
 	elem-get (self _, sz Size) -> Char
 		return Mem.offset-ptr(self Mem.cast() as Ptr Char, sz Mem.size-i64())&
+
+
+# DEFAULT INSTANCE FUNCTION (uses Char's print-str)
+fn default-print-str (s Str): s chars() for-each(print-str)
 
 
 ####### Int #######
@@ -75,18 +91,18 @@ inst IntoIter IntStrIter
 	into-iter(self): self
 
 inst Iter IntStrIter
-	next (self Ptr _) -> Maybe Cnile.Char
+	next (self Ptr _) -> Maybe Char
 		if self&.len <= 0
 			return None
 
 		trim-down = 10 Math.pow (self&.len - 1)
 		upper = self&.int / trim-down
 		upper-mask = (upper / 10) * 10
-		digit = upper - upper-mask
+		digit = Mem.cast-on-zeroed(upper - upper-mask) as U8
 
 		self <&.len= self&.len - 1
 
-		digit-char = Mem.cast(digit + 48)
+		digit-char = Char.from-u8(digit + 48)
 		return Just(digit-char)
 
 
@@ -441,7 +457,6 @@ inst Str AppendIter
 
 ###### Functions ######
 
-fn nullchar() -> Cnile.Char: Mem.zeroed()  # HACK!!
 # fn eq(l, r): l chars() zip(r chars()) all(fn Tuple2(lc, rc): lc == rc)  # this is incorrect, because zip() trims!
 fn eq(l, r)
 	l =& l chars()
@@ -464,14 +479,6 @@ fn eq(l, r)
 
 
 fn streq(l, r): eq(l, r)
-fn char-i32(c Char) -> I32:
-	Mem.cast-on-zeroed(c)
-fn char-u8(c Char) -> U8:
-	Mem.cast(c)
-fn u8-char(c U8) -> Char:
-	Mem.cast(c)
-fn i32-char(i I32) -> Char:
-	Mem.cast(i)
 
 fn print-as-list(it)
 	print-str('[')
@@ -495,6 +502,3 @@ fn const-str-len (s ConstStr):
 
 inst Eq ConstStr
 	eq (l, r): Cnile.strcmp(l, r) == 0
-
-inst Ord Char
-	cmp (l, r): cmp(char-i32(l), char-i32(r))

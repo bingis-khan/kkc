@@ -1,5 +1,0 @@
-
-class Writer
-	# Item
-	write (self _, ptr Ptr item, count Size) -> ()  # TODO: error
-	write-cformat1 (self _, format ConstStr, x a) -> ()  # TODO: kinda temp, to quickly implement other instances.

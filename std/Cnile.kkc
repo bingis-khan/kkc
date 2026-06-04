@@ -1,4 +1,12 @@
 
+#[ctype 'char', bytes '1']
+Char
+CChar = Char
+
+inst FromChar Char
+	from-charlike (s): (@cast(s) as Ptr Char)&
+
+
 #[ctype 'void']
 Void
 
@@ -100,7 +108,7 @@ Dirent
 	d-off I64
 	d-reclen U16
 	d-type U8
-	d-name Array 256 AsciiChar
+	d-name Array 256 Char
 
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
@@ -120,8 +128,11 @@ external
 	#[cfunname 'fprintf', cstdinclude 'stdio.h']
 	fprintf1 (file Ptr FILE, format ConstStr, x a) -> CInt
 
+	#[cfunname 'fprintf', cstdinclude 'stdio.h']
+	fprintf2 (file Ptr FILE, format ConstStr, x a, y b) -> CInt
+
 	#[cfunname 'snprintf', cstdinclude 'stdio.h']
-	snprintf1 (p Ptr AsciiChar, n CInt, format ConstStr, x a) -> CInt
+	snprintf1 (p Ptr Char, n CInt, format ConstStr, x a) -> CInt
 
 
 	#[cstdinclude 'stdlib.h']
