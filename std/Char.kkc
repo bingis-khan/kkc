@@ -5,17 +5,40 @@ use Cnile
 	FILE
 
 
-fn scan-from-mem(p Ptr U8) -> Char
-	clen = 0
-	while p Mem.offset-ptr(clen Mem.i32-i64())& >= (128 + 64)
-		clen <= clen + 1
-	clen <= clen + 1
+fn next-char (p Ptr U8) -> Size
+	pb = p&
+	if pb < 128
+		return 1
+	elif pb >= 128 + 64 + 32 + 16
+		return 4
+	elif pb >= 128 + 64 + 32
+		return 3
+	elif pb >= 128 + 64
+		return 2
+	else
+		@panic('(TODO) invalid byte (handle this better...)')
 
+# assumes we are somewhere in the middle of a character.
+fn sync-char (p Ptr U8) -> Size  # BACKWARDS movement!
+	i = 0
+	while True
+		pb = @offset-ptr(p, - Mem.size-i64(i))&
+		if not (pb >= 128 and pb < 128 + 64)
+			return i
+		i <= i + 1
+
+# moves the character back from the previous correct character.
+fn previous-char (p Ptr U8) -> Size  # BACKWARDS movement!
+	return p Mem.offset-ptr(-1) sync-char()
+
+
+fn scan-from-mem(p Ptr U8) -> Char
+	clen = p next-char()  # assumes p is correct (is not in the middle of a character.) (I guess we can do that too!)
 	if clen > 4
 		# how relevant is this???
 		@panic('UTF8 STRING TOO LONG (is this correct utf8 string?)')
 
-	return Char { ptr: p, num-bytes: clen Mem.i32-size() }
+	return Char { ptr: p, num-bytes: clen }
 
 
 fn from-u8 (b U8) -> Char

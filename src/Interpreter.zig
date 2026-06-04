@@ -521,6 +521,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     const ptr = try self.copyValue(ogPtr.ref, intr.args[0].t);
                     if (amount.ref.int > 0) { // if pointer is null, @ptrFromInt produces an error. Offseting the null pointer by 0 is correct tho.
                         ptr.ptr = @ptrFromInt(@intFromPtr(ptr.ptr) + @as(usize, @intCast(amount.ref.int)));
+                    } else if (amount.ref.int < 0) {
+                        ptr.ptr = @ptrFromInt(@intFromPtr(ptr.ptr) - @as(usize, @intCast(-amount.ref.int)));
                     }
                     return valFromRef(ptr);
                 },

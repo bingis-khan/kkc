@@ -98,7 +98,7 @@ inst Iter IntStrIter
 		trim-down = 10 Math.pow (self&.len - 1)
 		upper = self&.int / trim-down
 		upper-mask = (upper / 10) * 10
-		digit = Mem.cast-on-zeroed(upper - upper-mask) as U8
+		digit = Mem.cast(upper - upper-mask) as U8
 
 		self <&.len= self&.len - 1
 
