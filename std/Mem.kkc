@@ -3,6 +3,8 @@ fn undefined(): @undefined
 fn offset-ptr(x Ptr a, count I64):
 	@offset-ptr(x, count * @cast(@size-of(@undefined as a)))  # Alignment is already included in size, (as padding) so move should be okay?
 
+fn offset-ptr'(x Ptr a, count Size): x offset-ptr(@cast(count))
+
 
 TypeSize a
 	size Size

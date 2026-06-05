@@ -150,7 +150,7 @@ inst Iter LineIter
 		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= '\n' Char.char-u8()
 			i <= i + 1
 
-		line = self&.og substr(self&.last, i)
+		line = self&.og StrView.byte-substr(self&.last, i)  # NOTE: we can do byte substr, since we're substr-ing to the nearest newline. this is faster, because we don't have to "re-walk"
 		if i < self&.og.contents.count # when i < slice.count, then we encountered a newline.
 			i <= i + 1  # skip past the newline
 

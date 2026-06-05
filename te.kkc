@@ -1,1 +1,1 @@
-println('aa' as ConstStr)
+'빨갱이 병신' StrView.substr(2, 8) println()

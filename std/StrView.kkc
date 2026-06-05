@@ -15,11 +15,6 @@ use Alloc
 
 ### Iter & Str in Str.kkc
 
-# i want to do substrings differently later.
-# TODO: handle utf8
-fn substr (s StrView, from Size, to Size):
-	StrView { contents: s.contents subslice(from, to) }
-
 fn from-const-str (s ConstStr)
 	len = Str.const-str-len(s)
 	return StrView { contents: Slice { ptr: s Mem.cast(), count: len } }
@@ -44,3 +39,22 @@ fn clone(s StrView, al Allocator): clone-0(s, al)
 
 fn free (s StrView, al Allocator)
 	al Alloc.free({ ptr: s.contents.ptr, count: 0 })
+
+
+fn substr (s StrView, from Size, to Size)
+	from-bs = 0
+	for _ in 0 Iter.to (Mem.size-i32(from) - 1)
+		if from-bs >= s.contents.count
+			break
+		from-bs <= from-bs + Char.next-char(s.contents.ptr Mem.offset-ptr'(from-bs))
+
+	to-bs = from-bs
+	for _ in 0 Iter.to (Mem.size-i32(to) - Mem.size-i32(from) - 1)
+		if to-bs >= s.contents.count
+			break
+		to-bs <= to-bs + Char.next-char(s.contents.ptr Mem.offset-ptr'(to-bs))
+
+	return StrView { contents: s.contents subslice(from-bs, to-bs) }
+
+fn byte-substr (s StrView, from Size, to Size):
+	StrView { contents: s.contents Slice.subslice(from, to) }
