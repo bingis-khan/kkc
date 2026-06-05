@@ -901,6 +901,7 @@ pub const Expr = struct {
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: struct { int: i64, ref: InstFunInst }, // obv temporary.
+        ConstSize: usize, // instead of bullshit with instantiating a class, we can do this.
         Float: f64,
         IfElse: struct {
             cond: Rec,
@@ -1050,6 +1051,7 @@ pub const Expr = struct {
                 con.print(c);
             },
             .Int => |i| c.sp("{}", .{i.int}),
+            .ConstSize => |sz| c.sp("#{}", .{sz}),
             .Float => |f| c.sp("{}", .{f}),
             .Str => |s| {
                 std.debug.lockStdErr();

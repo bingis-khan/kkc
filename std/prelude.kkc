@@ -48,14 +48,23 @@ Size
 # Is this too much voodoo? I'm basically only using it for Ints
 # class Int <= Eq, Ord, Addition, Subtraction, Multiplication, Division
 
+#[actual-pointer-type]
+Ptr a: a
+
+
+# Strings n shii
 
 #[ctype 'const char*']
 ConstStr  # TODO: later, make a ptr + length struct string.
 
-# Future thing: word size and last byte must be zero.
-# max size would be num-bytes - 1, because when the last char can be 0, we gain the ability to cast SmolStr to ConstStr.
-# also FromChar should not have type SmolStr -> Char tho, because its easy to ConstStr -> SmolStr, but not the other way around.
-# SmolStr
+# define it here for use in StrView.
+# (BUT BEFORE IT WAS PRETTY COOL WE DIDN'T DEPEND ON Slice necessarily bruh, BUT NOW WE'VE MADE IT PART OF PRELUDE)
+Slice a
+	ptr Ptr a
+	count Size
+
+StrView
+	contents Slice U8
 
 
 
@@ -70,12 +79,7 @@ StrCase c1 c2  # big hack for alternative string representations. (ex: Maybe)
 	StrCase2 c2
 
 
-# should ideally be shorthanded to: Ptr a: Ptr a
-#[actual-pointer-type]
-Ptr a
-	Ptr a
-
-# TODO: move it to Str?
+# TODO: Move it to Char?
 # basically a slice doe
 # ref: Swift's Character.
 # I have the perfect opportunity to support Characters with grapheme clusters.
@@ -90,7 +94,7 @@ Array ^count a
 
 # funny experiment-ahh class
 class FromChar: Char
-	from-charlike (s ConstStr) -> _
+	from-charlike (ptr Ptr U8, num-bytes Size) -> _
 
 # maybe instead of ConstStr, we should have a special datatypes to signal a one-char string?
 
@@ -228,10 +232,9 @@ inst FromIntegral F64
 # FromChar
 
 inst FromChar ConstStr
-	from-charlike (s): s
+	from-charlike (ptr, _): @cast(ptr) as ConstStr
 
-inst FromChar Char # TMP!
-	from-charlike (s): Char { ptr: @cast(s) as Ptr U8, num-bytes: 1 }  # TEMP! num-bytes is incorrect.
+# FromChar Char instance in std/Char.kkc
 
 
 inst Indexable Ptr

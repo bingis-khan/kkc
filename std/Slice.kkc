@@ -22,11 +22,9 @@ use Misc
 	is-just
 
 
-Idx = Size
+# slice definition in prelude.kkc
 
-Slice a
-	ptr Ptr a
-	count Idx
+Idx = Size
 
 fn empty ():
 	Slice { ptr: Mem.null-ptr(), count: 0 }

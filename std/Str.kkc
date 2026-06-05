@@ -86,12 +86,17 @@ fn default-print-str (s Str): s chars() for-each(print-str)
 IntStrIter i
 	int i
 	len I32  # should this be U8?
+	negative Bool
 
 inst IntoIter IntStrIter
 	into-iter(self): self
 
 inst Iter IntStrIter
 	next (self Ptr _) -> Maybe Char
+		if self&.negative
+			self <&.negative= False
+			return Just('-')
+
 		if self&.len <= 0
 			return None
 
@@ -118,40 +123,45 @@ fn count-digits (self)
 
 	return digits
 
+fn int-iter (int)
+	if int < 0
+		return IntStrIter { int: -int, len: count-digits(-int), negative: True }
+	else
+		return IntStrIter { int, len: count-digits(int), negative: False }
+
+fn uint-iter (int):
+	IntStrIter { int, len: count-digits(int), negative: False }
+
+
 inst Str I32
 	print-str (self I32) -> Unit
 		Cnile.printf1('%d', self)
 
-	chars (self I32):
-		IntStrIter { int: self, len: self count-digits() }
+	chars (self I32): int-iter(self)
 
 inst Str U32
 	print-str (self U32) -> Unit
 		Cnile.printf1('%u', self)
 
-	chars (self U32):
-		IntStrIter { int: self, len: self count-digits() }
+	chars (self U32): uint-iter(self)
 
 inst Str U8
 	print-str (self U8) -> Unit
 		Cnile.printf1('%d', Mem.u8-i32(self))
 
-	chars (self U8):
-		IntStrIter { int: self, len: self count-digits() }
+	chars (self U8): uint-iter(self)
 
 inst Str I64
 	print-str (self I64) -> Unit
 		Cnile.printf1('%ld', self)
 
-	chars (self I64):
-		IntStrIter { int: self, len: self count-digits() }
+	chars (self I64): int-iter(self)
 
 inst Str Size
 	print-str (self Size) -> Unit
 		Cnile.printf1('%lu', self)
 
-	chars (self Size):
-		IntStrIter { int: self, len: self count-digits() }
+	chars (self Size): uint-iter(self)
 
 
 

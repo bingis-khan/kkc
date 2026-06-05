@@ -20,3 +20,10 @@ Other stuff:
   (a scalar value needs to be "prepared", so it can be pointlessly slow if we ever encode-decode them repeatedly)
 
   - [ ] write instance method? do we need it? or too much work? also, we didn't really test it in the alternative std, so maybe the performance is not that bad.
+
+  - [X] grapheme clusters (scalars currently, cuz idc) in FromChar? or is 1-byte thing better?
+      - the thing is, we will have to throw runtime errors in case a character does not fit in one byte (in case of AsciiChar).
+  - [X] FromChar should have a (ptr Ptr U8, len Size) -> _ signature (or just Slice!) (a Slice would be nice, but it's easier to use primitive types :3)
+  - [ ] stop using ConstStr. Replace it with DynStr (or equivalent)
+    - new name for DynStr: StrView.
+  - [ ] make a FromString method. (it will also have a guarantee, that the string is 0-termminated)

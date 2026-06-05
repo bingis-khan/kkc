@@ -22,7 +22,7 @@ fn next-char (p Ptr U8) -> Size
 fn sync-char (p Ptr U8) -> Size  # BACKWARDS movement!
 	i = 0
 	while True
-		pb = @offset-ptr(p, - Mem.size-i64(i))&
+		pb = @offset-ptr(p, - Mem.size-i64(i))&  # BTW the intrinsic itself is not really needed, I just left it here cuz why not.
 		if not (pb >= 128 and pb < 128 + 64)
 			return i
 		i <= i + 1
@@ -39,6 +39,12 @@ fn scan-from-mem(p Ptr U8) -> Char
 		@panic('UTF8 STRING TOO LONG (is this correct utf8 string?)')
 
 	return Char { ptr: p, num-bytes: clen }
+
+
+inst FromChar Char
+	from-charlike (ptr Ptr U8, num-bytes Size) -> _
+		ptr = ptr Mem.cast() as Ptr U8
+		return ptr scan-from-mem()
 
 
 fn from-u8 (b U8) -> Char
@@ -68,12 +74,6 @@ fn char-u8(c Char) -> U8
 			return c.ptr&
 		Scalar(scalar)
 			return Mem.u32-u8(scalar)
-
-fn u8-char(c U8) -> Char
-	@panic('mimauuuuuu')
-	return @undefined
-fn i32-char(i I32) -> Char:
-	Mem.cast(i)
 
 inst Ord Char
 	cmp (l _, r _)

@@ -1,7 +1,1 @@
-c = Char.from-u8(48 + 1)
-println(c)
-# case c Char.destructure()
-# 	Char.Ref(cc)
-# 		println(cc.ptr&)
-# 	Char.Scalar(scalar)
-# 		println(scalar)
+println('a')

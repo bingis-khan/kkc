@@ -21,8 +21,8 @@ inst Str.Str Fun
 	chars (self): unreachable()
 
 x = Fun(fn x: x + 1)
-println(x)
+Str.print-str('\(x)\n')
 y = SomethingElse(123, Unit)
-println(y)
+Str.print-str('\(y)\n')
 z = AndElse
-println(z)
+Str.print-str('\(z)\n')

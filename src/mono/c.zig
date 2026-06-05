@@ -1221,6 +1221,9 @@ const Stmt = struct {
                 try stmt.instFun(x.ref);
                 try stmt.p(.{ "(", x.int, ")" });
             },
+            .ConstSize => |sz| {
+                try stmt.j(.{sz});
+            },
             .Con => |c| {
                 if (c.tys.len == 0) {
                     const t = (try getTypeMapped(stmt.ctx, expr.t)).Con;

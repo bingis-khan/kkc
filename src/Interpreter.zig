@@ -754,6 +754,9 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
             const ret = try self.function(instFun.fun, &args);
             return ret;
         },
+        .ConstSize => |sz| {
+            return self.intValue(@intCast(sz));
+        },
         .Float => |x| {
             return self.floatValue(x);
         },

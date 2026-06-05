@@ -3376,7 +3376,14 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
 }
 
 fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
-    if (s.len != 1) {
+    // NOTE(05.06.26): should FromChar operate on a 1-byte character or a utf8 grapheme cluster?
+    // currently we use the shitty unicode definition of a single character.
+    // is this correct doe?
+    // like, often we want AsciiChars...
+    // and because of this, we might need to throw a runtime error when we use a utf8 single character for an ascii char.
+    // also, there is little need to distinguish Strings and Characters when it's a pointer to allocated memory anyway...
+    // on the other hand, we may want to compare characters directly, like c == '병' for example.
+    if (!Common.isSingleCharacter(s)) {
         return try self.allocExpr(.{
             .e = .{
                 .Str = s,
@@ -3389,22 +3396,35 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
         const class = try self.definedClass(.FromChar);
         const cfun = class.classFuns[0];
         const ifn = try self.instantiateClassFunction(cfun, l);
+        const ptrTy = try self.ptrTo(try self.definedType(.U8));
         const funTy = try self.makeType(.{ .Fun = .{
-            .args = [_]AST.Type{try self.definedType(.ConstStr)},
+            .args = [_]AST.Type{
+                ptrTy,
+                try self.definedType(.Size),
+            },
             .ret = retTy,
         } });
         try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
 
-        const arg = try self.allocExpr(.{
+        const ptrArg = try self.allocExpr(.{
             .e = .{
                 .Str = s,
             },
-            .t = try self.definedType(.ConstStr),
+            .t = ptrTy,
             .l = l,
         });
 
-        const args = try self.arena.alloc(*AST.Expr, 1);
-        args[0] = arg;
+        const sizeArg = try self.allocExpr(.{
+            .e = .{
+                .ConstSize = s.len,
+            },
+            .t = try self.definedType(.Size),
+            .l = l,
+        });
+
+        const args = try self.arena.alloc(*AST.Expr, 2);
+        args[0] = ptrArg;
+        args[1] = sizeArg;
 
         const callee = try self.allocExpr(.{
             .e = .{
@@ -5471,6 +5491,12 @@ fn makeType(self: *Self, t: anytype) !AST.Type {
 
 fn getReturnType(self: *Self) !AST.Type {
     return self.returnType orelse try self.definedType(.I8);
+}
+
+fn ptrTo(self: *Self, ty: AST.Type) !AST.Type {
+    const ptr = try self.defined(.Ptr);
+    try self.typeContext.unify(ptr.dataInst.tyArgs[0].Type, ty, null);
+    return ptr.dataInst.t;
 }
 
 fn definedType(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {

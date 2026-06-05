@@ -82,6 +82,7 @@ fn u8-u32(x U8) -> U32: cast-on-zeroed(x)
 fn i64-f64(x I64) -> F64: @i64-f64(x)
 
 
+# used for pointer tagging.
 # rewrite this function to be clearer?
 fn get-ms-byte-of-pointer (ptr Ptr a) -> U8
 	return ((@cast(ptr) as Size) / 0x100000000000000) size-u8()

@@ -4,6 +4,16 @@ pub fn streq(s1: Str, s2: Str) bool {
     return std.mem.eql(u8, s1, s2);
 }
 
+// TODO: a character should be a grapheme cluster.
+pub fn isSingleCharacter(s: Str) bool {
+    const len = std.unicode.utf8ByteSequenceLength(s[0]) catch unreachable; // TODO: what kind of error should I throw? malformed unicode or something?
+    if (len > s.len) {
+        unreachable; // TODO: also incorrect string thing.
+    }
+
+    return len == s.len; // this means it's a single scalar value (we don't yet care about surrogate pairs)
+}
+
 pub const ModuleInfo = struct {
     source: Str, // store this, because errors can come from diffent files.
     name: Str,

@@ -1,10 +1,17 @@
 
 #[ctype 'char', bytes '1']
 Char
+
+# different synonyms to check stuff
 CChar = Char
+AsciiChar = Char
 
 inst FromChar Char
-	from-charlike (s): (@cast(s) as Ptr Char)&
+	from-charlike (ptr, num-bytes)
+		if num-bytes /= 1
+			@panic('(Cnile.Char.from-charlike) character is not valid ascii')
+		return @cast(ptr&) as Char
+		
 
 
 #[ctype 'void']
