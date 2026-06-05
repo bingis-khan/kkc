@@ -3385,10 +3385,9 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
     // and because of this, we might need to throw a runtime error when we use a utf8 single character for an ascii char.
     // also, there is little need to distinguish Strings and Characters when it's a pointer to allocated memory anyway...
     // on the other hand, we may want to compare characters directly, like c == '병' for example.
-    if (!Common.isSingleCharacter(s)) {
-        // NOTE: Copypasta, but not really. I may change one class and not the other, so I should NOT refactor this.
+    if (s.len > 0 and Common.isSingleCharacter(s)) {
         const retTy = try self.typeContext.fresh();
-        const class = try self.definedClass(.FromString);
+        const class = try self.definedClass(.FromChar);
         const cfun = class.classFuns[0];
         const ifn = try self.instantiateClassFunction(cfun, l);
         const ptrTy = try self.ptrTo(try self.definedType(.U8));
@@ -3445,8 +3444,9 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
             .l = l,
         });
     } else {
+        // NOTE: Copypasta, but not really. I may change one class and not the other, so I should NOT refactor this.
         const retTy = try self.typeContext.fresh();
-        const class = try self.definedClass(.FromChar);
+        const class = try self.definedClass(.FromString);
         const cfun = class.classFuns[0];
         const ifn = try self.instantiateClassFunction(cfun, l);
         const ptrTy = try self.ptrTo(try self.definedType(.U8));

@@ -54,8 +54,10 @@ Ptr a: a
 
 # Strings n shii
 
+# currently only used in @argv and @panic.
+# if/when we remove it from there, we will delegate it to the Cnile module.
 #[ctype 'const char*']
-ConstStr  # TODO: later, make a ptr + length struct string.
+ConstStr
 
 # define it here for use in StrView.
 # (BUT BEFORE IT WAS PRETTY COOL WE DIDN'T DEPEND ON Slice necessarily bruh, BUT NOW WE'VE MADE IT PART OF PRELUDE)
@@ -98,8 +100,6 @@ class FromChar: Char
 
 class FromString: StrView
 	from-string (ptr Ptr U8, num-bytes Size) -> _
-
-# maybe instead of ConstStr, we should have a special datatypes to signal a one-char string?
 
 
 # Equality
@@ -236,6 +236,9 @@ inst FromIntegral F64
 
 inst FromChar ConstStr
 	from-charlike (ptr, _): @cast(ptr) as ConstStr
+
+inst FromChar StrView
+	from-charlike (ptr, count): StrView { contents: Slice { ptr, count } }
 
 # FromChar Char instance in std/Char.kkc
 
