@@ -70,6 +70,7 @@ pub const PremadeClass = enum {
 
     FromIntegral,
     FromChar,
+    FromString,
     ListDecon,
     ListLike,
     Indexable,

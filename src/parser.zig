@@ -3384,11 +3384,62 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
     // also, there is little need to distinguish Strings and Characters when it's a pointer to allocated memory anyway...
     // on the other hand, we may want to compare characters directly, like c == '병' for example.
     if (!Common.isSingleCharacter(s)) {
-        return try self.allocExpr(.{
+        // NOTE: Copypasta, but not really. I may change one class and not the other, so I should NOT refactor this.
+        const retTy = try self.typeContext.fresh();
+        const class = try self.definedClass(.FromString);
+        const cfun = class.classFuns[0];
+        const ifn = try self.instantiateClassFunction(cfun, l);
+        const ptrTy = try self.ptrTo(try self.definedType(.U8));
+        const funTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{
+                ptrTy,
+                try self.definedType(.Size),
+            },
+            .ret = retTy,
+        } });
+        try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
+
+        const ptrArg = try self.allocExpr(.{
             .e = .{
                 .Str = s,
             },
-            .t = try self.definedType(.ConstStr),
+            .t = ptrTy,
+            .l = l,
+        });
+
+        const sizeArg = try self.allocExpr(.{
+            .e = .{
+                .ConstSize = s.len,
+            },
+            .t = try self.definedType(.Size),
+            .l = l,
+        });
+
+        const args = try self.arena.alloc(*AST.Expr, 2);
+        args[0] = ptrArg;
+        args[1] = sizeArg;
+
+        const callee = try self.allocExpr(.{
+            .e = .{
+                .Var = .{
+                    .v = .{ .ClassFun = .{
+                        .cfun = cfun,
+                        .ref = ifn.ref,
+                    } },
+                    .match = ifn.m,
+                    .locality = locality(self.env, cfun.class.level),
+                },
+            },
+            .t = funTy,
+            .l = l,
+        });
+
+        return try self.allocExpr(.{
+            .e = .{ .Call = .{
+                .callee = callee,
+                .args = args,
+            } },
+            .t = retTy,
             .l = l,
         });
     } else {

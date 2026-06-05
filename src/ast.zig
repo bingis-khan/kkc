@@ -900,7 +900,7 @@ pub const Expr = struct {
         Var: struct { v: VarType, match: *Match, locality: Locality }, // NOTE: Match is owned here!
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
-        Int: struct { int: i64, ref: InstFunInst }, // obv temporary.
+        Int: struct { int: i64, ref: InstFunInst }, // obv temporary. (now I remember why temporary. instead of ref here, we'll do it like Chars and Strings, where we just generate more AST )
         ConstSize: usize, // instead of bullshit with instantiating a class, we can do this.
         Float: f64,
         IfElse: struct {
@@ -914,7 +914,7 @@ pub const Expr = struct {
             refvar: Var,
             cases: []ExprCase,
         },
-        Str: Str,
+        Str: Str, // this is basically equivalent to a Ptr U8 now. Not sure if it's best. Maybe a .Str node should really represent a StrView? (the problem is in construction)
         NamedRecord: struct {
             data: *Data,
             fields: []Field,

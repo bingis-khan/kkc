@@ -96,6 +96,9 @@ Array ^count a
 class FromChar: Char
 	from-charlike (ptr Ptr U8, num-bytes Size) -> _
 
+class FromString: ConstStr  # TODO: StrView
+	from-string (ptr Ptr U8, num-bytes Size) -> _
+
 # maybe instead of ConstStr, we should have a special datatypes to signal a one-char string?
 
 
@@ -235,6 +238,12 @@ inst FromChar ConstStr
 	from-charlike (ptr, _): @cast(ptr) as ConstStr
 
 # FromChar Char instance in std/Char.kkc
+
+
+# FromString
+
+inst FromString ConstStr
+	from-string (ptr, _): @cast(ptr) as ConstStr
 
 
 inst Indexable Ptr

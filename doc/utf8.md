@@ -24,6 +24,8 @@ Other stuff:
   - [X] grapheme clusters (scalars currently, cuz idc) in FromChar? or is 1-byte thing better?
       - the thing is, we will have to throw runtime errors in case a character does not fit in one byte (in case of AsciiChar).
   - [X] FromChar should have a (ptr Ptr U8, len Size) -> _ signature (or just Slice!) (a Slice would be nice, but it's easier to use primitive types :3)
+  - [X] make a FromString method. (it will also have a guarantee, that the string is 0-termminated)
+    - but do we actually need a FromString class? tbh, maybe it's too much. We don't have a problem like Haskell.
+    - currently the type is also (ptr Ptr U8, len Size) -> _. The Str node is kinda weird now, as it can be both a Ptr U8 and ConstStr in other contexts. Maybe we should actually use StrView for this?
   - [ ] stop using ConstStr. Replace it with DynStr (or equivalent)
     - new name for DynStr: StrView.
-  - [ ] make a FromString method. (it will also have a guarantee, that the string is 0-termminated)
