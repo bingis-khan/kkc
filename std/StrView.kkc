@@ -16,6 +16,7 @@ use Alloc
 ### Iter & Str in Str.kkc
 
 # i want to do substrings differently later.
+# TODO: handle utf8
 fn substr (s StrView, from Size, to Size):
 	StrView { contents: s.contents subslice(from, to) }
 
@@ -29,6 +30,7 @@ fn from-str (s Str, al)
 	l List.add(Char.nullchar() Char.char-u8())
 	return StrView { contents: l& List.to-slice(), count: l List.size() - 1 }
 
+fn from-ascii-slice (sl Slice Cnile.AsciiChar): StrView { contents: sl Slice.cast-slice() }
 
 # special clone, where StrView is compatible with C-style ConstStr
 fn clone-0(s StrView, al Allocator) -> StrView

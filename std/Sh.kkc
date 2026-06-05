@@ -42,8 +42,13 @@ fn older-than (l, r)
 	return lmtim cmp (rmtim) == LT
 
 # depends-on (short name for faster typing)
-fn deps (d, it): it
+# currently screwed up due to default String being StrView and not ConstStr.
+#   btw, when we fix the class fun type thing and associated types, this will stop being a problem.
+# fix for now: deps -> ddeps (dynamic deps, they might be needed); old deps uses an array, so type inference can do its megicke
+fn ddeps (d, it): it
 	any(fn origin: d older-than(origin))
+
+fn deps (d, arr Array n ConstStr): d ddeps(arr)
 
 fn run' (args Slice ConstStr)
 	pid = Cnile.fork()
@@ -130,15 +135,15 @@ fn mkdir (path Str, al Allocator)
 			panic('mkdir() failed: path exists but is not a directory')
 	path StrBuilder.free-const-str(al)
 
-# fn mkdir-p (path Str, al Allocator)
-# 	sb =& StrBuilder.mk(al)
-# 	path chars() for-each(fn(c))
-# 		if c == '/'
-# 			if sb StrBuilder.count() > 0
-# 				sb& mkdir(al)
-# 		sb StrBuilder.write-char(c)
-# 	sb& mkdir(al)
-# 	StrBuilder.free(sb)
+fn mkdir-p (path Str, al Allocator)
+	sb =& StrBuilder.mk(al)
+	path chars() for-each(fn(c))
+		if c == '/'
+			if sb StrBuilder.count() > 0
+				sb& mkdir(al)
+		sb StrBuilder.write-char(c)
+	sb& mkdir(al)
+	StrBuilder.free(sb)
 
 fn cat(path Str, al Allocator) -> StrView: path
 	StrBuilder.mk-const-str(al)

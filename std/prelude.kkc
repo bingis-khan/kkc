@@ -285,27 +285,6 @@ inst Eq Ordering
 	eq (l, r): @memeq(l, r)
 
 
-inst Ord Size
-	cmp (l, r): @size-cmp(l, r)
-
-inst Addition Size
-	op-add (l, r): @size-add(l, r)
-
-inst Eq Char
-	eq (l Char, r Char)
-		if l.num-bytes /= r.num-bytes
-			return False
-
-		# TODO(utf8): normalize??????
-		i = 0
-		while i < l.num-bytes
-			if @offset-ptr(l.ptr, @cast(i) as I64)& /= @offset-ptr(r.ptr, @cast(i) as I64)&
-				return False
-			i <= i + 1
-		return True
-
-		
-
 inst Eq Maybe
 	eq (l, r)
 		case Tuple2(l, r)
@@ -320,6 +299,7 @@ inst Eq Maybe
 
 inst Eq Ptr
 	eq (Ptr(l), Ptr(r)): l == r
+
 
 inst Ord I64
 	cmp (l, r)
@@ -336,6 +316,10 @@ inst Ord U8
 
 inst Ord F64
 	cmp (l, r): @f64-cmp(l, r)
+
+inst Ord Size
+	cmp (l, r): @size-cmp(l, r)
+
 
 # ops
 
@@ -406,6 +390,9 @@ inst Division U8
 
 
 ## Size
+
+inst Addition Size
+	op-add (l, r): @size-add(l, r)
 
 inst Subtraction Size
 	op-sub (l, r): @size-sub(l, r)

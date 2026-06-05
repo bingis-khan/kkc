@@ -1,17 +1,18 @@
 
 #[ctype 'char', bytes '1']
-Char
+AsciiChar
 
 # different synonyms to check stuff
-CChar = Char
-AsciiChar = Char
+CChar = AsciiChar
 
-inst FromChar Char
+inst FromChar AsciiChar
 	from-charlike (ptr, num-bytes)
 		if num-bytes /= 1
-			@panic('(Cnile.Char.from-charlike) character is not valid ascii')
-		return @cast(ptr&) as Char
-		
+			@panic('(Cnile.AsciiChar.from-charlike) character is not valid ascii')
+		return @cast(ptr&) as AsciiChar
+
+inst Eq AsciiChar
+	eq (l _, r _): @memeq(l, r)
 
 
 #[ctype 'void']
@@ -115,7 +116,7 @@ Dirent
 	d-off I64
 	d-reclen U16
 	d-type U8
-	d-name Array 256 Char
+	d-name Array 256 AsciiChar
 
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
@@ -139,7 +140,7 @@ external
 	fprintf2 (file Ptr FILE, format ConstStr, x a, y b) -> CInt
 
 	#[cfunname 'snprintf', cstdinclude 'stdio.h']
-	snprintf1 (p Ptr Char, n CInt, format ConstStr, x a) -> CInt
+	snprintf1 (p Ptr AsciiChar, n CInt, format ConstStr, x a) -> CInt
 
 
 	#[cstdinclude 'stdlib.h']

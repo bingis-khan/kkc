@@ -37,8 +37,8 @@ use Alloc
 	Allocator
 use Slice
 	Slice
-use DynStr
-	DynStr
+use StrView
+	StrView
 use Scan
 use Iter
 	next
@@ -111,11 +111,11 @@ Tui
 	# I'll see how I approach non-screen clearing stuff like tqdm(), which would not use the Screen part and finally decide where it belongs.
 
 
-fn read-byte(timeout-ms I32) -> Maybe Cnile.Char
+fn read-byte(timeout-ms I32) -> Maybe Cnile.AsciiChar
 	pfd = Cnile.Pollfd { fd: 0, events: 1, revents: 0 }
 	if Cnile.poll(Mem.cast-ptr(&pfd), 1, timeout-ms) <= 0
 		return None
-	c = Mem.zeroed() as Cnile.Char
+	c = Mem.zeroed() as Cnile.AsciiChar
 	if Cnile.read(Cnile.stdin-fileno(), (&c) cast-ptr(), 1) <= 0
 		return None
 	return Just(c)
@@ -228,8 +228,8 @@ Key
 	Enter
 	Tab
 	Backspace
-	Char Cnile.Char
-	Ctrl Cnile.Char
+	Char Cnile.AsciiChar
+	Ctrl Cnile.AsciiChar
 	Up
 	Down
 	Left
@@ -268,7 +268,7 @@ fn btn-to-mouse-button (btn I64):
 		_: panic'('incorrect mouse button code: \(btn)')
 
 
-fn parse-ss3(c Cnile.Char) -> Maybe Key
+fn parse-ss3(c Cnile.AsciiChar) -> Maybe Key
 	if c == 'A'
 		return Just(Up)
 	if c == 'B'
@@ -292,14 +292,15 @@ fn parse-ss3(c Cnile.Char) -> Maybe Key
 	return None
 
 
-fn parse-csi(seq DynStr) -> Maybe InputEvent
-	if seq.contents.count == 0
+fn parse-csi(seq Slice Cnile.AsciiChar) -> Maybe InputEvent
+	if seq.count == 0
 		return None
 
-	last = seq.contents[seq.contents.count - 1]
+	last = seq[seq.count - 1]
 
-	if seq.contents[0] == '<' and (last == 'M' or last == 'm')
-		sc =& Scan.mk(DynStr.substr(seq, 1, seq.contents.count))
+	if seq[0] == '<' and (last == 'M' or last == 'm')
+		# TODO: don't use the UTF-8 char scanner and just do Slice Cnile.AsciiChar thing. (make a separate scan-int'()?)
+		sc =& Scan.mk-from-str(StrView.substr(StrView.from-ascii-slice(seq), 1, seq.count))
 		case Scan.scan-int(sc)
 			None
 				return None
@@ -321,7 +322,7 @@ fn parse-csi(seq DynStr) -> Maybe InputEvent
 									, pressed: last == 'M'
 									}))
 
-	if seq.contents.count == 1
+	if seq.count == 1
 		if last == 'A'
 			return Just(Key(Up))
 		if last == 'B'
@@ -337,7 +338,7 @@ fn parse-csi(seq DynStr) -> Maybe InputEvent
 		return None
 
 	if last == '~'
-		sc =& Scan.mk(seq)
+		sc =& Scan.mk(StrView.from-ascii-slice(seq))
 		case Scan.scan-int(sc)
 			None
 				return None
@@ -372,18 +373,18 @@ fn read-key() -> Maybe InputEvent
 			ch <&= x
 
 	# normalize (and just map?)
-	if Str.char-u8(ch&) == 13
+	if Char.ascii-u8(ch&) == 13
 		return Just(Key(Enter))
 	# actually, keep tabs as chars bruh.
-	# if Str.char-u8(ch&) == 9
+	# if Char.ascii-u8(ch&) == 9
 	# 	return Just(Key(Tab))
-	if Str.char-u8(ch&) == 127
+	if Char.ascii-u8(ch&) == 127
 		return Just(Key(Backspace))
-	if Str.char-u8(ch&) < 27 and Str.char-u8(ch&) /= 9  # Ctrl codes (Tab stays as Char)
-		letter = ch& Str.char-i32() i32-u32() u32-or(Convert.from-hex('60')) u32-i32() Str.i32-char()
+	if Char.ascii-u8(ch&) < 27 and Char.ascii-u8(ch&) /= 9  # Ctrl codes (Tab stays as Char)
+		letter = ch& Char.ascii-u8() Mem.u8-u32() u32-or(Convert.from-hex('60')) Mem.u32-u8() Char.u8-ascii()
 		return Just(Key(Ctrl(letter)))
-	if Str.char-u8(ch&) /= 27  # ESCAPE
-		if Str.char-u8(ch&) > 127  # IGNORE UTF-8 FOR NOW.
+	if Char.ascii-u8(ch&) /= 27  # ESCAPE
+		if Char.ascii-u8(ch&) > 127  # IGNORE UTF-8 FOR NOW.
 			return read-key()
 		else
 			return Just(Key(Char(ch&)))
@@ -396,7 +397,7 @@ fn read-key() -> Maybe InputEvent
 			ch2 <&= x
 
 	if ch2& == '['
-		seq =& Mem.zeroed() as Array 32 Cnile.Char
+		seq =& Mem.zeroed() as Array 32 Cnile.AsciiChar
 		slen = 0
 		while slen < 31
 			sc =& Mem.undefined()
@@ -407,9 +408,9 @@ fn read-key() -> Maybe InputEvent
 					sc <&= x
 			Array.set(seq, Mem.i32-size(slen), sc&)
 			slen <= slen + 1
-			if Str.char-u8(sc&) >= 64 and Str.char-u8(sc&) <= 126
+			if Char.ascii-u8(sc&) >= 64 and Char.ascii-u8(sc&) <= 126
 				break
-		return parse-csi(DynStr { contents: Array.as-slice(seq) Slice.subslice(0, Mem.i32-size(slen)) })
+		return parse-csi(Array.as-slice(seq) Slice.subslice(0, Mem.i32-size(slen)))
 
 	if ch2& == 'O'
 		sc =& Mem.undefined()

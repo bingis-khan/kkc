@@ -66,7 +66,7 @@ inst Str StrBuilder
 		Cnile.printf2('%.*s', len, ptr)
 		return
 
-	chars (s): s.chars into-iter()
+	chars (s): as-str(&s) into-iter()
 
 inst IntoIter StrBuilder
 	into-iter (self): self chars()

@@ -53,7 +53,7 @@ fn mk-from-str(s str) <= Str str:
 
 ###### CHAR STUFF
 
-fn scan-int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s, Str s
+fn scan-int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s
 	digit-chars = sc take-while(is-digit)
 
 	if digit-chars null()

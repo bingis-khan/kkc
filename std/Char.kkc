@@ -1,4 +1,4 @@
-# i'll all imported modules to not accidentally cause cycles.
+# i'll explicitly import all used modules to quickly check for cycles.
 # this module should be imported by Str.
 use Mem
 use Cnile
@@ -75,11 +75,41 @@ fn char-u8(c Char) -> U8
 		Scalar(scalar)
 			return Mem.u32-u8(scalar)
 
+
+inst Eq Char
+	eq (l Char, r Char)
+		if l.num-bytes /= r.num-bytes
+			return False
+
+		# NOTE(05.06.26): this complex function slowed down Interpret types by 40ms for reminda GEEEEG
+		case (destructure(l), destructure(r))
+			(Ref(lc), Ref(rc))
+				# TODO(utf8): normalize??????
+				i = 0
+				while i < lc.num-bytes
+					if @offset-ptr(lc.ptr, @cast(i))& /= @offset-ptr(rc.ptr, @cast(i))&
+						return False
+					i <= i + 1
+				return True
+
+			(Scalar(lc), Scalar(rc))
+				return lc == rc
+
+			(Scalar(lc), Ref(rc))
+				# TEMP!
+				return lc Mem.u32-u8() == rc.ptr&
+
+			(Ref(lc), Scalar(rc))
+				# TEMP!
+				return rc Mem.u32-u8() == lc.ptr&
+
+
 inst Ord Char
 	cmp (l _, r _)
 		if l.num-bytes /= 1 or r.num-bytes /= 1
 			@panic('(TODO) comparison of non-ascii characters not implemented')  # I think it's specified in the unicode spec?
 		return cmp(char-u8(l), char-u8(r))
+
 
 ####
 
@@ -106,3 +136,11 @@ fn fprintf-char (file Ptr FILE, c Char) -> I32
 			if scalar > 127
 				@panic('(TODO) scalar too large BRUH')
 			return Cnile.fprintf1(file, '%c', scalar Mem.u32-u8())
+
+
+####
+
+# Should this even be here? It related to the AsciiChar.
+
+fn ascii-u8(c Cnile.AsciiChar): @cast(c) as U8
+fn u8-ascii(b U8): @cast(b) as Cnile.AsciiChar

@@ -441,18 +441,18 @@ inst IntoIter PadZeroes
 	into-iter(self): self
 
 inst Iter PadZeroes
-	next (self Ptr _) -> Maybe Cnile.Char
+	next (self Ptr _) -> Maybe Char
 		if self&.len <= 0
 			return None
 
 		trim-down = 10 Math.pow (self&.len Mem.u8-i32() - 1)
 		upper = self&.x / trim-down
 		upper-mask = (upper / 10) * 10
-		digit = upper - upper-mask
+		digit = Mem.i32-u8(upper - upper-mask)
 
 		self <&.len= self&.len - 1
 
-		digit-char = Mem.cast(digit + 48)
+		digit-char = Char.from-u8(digit + 48)
 		return Just(digit-char)
 
 inst Str PadZeroes
