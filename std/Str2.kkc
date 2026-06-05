@@ -106,8 +106,6 @@ fn allocate-str (s, al) -> ConstStr
 	str Slice.set(len, 0)
 	return str.ptr Mem.cast()
 
-fn newline() -> Char: '\n'
-
 fn is-whitespace (c Char):
 	c == ' ' or c == '\n' or c == '\t'
 
@@ -149,7 +147,7 @@ inst Iter LineIter
 
 		# iterator is left after last encountered newline
 		i = self&.last
-		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= newline() Char.char-u8()
+		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= '\n' Char.char-u8()
 			i <= i + 1
 
 		line = self&.og substr(self&.last, i)
