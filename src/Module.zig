@@ -83,6 +83,10 @@ pub const BasePath = struct {
     isSTD: bool,
     path: Path,
 
+    pub fn moduleName(self: *const @This()) Str {
+        return self.path[self.path.len - 1];
+    }
+
     pub const Ctx = struct {
         pub fn eql(ctx: @This(), a: BasePath, b: BasePath) bool {
             _ = ctx;

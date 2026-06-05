@@ -29,9 +29,36 @@ class Str
 	chars (self _) -> iter
 
 
-##### Charsheet #####
+##### StrView #####
 
-# fn char-size (): (Mem.get-typesize() as TypeSize U8).size Mem.size-i32()
+StrViewIter
+	ds StrView
+	i Size
+
+inst IntoIter StrView
+	into-iter (self): StrViewIter { ds: self, i: 0 }
+
+inst IntoIter StrViewIter
+	into-iter (self): self
+
+inst Iter StrViewIter
+	next (self) -> Maybe Char
+		if self&.i >= self&.ds.contents.count
+			return None
+
+		char-ptr = Mem.cast(self&.ds.contents.ptr) Mem.offset-ptr(Mem.size-i64(self&.i)) as Ptr U8
+		char = Char.scan-from-mem(char-ptr)
+
+		self <&.i= self&.i + char.num-bytes
+		return Just(char)
+
+
+inst Str StrView
+	print-str (self StrView) -> Unit
+		Cnile.printf2('%.*s', self.contents.count Mem.size-i32(), self.contents.ptr)
+
+	chars (self StrView): self into-iter()
+
 
 ##### ConstStr ######
 

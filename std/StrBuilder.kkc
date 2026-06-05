@@ -12,8 +12,8 @@ use Alloc
 	Allocator
 use Slice
 	subslice
-use DynStr
-	DynStr
+use StrView
+	StrView
 use Mem
 use Slice
 	Slice
@@ -50,7 +50,7 @@ fn free(sb Ptr (StrBuilder Allocator))
 
 # DOES NOT REALLOCATE!
 fn as-str (builder Ptr (StrBuilder alloc)):
-	DynStr { contents: builder&.chars.elements subslice(0, builder&.chars.count) Mem.cast() }
+	StrView { contents: builder&.chars.elements subslice(0, builder&.chars.count) Mem.cast() }
 
 fn as-char-slice (builder Ptr (StrBuilder alloc)):
 	builder&.chars List.to-slice()
@@ -78,7 +78,7 @@ fn mk-dyn-str(s, al)
 	sb write-char(Char.nullchar())
 	dynstr =  sb as-str()  # freeing dynstr frees all memory of this sb
 	# hide nullchar
-	return DynStr { contents: Slice { ptr: dynstr.contents.ptr, count: dynstr.contents.count - 1 } }
+	return StrView { contents: Slice { ptr: dynstr.contents.ptr, count: dynstr.contents.count - 1 } }
 
 fn mk-const-str(s, al):
 	s mk-dyn-str(al).contents.ptr Mem.cast() as ConstStr

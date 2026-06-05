@@ -639,13 +639,15 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
         else if (self.check(.USE)) {
             var modpath = std.ArrayList(Str).init(self.arena);
             const firstMod = try self.expect(.TYPE);
+            var l = self.loc(firstMod);
             try modpath.append(firstMod.literal(self.lexer.source));
             while (self.check(.DOT)) {
                 const mod = try self.expect(.TYPE);
                 try modpath.append(mod.literal(self.lexer.source));
+                l = l.between(self.loc(mod));
             }
 
-            const mmodule = try self.loadModuleFromPath(modpath.items);
+            const mmodule = try self.loadModuleFromPath(modpath.items, l);
 
             // IMPORT LIST YO.
             if (self.check(.INDENT)) {
@@ -3137,7 +3139,7 @@ fn findQualifiedDataOrClass(self: *Self, modpath: Module.Path, name: Str, dloc: 
             return null;
         }
     } else {
-        if (try self.loadModuleFromPath(modpath)) |mod| {
+        if (try self.loadModuleFromPath(modpath, dloc)) |mod| {
             if (mod.lookupData(name)) |data| {
                 return data;
             } else {
@@ -3984,12 +3986,12 @@ const Type = struct {
 };
 
 // resolver zone
-fn loadModuleFromPath(self: *Self, path: Module.Path) !?Module {
+fn loadModuleFromPath(self: *Self, path: Module.Path, l: Loc) !?Module {
     if (self.importedModules.get(path)) |mmod| {
         return mmod;
     }
 
-    const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } }, .{});
+    const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } }, l, .{});
     try self.importedModules.put(path, mmod);
 
     // automatically add instances (like muh haskells)
@@ -4065,7 +4067,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
             lvl -= 1;
         }
     } else {
-        if (try self.loadModuleFromPath(modpath)) |mod| {
+        if (try self.loadModuleFromPath(modpath, self.loc(varTok))) |mod| { // TODO(errors): incorrect location. we have to pipe the module location through to here.
             if (mod.lookupVar(varName)) |vorf| {
                 return .{
                     .vorf = vorf,
@@ -4950,7 +4952,7 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
             return .{ .con = &data.stuff.cons[0], .t = try self.typeContext.fresh(), .tys = &.{} };
         }
     } else b: {
-        if (try self.loadModuleFromPath(modpath)) |mod| {
+        if (try self.loadModuleFromPath(modpath, self.loc(conTok))) |mod| { // TODO(errors): incorrect location, we need to pipe the location of modPath here.
             if (mod.lookupCon(conName)) |con| {
                 break :b con;
             } else {

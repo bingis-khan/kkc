@@ -125,6 +125,13 @@ pub const Error = union(enum) {
 
     UnimportedModule: struct {},
 
+    ModuleDoesNotExist: struct {
+        modulePath: Module.Path,
+        localSearchPath: Str,
+        stdSearchPath: ?Str,
+        l: ?Loc, // null value reserved for default exports.
+    },
+
     ModuleDoesNotExportThing: struct {
         moduleName: Module.Path,
         thing: Str,
@@ -355,6 +362,16 @@ pub const Error = union(enum) {
             .CircularModuleReference => p("circular module reference", .{}),
 
             .UnimportedModule => p("unimported module", .{}),
+
+            .ModuleDoesNotExist => |e| {
+                // TEMP: e.l can be null when prelude/converged is missing.
+                err.atLocation(e.l.?, .{ .label = .{
+                    "Could not find module '",
+                    e.modulePath[e.modulePath.len - 1],
+                    "'.",
+                } });
+            },
+
             .ModuleDoesNotExportThing => |e| {
                 err.atLocation(e.l, .{ .label = .{ "Module '", e.moduleName[e.moduleName.len - 1], "' does not export '", e.thing, "'" } });
             },

@@ -5,11 +5,14 @@ const ast = @import("ast.zig");
 const Str = common.Str;
 const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig");
-const Errors = @import("error.zig").Errors;
+const ErrorModule = @import("error.zig");
+const Error = ErrorModule.Error;
+const Errors = ErrorModule.Errors;
 const Prelude = @import("Prelude.zig");
 const TypeContext = @import("TypeContext.zig");
 const UniqueGen = @import("UniqueGen.zig");
 const Args = @import("Args.zig");
+const Loc = common.Location;
 
 const Self = @This();
 pub const ModuleLookup = std.HashMap(Module.BasePath, ?Module, Module.BasePath.Ctx, std.hash_map.default_max_load_percentage);
@@ -86,6 +89,7 @@ pub fn loadPrelude(self: *Self) !Prelude {
             .isSTD = true,
             .path = &preludePath,
         } },
+        null,
         .{ .printAST = self.opts.printAST, .printTokens = self.opts.printTokens },
     )) orelse unreachable;
 
@@ -105,6 +109,7 @@ pub fn loadConverged(self: *Self) !Module {
             .isSTD = true,
             .path = &convergedPath,
         } },
+        null,
         .{ .printAST = self.opts.printAST, .printTokens = self.opts.printTokens },
     );
     self.stdExports = module.?.exports;
@@ -114,19 +119,25 @@ pub fn loadConverged(self: *Self) !Module {
 pub fn initialModule(self: *Self, filename: *const Str) !Module {
     return (try self.loadModule(
         .{ .ByFilename = .{ .isSTD = false, .path = filename } },
+        null,
         .{ .printAST = self.opts.printRootAST or self.opts.printAST, .printTokens = self.opts.printRootTokens or self.opts.printTokens },
     )).?;
 }
 
 // NOTE: this function reports errors with modules that were not found.
 // OMG I HATE THIS BRUH. IT BECAME SO COMPLICATED. FOR SOME REASON I CANT THINK ABOUT THIS STUFF??????? WTF??????
-pub fn loadModule(self: *Self, pathtype: union(enum) {
-    ByModulePath: struct { base: Module.BasePath, path: Module.Path },
-    ByFilename: struct { isSTD: bool, path: *const Str },
-}, opts: struct {
-    printTokens: ?bool = null,
-    printAST: ?bool = null,
-}) !?Module {
+pub fn loadModule(
+    self: *Self,
+    pathtype: union(enum) {
+        ByModulePath: struct { base: Module.BasePath, path: Module.Path },
+        ByFilename: struct { isSTD: bool, path: *const Str },
+    },
+    loc: ?Loc,
+    opts: struct { // give default module info
+        printTokens: ?bool = null,
+        printAST: ?bool = null,
+    },
+) !?Module {
     var fullPath: Module.BasePath = switch (pathtype) {
         .ByModulePath => |modpath| bb: {
             const fullPath: Module.BasePath = b: {
@@ -143,13 +154,7 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
 
             if (self.modules.get(fullPath)) |module| {
                 if (module == null) {
-                    try self.errors.append(.{
-                        .err = .{ .CircularModuleReference = .{} },
-                        .module = .{
-                            .name = "<TODO>",
-                            .source = "<TODO>",
-                        },
-                    });
+                    try self.reportError(.{ .CircularModuleReference = .{} }, loc);
                     return null;
                 }
 
@@ -166,30 +171,43 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
     };
 
     const source = switch (pathtype) {
-        .ByModulePath => self.readSource(try self.modulePathToFilepath(fullPath)) catch |err| switch (err) {
-            error.FileNotFound => b: {
-                if (fullPath.isSTD) return error.TempError;
-                fullPath.isSTD = true;
-
-                if (self.modules.get(fullPath)) |module| {
-                    if (module == null) {
-                        try self.errors.append(.{
-                            .err = .{ .CircularModuleReference = .{} },
-                            .module = .{
-                                .name = "<TODO>",
-                                .source = "<TODO>",
-                            },
-                        });
+        .ByModulePath => src: {
+            const localSourcePath = try self.modulePathToFilepath(fullPath);
+            break :src self.readSource(localSourcePath) catch |err| switch (err) {
+                error.FileNotFound => b: {
+                    if (fullPath.isSTD) {
+                        try self.reportError(.{ .ModuleDoesNotExist = .{
+                            .modulePath = fullPath.path,
+                            .localSearchPath = localSourcePath,
+                            .stdSearchPath = null,
+                            .l = loc,
+                        } }, loc);
                         return null;
                     }
+                    fullPath.isSTD = true;
 
-                    return module.?;
-                }
+                    if (self.modules.get(fullPath)) |module| {
+                        if (module == null) {
+                            try self.reportError(.{ .CircularModuleReference = .{} }, loc);
+                            return null;
+                        }
 
-                const stdSource = self.readSource(try self.modulePathToFilepath(fullPath)) catch return error.TempError;
-                break :b stdSource;
-            },
-            else => return error.TempError,
+                        return module.?;
+                    }
+                    const stdSourcePath = try self.modulePathToFilepath(fullPath);
+                    const stdSource = self.readSource(stdSourcePath) catch {
+                        try self.reportError(.{ .ModuleDoesNotExist = .{
+                            .modulePath = fullPath.path,
+                            .localSearchPath = localSourcePath,
+                            .stdSearchPath = stdSourcePath,
+                            .l = loc,
+                        } }, loc);
+                        return null;
+                    };
+                    break :b stdSource;
+                },
+                else => return error.TempError,
+            };
         },
 
         .ByFilename => |fullpath| b: {
@@ -204,7 +222,16 @@ pub fn loadModule(self: *Self, pathtype: union(enum) {
             }
             try filepath.appendSlice(fullpath.path.*);
             // std.debug.print("{s}\n", .{filepath.items});
-            break :b self.readSource(filepath.items) catch return error.TempError;
+            break :b self.readSource(filepath.items) catch {
+                // could not find module bruh.
+                try self.reportError(.{ .ModuleDoesNotExist = .{
+                    .modulePath = fullPath.path,
+                    .localSearchPath = filepath.items,
+                    .stdSearchPath = null,
+                    .l = loc,
+                } }, loc);
+                return null;
+            };
         },
     };
 
@@ -321,4 +348,11 @@ pub fn cloneWithAllocator(self: *const Self, al: std.mem.Allocator) !Self {
         .roots = try self.roots.clone(),
         .signalFunTy = undefined, // TODO: how do we transfer types between type contexts????? (hard with pointers (ast.TyRefPointer), easy with offsets (!ast.TyRefPointer))
     };
+}
+
+fn reportError(self: *const Self, err: Error, mloc: ?Loc) !void {
+    try self.errors.append(.{
+        .err = err,
+        .module = if (mloc) |loc| loc.module else common.ModuleInfo.fromFilename(self.rootPath),
+    });
 }

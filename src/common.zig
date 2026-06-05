@@ -17,6 +17,10 @@ pub fn isSingleCharacter(s: Str) bool {
 pub const ModuleInfo = struct {
     source: Str, // store this, because errors can come from diffent files.
     name: Str,
+
+    pub fn fromFilename(filename: Str) @This() {
+        return .{ .source = filename, .name = filename };
+    }
 };
 
 pub const Location = struct {

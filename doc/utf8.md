@@ -27,5 +27,5 @@ Other stuff:
   - [X] make a FromString method. (it will also have a guarantee, that the string is 0-termminated)
     - but do we actually need a FromString class? tbh, maybe it's too much. We don't have a problem like Haskell.
     - currently the type is also (ptr Ptr U8, len Size) -> _. The Str node is kinda weird now, as it can be both a Ptr U8 and ConstStr in other contexts. Maybe we should actually use StrView for this?
-  - [ ] stop using ConstStr. Replace it with DynStr (or equivalent)
+  - [X] stop using ConstStr. Replace it with DynStr (or equivalent)
     - new name for DynStr: StrView.

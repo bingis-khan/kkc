@@ -26,8 +26,8 @@ use Alloc
 use Slice
 	Slice
 use Mem
-use DynStr
-	DynStr
+use StrView
+	StrView
 	substr
 use Math
 	between
@@ -131,10 +131,10 @@ fn is-alphanumeric(c Char):
 #### Instances
 
 LineIter
-	og DynStr
+	og StrView
 	last Size
 
-fn lines (s DynStr): LineIter { og: s, last: 0 }
+fn lines (s StrView): LineIter { og: s, last: 0 }
 
 inst IntoIter LineIter
 	into-iter (self LineIter): self
@@ -142,7 +142,7 @@ inst IntoIter LineIter
 
 
 inst Iter LineIter
-	next (self Ptr LineIter) -> Maybe DynStr
+	next (self Ptr LineIter) -> Maybe StrView
 		# should consume the last trailing newline
 		if self&.last >= self&.og.contents.count or self&.og.contents[self&.last] == Char.nullchar() Char.char-u8()
 			return None

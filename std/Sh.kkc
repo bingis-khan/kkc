@@ -25,8 +25,8 @@ use Str
 	chars
 use Misc
 	with
-use DynStr
-	DynStr
+use StrView
+	StrView
 use Bits
 	u32-and
 
@@ -140,7 +140,7 @@ fn mkdir (path Str, al Allocator)
 # 	sb& mkdir(al)
 # 	StrBuilder.free(sb)
 
-fn cat(path Str, al Allocator) -> DynStr: path
+fn cat(path Str, al Allocator) -> StrView: path
 	StrBuilder.mk-const-str(al)
 	with(fn(path): path StrBuilder.free-const-str(al), fn(path): path File.read-contents(al))
 

@@ -6,8 +6,7 @@ use Slice
 	Slice
 use Str
 	chars
-use DynStr
-	DynStr
+use StrView
 use Error
 	or-fail
 	unreachable
@@ -32,7 +31,7 @@ fn try-read-contents (filename, al)
 
 	Cnile.fclose(file)
 
-	str = DynStr { contents: file-buf }
+	str = StrView { contents: file-buf }
 	return Just(str)
 
 

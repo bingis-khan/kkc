@@ -1,0 +1,44 @@
+use Iter
+	IntoIter
+	into-iter
+	map
+use Cnile
+use Slice
+	Slice
+	subslice
+use Str
+	Str
+	print-str
+use Alloc
+	Allocator
+
+
+### Iter & Str in Str.kkc
+
+# i want to do substrings differently later.
+fn substr (s StrView, from Size, to Size):
+	StrView { contents: s.contents subslice(from, to) }
+
+fn from-const-str (s ConstStr)
+	len = Str.const-str-len(s)
+	return StrView { contents: Slice { ptr: s Mem.cast(), count: len } }
+
+fn from-str (s Str, al)
+	l =& List.mk(al)
+	l List.add-all(s Str.chars() map(Char.char-u8))
+	l List.add(Char.nullchar() Char.char-u8())
+	return StrView { contents: l& List.to-slice(), count: l List.size() - 1 }
+
+
+# special clone, where StrView is compatible with C-style ConstStr
+fn clone-0(s StrView, al Allocator) -> StrView
+	cnt = s.contents.count
+	nus = al Alloc.allocate(cnt + 1)
+	s.contents Slice.copy-to(nus)
+	nus Slice.set(cnt, '\0' Char.char-u8())
+	return StrView { contents: Slice { ptr: nus.ptr, count: cnt } }
+
+fn clone(s StrView, al Allocator): clone-0(s, al)
+
+fn free (s StrView, al Allocator)
+	al Alloc.free({ ptr: s.contents.ptr, count: 0 })

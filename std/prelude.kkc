@@ -96,7 +96,7 @@ Array ^count a
 class FromChar: Char
 	from-charlike (ptr Ptr U8, num-bytes Size) -> _
 
-class FromString: ConstStr  # TODO: StrView
+class FromString: StrView
 	from-string (ptr Ptr U8, num-bytes Size) -> _
 
 # maybe instead of ConstStr, we should have a special datatypes to signal a one-char string?
@@ -245,7 +245,11 @@ inst FromChar ConstStr
 inst FromString ConstStr
 	from-string (ptr, _): @cast(ptr) as ConstStr
 
+inst FromString StrView
+	from-string (ptr, count): StrView { contents: Slice { ptr, count } }
 
+
+# for all lists and stuff. instead of offsetting a pointer, it calls the inner function.
 inst Indexable Ptr
 	elem-get (Ptr(self), k): self elem-get(k)
 
