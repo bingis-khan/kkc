@@ -290,7 +290,7 @@ fn runAndReadStdout(aa: std.mem.Allocator, modules: *const Modules) !Run {
         try std.posix.dup2(fd[1], std.io.getStdOut().handle);
         std.posix.close(fd[1]);
 
-        const ret = try Interpreter.run(modules.getAST(), modules.prelude.?, modules.typeContext, &.{}, aa);
+        const ret = try Interpreter.run(modules.getAST(), modules.prelude.?, modules.typeContext, &.{}, aa, aa);
         std.process.exit(@intCast(ret));
     }
 

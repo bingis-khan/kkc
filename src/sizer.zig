@@ -21,6 +21,12 @@ pub const Size = struct {
         return off;
     }
 
+    // i think this is correct??? like, size already includes padding I guess?
+    // i'll have to test it.
+    pub fn times(og: @This(), n: usize) @This() {
+        return Size{ .size = og.size * n, .alignment = og.alignment };
+    }
+
     // finish making the struct to get its final size.
     pub fn finish(self: *const @This()) @This() {
         var s: @This() = self.*;
@@ -51,6 +57,21 @@ pub const Size = struct {
         .size = @sizeOf(*anyopaque),
         .alignment = @alignOf(*anyopaque),
     };
+
+    pub fn ofType(comptime T: type) @This() {
+        comptime if (T == comptime_int) {
+            @panic("passed in a comptime int to ofType!! prolly not what you want");
+        };
+
+        return .{
+            .size = @sizeOf(T),
+            .alignment = @alignOf(T),
+        };
+    }
+
+    pub fn of(comptime T: type) @This() {
+        return ofType(T);
+    }
 };
 
 fn calculatePadding(cur: usize, alignment: usize) usize {
@@ -71,7 +92,12 @@ pub const TypeSize = struct {
     const Self = @This();
 
     pub fn init(tyc: *const TypeContext, prelude: *const Prelude, tymap: *const TypeMap, al: std.mem.Allocator) Self {
-        return .{ .tyc = tyc, .prelude = prelude, .tymap = tymap, .al = al };
+        return .{
+            .tyc = tyc,
+            .prelude = prelude,
+            .tymap = tymap,
+            .al = al,
+        };
     }
 
     // calculates total size of the record (including tag)

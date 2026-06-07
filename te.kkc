@@ -1,1 +1,2 @@
-'빨갱이 병신' StrView.substr(2, 8) println()
+x = 420
+println('asd\(x) kjasdja jsjdsa \(x)')

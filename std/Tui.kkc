@@ -478,7 +478,7 @@ fn draw(tui Ptr Tui, cond, body () -> ())
 
 
 Cell
-	c Char
+	c Cnile.AsciiChar
 	fg Color
 	bg Color
 	# todo: transparent?
@@ -641,6 +641,7 @@ fn fill-default(screen Ptr (Screen Allocator))
 			cell <&.bg= screen&.default-bg
 
 # non-wrapping drawing thing.
+# TEMP: accepts char, converts to ascii
 fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	w = screen&.tui&.width u32-i32()
 	if x >= w or y >= screen&.tui&.height u32-i32() or x < 0 or y < 0
@@ -649,7 +650,7 @@ fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	fg = screen&.default-fg
 	bg = screen&.default-bg
 	c = c
-	screen&.current Slice.set(i, Cell { c, fg, bg })
+	screen&.current Slice.set(i, Cell { c: c Char.char-u8() Char.u8-ascii(), fg, bg })
 
 fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
 	w = screen&.tui&.width u32-i32()

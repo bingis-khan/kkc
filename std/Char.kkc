@@ -144,3 +144,4 @@ fn fprintf-char (file Ptr FILE, c Char) -> I32
 
 fn ascii-u8(c Cnile.AsciiChar): @cast(c) as U8
 fn u8-ascii(b U8): @cast(b) as Cnile.AsciiChar
+fn ascii-char(c Cnile.AsciiChar): c ascii-u8() from-u8()

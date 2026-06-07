@@ -152,7 +152,7 @@ pub fn main() !void {
     } else {
         if (!opts.dontRun) {
             const interpretStartTime = try std.time.Instant.now();
-            const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa);
+            const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa, al);
             const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
 
             std.debug.print("=== return value: {} ===\n", .{ret});

@@ -29,6 +29,14 @@ class Str
 	chars (self _) -> iter
 
 
+####### ASCII ######
+
+inst Str Cnile.AsciiChar
+	print-str (self _)
+		Cnile.printf1('%c', self)
+	chars (self _): Iter.single(self Char.ascii-char())
+
+
 ##### StrView #####
 
 StrViewIter
@@ -106,6 +114,7 @@ inst Indexable ConstStr
 
 # DEFAULT INSTANCE FUNCTION (uses Char's print-str)
 fn default-print-str (s Str): s chars() for-each(print-str)
+
 
 
 ####### Int #######

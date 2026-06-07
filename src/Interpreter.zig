@@ -13,15 +13,24 @@ const stdlib = @cImport(@cInclude("stdlib.h"));
 const TypeMap = @import("TypeMap.zig").TypeMap;
 const posix = std.posix;
 const sizer = @import("sizer.zig");
+const Size = sizer.Size;
+
+// this turns on non-deallocating mode. it makes it 5x faster (crying emoji ahh)
+// why so slou
+const ArenaAlloc = false;
 
 const Self = @This();
 var sigself: ?*Self = null;
 
-// NOTE: I'll try to mark areas where something is SLOW due to laziness with `SLOW`.
+// IMPORTANT: check all nocheckins before checking in! Im planning on solving the allocator issue after I sort out the Value problem.
 
+alBase: std.mem.Allocator,
 arena: std.mem.Allocator,
-returnValue: ValueMeta = undefined, // default value is returned at the end of run()
-scope: *Scope,
+
+scope: *Scope, // scope allocator is here.
+alCurStack: ?std.mem.Allocator, // not very good miau. null if not currently executing an expression.
+
+returnValue: Value = undefined, // default value is returned at the end of run()
 tymap: *const TypeMap,
 funLoader: DyLibLoader,
 typeContext: *TypeContext,
@@ -29,15 +38,20 @@ prelude: Prelude,
 progArgs: []Args.Arg,
 
 signalHandlers: SignalHandlers,
+constStrings: ConstStrings,
 
 const SignalHandlers = std.AutoArrayHashMap(i32, struct {
-    funval: ValueMeta,
+    funval: Value,
     funty: ast.Type,
 });
 
+const ConstStrings = std.AutoArrayHashMap([*]const u8, [:0]u8);
+
 // right now a very simple interpreter where we don't free.
-pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs: []Args.Arg, al: std.mem.Allocator) !i64 {
-    var scope = Scope.init(null, al);
+pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs: []Args.Arg, arena: std.mem.Allocator, alBase: std.mem.Allocator) !i64 {
+    const base = if (!ArenaAlloc) alBase else arena;
+    var scope = Scope.init(null, base);
+    defer scope.deinit();
     const scheme = ast.Scheme.empty();
     const tymap = TypeMap{
         .prev = null,
@@ -46,20 +60,26 @@ pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs
     };
     var self: Self = .{
         .scope = &scope,
+        .arena = arena,
+        .alBase = base,
+
+        .alCurStack = if (!ArenaAlloc) null else arena,
+
         .typeContext = typeContext,
         .tymap = &tymap,
-        .arena = al,
-        .funLoader = DyLibLoader.init(al),
+
+        .funLoader = DyLibLoader.init(arena),
         .prelude = prelude,
         .progArgs = progArgs,
-        .signalHandlers = SignalHandlers.init(al),
+        .signalHandlers = SignalHandlers.init(arena),
+        .constStrings = ConstStrings.init(arena),
     };
     sigself = &self;
 
     for (modules) |module| {
         self.stmts(module.toplevel) catch |err| switch (err) {
             error.Return => {
-                return self.returnValue.ref.int;
+                return self.returnValue.val.Owned.int;
             },
             else => return err,
         };
@@ -74,6 +94,10 @@ fn stmts(self: *Self, ss: []*ast.Stmt) !void {
 }
 
 fn stmt(self: *Self, s: *ast.Stmt) Err!void {
+    var defaultStmtExprStack: ExprStack = undefined;
+    self.beginStack(&defaultStmtExprStack);
+    defer self.restoreStack(&defaultStmtExprStack);
+
     switch (s.*) {
         .Pass => |mlbl| {
             if (mlbl) |lbl| {
@@ -86,7 +110,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         .Return => |e| {
             const v = try self.expr(e);
             // BUG(return-decon-ref) remember to copy the value in case it's a pure reference.
-            const cv = try self.copyValueMeta(v, e.t);
+            const cv = try v.copyTo(self.scope.allocator());
             self.returnValue = cv;
             return error.Return;
         },
@@ -95,25 +119,25 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         },
         .VarDec => |vd| {
             const v = try self.expr(vd.varValue);
-            try self.putVar(vd.varDef, v, vd.varValue.t);
+            try self.putVar(vd.varDef, v);
         },
         .VarMut => |vm| {
-            const exprVal = try self.expr(vm.varValue);
-            const sz = self.sizeOf(vm.varValue.t);
+            const exprVal = try (try self.expr(vm.varValue)).copyTo(self.alCurStack.?);
+            const sz = exprVal.size;
 
             const v = self.getVar(vm.varRef.v);
             if (vm.accessors.len == 0) {
-                @memcpy(v.ref.slice(sz.size), exprVal.ref.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                exprVal.copyToLValue(&v);
             } else {
                 const firstAccess = vm.accessors[0];
                 var varVal = switch (firstAccess.acc) {
-                    .Deref => v.ref.ptr,
-                    .Access => |mem| self.getFieldFromType(v.ref, firstAccess.tBefore, mem),
+                    .Deref => v.get().ptr,
+                    .Access => |mem| self.getFieldFromType(v.getRefFromLValue(), firstAccess.tBefore, mem),
                 };
                 for (vm.accessors[1..]) |acc| {
                     switch (acc.acc) {
                         .Deref => {
-                            varVal = varVal.ptr;
+                            varVal = varVal.smol.ptr;
                         },
                         .Access => |field| {
                             varVal = self.getFieldFromType(varVal, acc.tBefore, field);
@@ -121,9 +145,8 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                     }
                 }
 
-                // incorrect write!
-                // varVal.header = exprVal.header;
-                @memcpy(varVal.slice(sz.size), exprVal.ref.slice(sz.size)); // make sure to memcpy, because we want the content of REFERENCES to change also.
+                const nuVal = Value.initLValueFromRef(varVal, sz);
+                exprVal.copyToLValue(&nuVal);
             }
         },
         .Function => |fun| {
@@ -152,6 +175,10 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         },
         .While => |whl| {
             loop: while (true) {
+                var es: ExprStack = undefined;
+                self.beginStack(&es);
+                defer self.restoreStack(&es);
+
                 const cond = try self.expr(whl.cond);
                 if (!isTrue(cond)) break;
 
@@ -166,30 +193,32 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
         .For => |forl| {
             const beforeIntoIter = try self.expr(forl.iter);
             const intoIterFun = try self.getAndUnboxInstFunRef(forl.intoIterFun);
-            var intoIterArgs = [_]ValueMeta{beforeIntoIter};
-            const iterator = try self.function(intoIterFun.fun, &intoIterArgs);
+            var intoIterArgs = [_]Value{beforeIntoIter};
+            var iterator = try self.function(intoIterFun.get().fun, &intoIterArgs);
 
             // copied from .Ref case.
-            // TODO: make a function mkPtr() or something.
-            const itptr = try self.val(.{
-                .ptr = iterator.ref,
-            }, @sizeOf(*anyopaque));
+            const itptr = Value.ptrToOwned(&iterator);
             const nextFun = try self.getAndUnboxInstFunRef(forl.nextFun);
             loop: while (true) {
-                var nextArgs = [_]ValueMeta{itptr};
-                const nextVal = try self.function(nextFun.fun, &nextArgs);
+                var es: ExprStack = undefined;
+                self.beginStack(&es);
+                defer self.restoreStack(&es);
 
-                // HACK HACK HACK
-                if (nextVal.ref.adt.tag == 0) {
+                var nextArgs = [_]Value{itptr};
+                var nextVal = try self.function(nextFun.get().fun, &nextArgs);
+
+                // HACK HACK HACK: Check if null.
+                if (nextVal.isMaybeNone()) {
                     break;
                 }
 
-                var off: usize = @sizeOf(RawValue.Tag);
+                // TODO(07.06.26): use the sizer API
+                var off: usize = sizer.Size.tag.size;
                 const sz = self.sizeOf(forl.decon.d.t);
                 off += calculatePadding(off, sz.alignment);
-                const justValue = ValueMeta{ .ref = nextVal.ref.offset(off) };
+                const justValueRef = nextVal.getRefToMemory().offset(off);
 
-                if (try self.tryDeconstruct(forl.decon.d, justValue.ref)) {
+                if (try self.tryDeconstruct(forl.decon.d, justValueRef)) {
                     self.stmts(forl.body) catch |err| switch (err) {
                         error.Break => {
                             break :loop;
@@ -211,10 +240,10 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             }
         },
         .Switch => |sw| {
-            const switchOn = try self.expr(sw.switchOn);
+            var switchOn = try self.expr(sw.switchOn);
 
             for (sw.cases) |case| {
-                if (try self.tryDeconstruct(case.decon, switchOn.ref)) {
+                if (try self.tryDeconstruct(case.decon, switchOn.getRefToMemory())) {
                     try self.stmts(case.body);
                     break;
                 }
@@ -232,6 +261,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
     }
 }
 
+// TODO(07.06.26): define proper allocation
 fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapshot {
     const maxGeneralClassFuns = if (scheme) |sch| sch.associations.len else 0;
     var varSnapshot = try std.ArrayList(EnvSnapshot.VarSnapshot).initCapacity(self.arena, env.insts.items.len + maxGeneralClassFuns);
@@ -242,18 +272,20 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapsho
                 break :b .{
                     .Snap = .{
                         .v = tnumvar,
-                        .vv = self.getVar(tnumvar).ref,
+                        .vv = try self.getVar(tnumvar).copyTo(self.arena),
                     },
                 };
             },
             .Var => |v| .{ .Snap = .{
                 .v = v.v,
-                .vv = try self.copyValue(self.getVar(v.v).ref, ei.t),
+                .vv = try self.getVar(v.v).copyTo(self.arena),
             } },
-            .Fun => |envfun| .{ .Snap = .{
-                .v = envfun.name,
-                .vv = (try self.initFunction(envfun, ei.m)).ref,
-            } },
+            .Fun => |envfun| .{
+                .Snap = .{
+                    .v = envfun.name,
+                    .vv = try Value.copyTo(&try self.initFunction(envfun, ei.m), self.arena), // NOTE(07.06.26): the `copyTo` is a noop for now, since the function returns a pointer (Smol). That's on purpose - it's a sign to correctly handle it in the future.
+                },
+            },
             .ClassFun => |cfr| b: {
                 const instfun = switch (cfr.ref.*.?) {
                     .InstFun => |instfun| instfun,
@@ -261,12 +293,13 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapsho
                 };
                 break :b .{ .Snap = .{
                     .v = instfun.fun.name,
-                    .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
+                    .vv = try (try self.initFunction(instfun.fun, instfun.m)).copyTo(self.arena),
                 } };
             },
         });
     }
 
+    // TODO(07.06.26): what is this??? why do we need this?
     if (scheme) |sch| {
         for (sch.associations) |assoc| {
             if (assoc.concrete) |conc| {
@@ -277,7 +310,7 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapsho
                     };
                     break :b .{ .Snap = .{
                         .v = instfun.fun.name,
-                        .vv = (try self.initFunction(instfun.fun, instfun.m)).ref,
+                        .vv = try (try self.initFunction(instfun.fun, instfun.m)).copyTo(self.arena),
                     } };
                 });
             }
@@ -311,16 +344,18 @@ fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
     try self.scope.funs.put(fun.name, envSnapshot);
 }
 
-// note that we are getting deep into structs. we must not convert that Value.Type pointer into *Value, because it might not have that header.
+// NOTE: we are getting deep into structs. we must not convert that Value.Type pointer into *Value, because it might not have that header.
+// TODO(07.06.26): use sizer API
 fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
     switch (decon.d) {
         .None => return true,
         .Var => |vn| {
-            try self.putRef(vn, v);
+            const sz = self.sizeOf(decon.t);
+            try self.putRef(vn, Value.initLValueFromRef(v, sz));
             return true;
         },
         .Num => |num| {
-            return v.int == num;
+            return v.smol.int == num;
         },
         .Record => |fields| {
             for (fields) |field| {
@@ -333,11 +368,11 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
         .Con => |con| {
             // deref
             if (con.con.data.eq(self.prelude.defined(.Ptr))) {
-                return try self.tryDeconstruct(con.decons[0], v.ptr);
+                return try self.tryDeconstruct(con.decons[0], v.smol.ptr);
             } else {
                 switch (con.con.data.structureType()) {
                     .Opaque => unreachable,
-                    .EnumLike => return v.enoom == con.con.tagValue,
+                    .EnumLike => return v.smol.tag == con.con.tagValue,
                     .RecordLike => {
                         var off: usize = 0;
                         for (con.decons) |d| {
@@ -378,6 +413,8 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             //  (in the future :))
             const instFun = try self.getAndUnboxInstFunRef(listDecon.assocRef);
 
+            const sal = self.alCurStack.?;
+
             // ALLOCATE DATA FOR DECONSTRUCTION.
             // TODO: note, it gets copied!!! (unlike general deconstruction)
             //  For slices, we can take a real pointer
@@ -385,77 +422,71 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             //  What should I do?
             const elemSize = self.sizeOf(listDecon.elemTy).size;
             const lsize = listDecon.l.len;
-            const lsizeVal = try self.intValue(@intCast(lsize));
-            const lslice = try self.arena.alloc(u8, lsize * elemSize);
-            const lptr = try self.val(.{
-                .ptr = @ptrCast(lslice.ptr),
-            }, @sizeOf(*anyopaque)); // NOTE: BAD, NOT CONSULTING SIZEOF.
-            const lptrptr = try self.val(.{
-                .ptr = lptr.ref,
-            }, @sizeOf(*anyopaque));
-            // defer self.arena.free(lslice); // i know it's arena rn, but I'm specifying its lifetime... or not (we copy rn, which seems incorrect.)
+            const lsizeVal = Value.int(lsize);
+            const lslice = try sal.alloc(u8, lsize * elemSize);
+            var lptr = Value.ptrFromRef(@ptrCast(lslice.ptr));
+            const lptrptr = Value.ptrToOwned(&lptr);
 
             const rsize: usize = if (listDecon.r) |r| r.r.len else 0;
-            const rsizeVal = try self.intValue(@intCast(rsize));
-            const rslice: []u8 = if (rsize > 0) try self.arena.alloc(u8, rsize * elemSize) else &.{};
-            const rptr = try self.val(.{
-                .ptr = @ptrCast(rslice.ptr),
-            }, @sizeOf(*anyopaque)); // NOTE: BAD, NOT CONSULTING SIZEOF.
-            const rptrptr = try self.val(.{
-                .ptr = rptr.ref,
-            }, @sizeOf(*anyopaque));
+            const rsizeVal = Value.int(rsize);
+            const rslice: []u8 = if (rsize > 0) try self.alCurStack.?.alloc(u8, rsize * elemSize) else &.{};
+            var rptr = Value.ptrFromRef(@ptrCast(rslice.ptr));
+            const rptrptr = Value.ptrToOwned(&rptr);
 
+            // handle possible spread.
             const spreadTy = listDecon.spreadTy;
-            const spreadSize = self.sizeOf(spreadTy).size;
-            var spreadInnerVal: ?RawValueRef = null;
+            const spreadSize = self.sizeOf(spreadTy);
+            var spreadInnerVal: ?Value = null; // (Ptr!)
             const spreadVal = if (listDecon.r) |r| b: {
                 if (r.spreadVar) |svar| {
+                    // init space for the spread variable array.
+                    // (the function call will initialize it, we only care about the pointer, which will be passed to the function)
                     const innerSize = self.sizeOf(svar.t);
-                    const innerVal: RawValueRef = @ptrCast(try self.arena.alloc(u8, innerSize.size));
-                    spreadInnerVal = innerVal;
+                    spreadInnerVal = try Value.initOwnedAlloc(innerSize, sal);
+                    const innerValPtr = Value.ptrToOwned(&spreadInnerVal.?);
 
                     // COPYPASTA: need to somehow allocate records and partially initialize them.
-                    // TODO use common values n stuff n stuff
-                    const buf = try self.arena.alloc(u8, spreadSize);
-                    var stream = std.io.fixedBufferStream(buf);
+                    // initialize whole ListSpread.
+                    var buf = try Value.initOwnedAlloc(spreadSize, sal);
+                    std.debug.assert(!buf.smol());
+                    var stream = std.io.fixedBufferStream(buf.getSlice());
                     const w = stream.writer();
 
                     try w.writeInt(RawValue.Tag, 2, endianness);
-                    try pad(w, @alignOf(*anyopaque));
-                    try w.writeInt(usize, @intFromPtr(innerVal), endianness);
+                    try pad(w, @alignOf(*anyopaque)); // why align to anyopaque??? (cuz we pass a pointer here bruh)
+                    try w.writeInt(usize, @intFromPtr(innerValPtr.get().ptr), endianness);
 
-                    const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
-                    break :b valFromRef(vptr);
+                    break :b buf;
                 } else {
-                    break :b try self.val(.{ .enoom = 1 }, spreadSize);
+                    break :b try Value.soleTag(1, spreadSize, sal);
                 }
-            } else try self.val(.{ .enoom = 0 }, spreadSize);
+            } else try Value.soleTag(0, spreadSize, sal);
 
-            var args = [_]ValueMeta{
-                valFromRef(v),
+            var args = [_]Value{
+                Value.initLValueFromRef(v, self.sizeOf(decon.t)),
                 lptrptr,
                 lsizeVal,
                 spreadVal,
                 rptrptr,
                 rsizeVal,
             };
-            const deconSucceeded = try self.function(instFun.fun, &args);
+            const deconSucceeded = try self.function(instFun.get().fun, &args);
 
             // if not matched, don't bother setting vars
             if (!isTrue(deconSucceeded)) return false;
 
             // var lit = valArrayIterator(lslice.ptr, elemSize);
             for (listDecon.l, 0..) |ldecon, i| {
-                const lval = valArrayGet(lptrptr.ref.ptr.ptr, elemSize, i); // maybe we should just use val.offset()?
-                if (!try self.tryDeconstruct(ldecon, lval)) {
+                const lvalref = valArrayGet(lptrptr.get().ref.smol.ptr.smol.ptr, elemSize, i); // maybe we should just use val.offset()?
+                if (!try self.tryDeconstruct(ldecon, lvalref)) {
                     return false;
                 }
             }
 
             if (rsize > 0) {
                 for (listDecon.r.?.r, 0..) |rdecon, i| {
-                    const rval = valArrayGet(rptrptr.ref.ptr.ptr, elemSize, i);
-                    if (!try self.tryDeconstruct(rdecon, rval)) {
+                    const rvalref = valArrayGet(rptrptr.get().ref.smol.ptr.smol.ptr, elemSize, i);
+                    if (!try self.tryDeconstruct(rdecon, rvalref)) {
                         return false;
                     }
                 }
@@ -472,7 +503,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
 }
 
 fn exprs(self: *Self, es: []*ast.Expr) ![]TypeVal {
-    var args = try self.arena.alloc(TypeVal, es.len);
+    var args = try self.alCurStack.?.alloc(TypeVal, es.len);
     for (es, 0..) |a, i| {
         args[i] = .{ .v = try self.expr(a), .t = a.t };
     }
@@ -480,30 +511,26 @@ fn exprs(self: *Self, es: []*ast.Expr) ![]TypeVal {
     return args;
 }
 
-fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
+fn expr(self: *Self, e: *ast.Expr) Err!Value {
+    const sal = self.alCurStack.?;
     switch (e.e) {
         .Intrinsic => |intr| {
             switch (intr.intr.ty) {
                 .cast => {
-                    const v = try self.expr(intr.args[0]);
-                    // just pass the value down :)
+                    var v = (try self.expr(intr.args[0]));
+                    const nusz = self.sizeOf(e.t);
+                    // NOTE(09.06.26): maybe make casting part of Value's interface?
+                    std.debug.assert(Value.isSizeSmol(nusz) and Value.isSizeSmol(v.size)); // for now..?
+                    v.size = nusz;
                     return v;
                 },
                 .undefined => {
-                    // allocate some value but dont initialize any of it!
-                    // COPYPASTA AGAIN. Suggested interface: allocValue(Type)
-                    const buf = try self.arena.alloc(u8, self.sizeOf(e.t).size);
-                    const emptyValue: ValueMeta = .{
-                        // .header = .{
-                        //     .ogPtr = null,
-                        // },
-                        .ref = @alignCast(@ptrCast(buf.ptr)),
-                    };
-                    return emptyValue;
+                    const buf = try Value.initOwnedAlloc(self.sizeOf(e.t), sal);
+                    return buf;
                 },
                 .panic => {
                     const sval = try self.expr(intr.args[0]);
-                    const cstr = sval.ref.cstr;
+                    const cstr = sval.get().cstr;
                     const len = std.mem.len(cstr);
                     var s: []u8 = undefined;
                     s.ptr = cstr;
@@ -511,7 +538,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     @panic(s);
                 },
                 .@"size-of" => {
-                    return try self.intValue(@intCast(self.sizeOf(intr.args[0].t).size));
+                    return Value.int(self.sizeOf(intr.args[0].t).size);
                 },
                 .@"offset-ptr" => {
                     // Should I make offset-ptr relative to type (C) or not (basado)?
@@ -519,73 +546,75 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     const ogPtr = try self.expr(intr.args[0]);
                     const amount = try self.expr(intr.args[1]);
 
-                    const ptr = try self.copyValue(ogPtr.ref, intr.args[0].t);
-                    if (amount.ref.int > 0) { // if pointer is null, @ptrFromInt produces an error. Offseting the null pointer by 0 is correct tho.
-                        ptr.ptr = @ptrFromInt(@intFromPtr(ptr.ptr) + @as(usize, @intCast(amount.ref.int)));
-                    } else if (amount.ref.int < 0) {
-                        ptr.ptr = @ptrFromInt(@intFromPtr(ptr.ptr) - @as(usize, @intCast(-amount.ref.int)));
+                    std.debug.assert(ogPtr.smol());
+                    std.debug.assert(amount.smol());
+                    var ptr = ogPtr.get();
+                    if (amount.get().int > 0) { // if pointer is null, @ptrFromInt produces an error. Offseting the null pointer by 0 is correct tho.
+                        ptr.ptr = @ptrFromInt(@intFromPtr(ptr.ptr) + @as(usize, @intCast(amount.get().int)));
+                    } else if (amount.get().int < 0) {
+                        ptr.ptr = @ptrFromInt(@intFromPtr(ptr.ptr) - @as(usize, @intCast(-amount.get().int)));
                     }
-                    return valFromRef(ptr);
+                    return Value.initOwned(ptr, Size.ptr);
                 },
 
-                .argv => return try self.val(.{ .extptr = @ptrCast(self.progArgs.ptr) }, @sizeOf(*anyopaque)),
-                .argc => return try self.intValue(@intCast(self.progArgs.len)),
+                .argv => return Value.initOwned(.{ .extptr = @ptrCast(self.progArgs.ptr) }, Size.ptr),
+                .argc => return Value.int(self.progArgs.len),
 
                 .memeq => {
-                    const l = try self.expr(intr.args[0]);
-                    const r = try self.expr(intr.args[1]);
-                    const size = self.sizeOf(intr.args[0].t).size;
-                    const eqResult = std.mem.eql(u8, common.byteSlice(l.ref, size), common.byteSlice(r.ref, size));
-                    const boolVal = try self.boolValue(eqResult);
-                    return boolVal;
+                    var l = try self.expr(intr.args[0]);
+                    var r = try self.expr(intr.args[1]);
+
+                    std.debug.assert(l.size.size == r.size.size);
+                    return Value.bul(std.mem.eql(u8, l.getSlice(), r.getSlice()));
                 },
 
                 .errno => {
-                    return self.intValue(std.c._errno().*);
+                    return Value.int(std.c._errno().*);
                 },
 
                 .@"register-signal" => {
-                    const i = (try self.expr(intr.args[0])).ref.i32;
+                    const i = (try self.expr(intr.args[0])).get().i32;
                     const fun = (try self.expr(intr.args[1]));
                     try self.registerSignal(i, fun, intr.args[1].t);
-                    return try self.intValue(0); // unit
+                    return Value.enoom(0); // unit
                 },
 
                 .@"i64-f64" => {
-                    const i = (try self.expr(intr.args[0])).ref.int;
-                    return try self.floatValue(@floatFromInt(i));
+                    const i = (try self.expr(intr.args[0])).get().int;
+                    return Value.float(@floatFromInt(i));
                 },
 
                 .@"f64-i64-floor" => {
-                    const i = (try self.expr(intr.args[0])).ref.float;
-                    return try self.intValue(@intFromFloat(i));
+                    const i = (try self.expr(intr.args[0])).get().float;
+                    return Value.int(@as(i64, @intFromFloat(i)));
                 },
 
                 .@"i32-i64" => {
-                    const i = (try self.expr(intr.args[0])).ref.i32;
-                    return try self.intValue(@intCast(i));
+                    const i = (try self.expr(intr.args[0])).get().i32;
+                    return Value.int(@as(i64, @intCast(i)));
                 },
 
                 .@"u32-bit-and" => {
-                    const l = (try self.expr(intr.args[0])).ref.u32;
-                    const r = (try self.expr(intr.args[1])).ref.u32;
-                    return try self.intValue(@intCast(l & r));
+                    const l = (try self.expr(intr.args[0])).get().u32;
+                    const r = (try self.expr(intr.args[1])).get().u32;
+                    return Value.int(l & r);
                 },
                 .@"u32-bit-or" => {
-                    const l = (try self.expr(intr.args[0])).ref.u32;
-                    const r = (try self.expr(intr.args[1])).ref.u32;
-                    return try self.intValue(@intCast(l | r));
+                    const l = (try self.expr(intr.args[0])).get().u32;
+                    const r = (try self.expr(intr.args[1])).get().u32;
+                    return Value.int(l | r);
                 },
                 .@"u32-bit-neg" => {
-                    const i = (try self.expr(intr.args[0])).ref.u32;
-                    return try self.intValue(@intCast(~i));
+                    const i = (try self.expr(intr.args[0])).get().u32;
+                    return Value.int(~i);
                 },
 
+                // TODO: generalize/automate.
                 .@"i64-add", .@"i64-sub", .@"i64-mul", .@"i64-div" => {
-                    const l = (try self.expr(intr.args[0])).ref.int;
-                    const r = (try self.expr(intr.args[1])).ref.int;
+                    const l = (try self.expr(intr.args[0])).get().int;
+                    const r = (try self.expr(intr.args[1])).get().int;
 
-                    return try self.intValue(switch (intr.intr.ty) {
+                    return Value.int(switch (intr.intr.ty) {
                         .@"i64-add" => l + r,
                         .@"i64-sub" => l - r,
                         .@"i64-mul" => l * r,
@@ -594,23 +623,23 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     });
                 },
                 .@"u64-add", .@"u64-sub", .@"u64-mul", .@"u64-div" => {
-                    const l = (try self.expr(intr.args[0])).ref.u64;
-                    const r = (try self.expr(intr.args[1])).ref.u64;
+                    const l = (try self.expr(intr.args[0])).get().u64;
+                    const r = (try self.expr(intr.args[1])).get().u64;
 
-                    return try self.val(.{ .u64 = switch (intr.intr.ty) {
+                    return Value.int(switch (intr.intr.ty) {
                         .@"u64-add" => l + r,
                         .@"u64-sub" => l - r,
                         .@"u64-mul" => l * r,
                         .@"u64-div" => @divTrunc(l, r),
                         else => unreachable,
-                    } }, @sizeOf(@TypeOf(l)));
+                    });
                 },
 
                 .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => {
-                    const l = (try self.expr(intr.args[0])).ref.i32;
-                    const r = (try self.expr(intr.args[1])).ref.i32;
+                    const l = (try self.expr(intr.args[0])).get().i32;
+                    const r = (try self.expr(intr.args[1])).get().i32;
 
-                    return try self.intValue(switch (intr.intr.ty) {
+                    return Value.int(switch (intr.intr.ty) {
                         .@"i64-add", .@"i32-add" => l + r,
                         .@"i64-sub", .@"i32-sub" => l - r,
                         .@"i64-mul", .@"i32-mul" => l * r,
@@ -619,10 +648,10 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     });
                 },
                 .@"u32-add", .@"u32-sub", .@"u32-mul", .@"u32-div" => {
-                    const l = (try self.expr(intr.args[0])).ref.u32;
-                    const r = (try self.expr(intr.args[1])).ref.u32;
+                    const l = (try self.expr(intr.args[0])).get().u32;
+                    const r = (try self.expr(intr.args[1])).get().u32;
 
-                    return try self.intValue(switch (intr.intr.ty) {
+                    return Value.int(switch (intr.intr.ty) {
                         .@"u32-add" => l + r,
                         .@"u32-sub" => l - r,
                         .@"u32-mul" => l * r,
@@ -631,10 +660,10 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     });
                 },
                 .@"u8-add", .@"u8-sub", .@"u8-mul", .@"u8-div" => {
-                    const l = (try self.expr(intr.args[0])).ref.u8;
-                    const r = (try self.expr(intr.args[1])).ref.u8;
+                    const l = (try self.expr(intr.args[0])).get().u8;
+                    const r = (try self.expr(intr.args[1])).get().u8;
 
-                    return try self.intValue(switch (intr.intr.ty) {
+                    return Value.int(switch (intr.intr.ty) {
                         .@"u8-add" => l + r,
                         .@"u8-sub" => l - r,
                         .@"u8-mul" => l * r,
@@ -643,22 +672,22 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     });
                 },
                 .@"size-add", .@"size-sub", .@"size-mul", .@"size-div" => {
-                    const l = (try self.expr(intr.args[0])).ref.size;
-                    const r = (try self.expr(intr.args[1])).ref.size;
+                    const l = (try self.expr(intr.args[0])).get().size;
+                    const r = (try self.expr(intr.args[1])).get().size;
 
-                    return try self.val(.{ .size = switch (intr.intr.ty) {
+                    return Value.initOwned(.{ .size = switch (intr.intr.ty) {
                         .@"size-add" => l + r,
                         .@"size-sub" => l - r,
                         .@"size-mul" => l * r,
                         .@"size-div" => @divTrunc(l, r),
                         else => unreachable,
-                    } }, @sizeOf(@TypeOf(l)));
+                    } }, Size.of(usize));
                 },
                 .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => {
-                    const l = (try self.expr(intr.args[0])).ref.float;
-                    const r = (try self.expr(intr.args[1])).ref.float;
+                    const l = (try self.expr(intr.args[0])).get().float;
+                    const r = (try self.expr(intr.args[1])).get().float;
 
-                    return try self.floatValue(switch (intr.intr.ty) {
+                    return Value.float(switch (intr.intr.ty) {
                         .@"f64-add" => l + r,
                         .@"f64-sub" => l - r,
                         .@"f64-mul" => l * r,
@@ -668,98 +697,98 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 },
 
                 .@"i64-cmp" => {
-                    const l = (try self.expr(intr.args[0])).ref.int;
-                    const r = (try self.expr(intr.args[1])).ref.int;
+                    const l = (try self.expr(intr.args[0])).get().int;
+                    const r = (try self.expr(intr.args[1])).get().int;
                     if (l < r) {
-                        return try self.intValue(0);
+                        return Value.enoom(0);
                     } else if (l == r) {
-                        return try self.intValue(1);
+                        return Value.enoom(1);
                     } else {
-                        return try self.intValue(2);
+                        return Value.enoom(2);
                     }
                 },
                 .@"u64-cmp" => {
-                    const l = (try self.expr(intr.args[0])).ref.u64;
-                    const r = (try self.expr(intr.args[1])).ref.u64;
+                    const l = (try self.expr(intr.args[0])).get().u64;
+                    const r = (try self.expr(intr.args[1])).get().u64;
                     if (l < r) {
-                        return try self.intValue(0);
+                        return Value.enoom(0);
                     } else if (l == r) {
-                        return try self.intValue(1);
+                        return Value.enoom(1);
                     } else {
-                        return try self.intValue(2);
+                        return Value.enoom(2);
                     }
                 },
                 .@"i32-cmp" => {
-                    const l = (try self.expr(intr.args[0])).ref.i32;
-                    const r = (try self.expr(intr.args[1])).ref.i32;
+                    const l = (try self.expr(intr.args[0])).get().i32;
+                    const r = (try self.expr(intr.args[1])).get().i32;
                     if (l < r) {
-                        return try self.intValue(0);
+                        return Value.enoom(0);
                     } else if (l == r) {
-                        return try self.intValue(1);
+                        return Value.enoom(1);
                     } else {
-                        return try self.intValue(2);
+                        return Value.enoom(2);
                     }
                 },
                 .@"u32-cmp" => {
-                    const l = (try self.expr(intr.args[0])).ref.u32;
-                    const r = (try self.expr(intr.args[1])).ref.u32;
+                    const l = (try self.expr(intr.args[0])).get().u32;
+                    const r = (try self.expr(intr.args[1])).get().u32;
                     if (l < r) {
-                        return try self.intValue(0);
+                        return Value.enoom(0);
                     } else if (l == r) {
-                        return try self.intValue(1);
+                        return Value.enoom(1);
                     } else {
-                        return try self.intValue(2);
+                        return Value.enoom(2);
                     }
                 },
                 .@"u8-cmp" => {
-                    const l = (try self.expr(intr.args[0])).ref.u8;
-                    const r = (try self.expr(intr.args[1])).ref.u8;
+                    const l = (try self.expr(intr.args[0])).get().u8;
+                    const r = (try self.expr(intr.args[1])).get().u8;
                     if (l < r) {
-                        return try self.intValue(0);
+                        return Value.enoom(0);
                     } else if (l == r) {
-                        return try self.intValue(1);
+                        return Value.enoom(1);
                     } else {
-                        return try self.intValue(2);
+                        return Value.enoom(2);
                     }
                 },
                 .@"size-cmp" => {
-                    const l = (try self.expr(intr.args[0])).ref.size;
-                    const r = (try self.expr(intr.args[1])).ref.size;
+                    const l = (try self.expr(intr.args[0])).get().size;
+                    const r = (try self.expr(intr.args[1])).get().size;
                     if (l < r) {
-                        return try self.intValue(0);
+                        return Value.enoom(0);
                     } else if (l == r) {
-                        return try self.intValue(1);
+                        return Value.enoom(1);
                     } else {
-                        return try self.intValue(2);
+                        return Value.enoom(2);
                     }
                 },
                 .@"f64-cmp" => {
-                    const l = (try self.expr(intr.args[0])).ref.float;
-                    const r = (try self.expr(intr.args[1])).ref.float;
+                    const l = (try self.expr(intr.args[0])).get().float;
+                    const r = (try self.expr(intr.args[1])).get().float;
 
                     if (l < r) {
-                        return try self.intValue(0);
+                        return Value.enoom(0);
                     } else if (l == r) {
-                        return try self.intValue(1);
+                        return Value.enoom(1);
                     } else {
-                        return try self.intValue(2);
+                        return Value.enoom(2);
                     }
                 },
             }
         },
         .Int => |x| {
-            const int = try self.intValue(x.int);
+            const int = Value.int(x.int);
             const instFun = try self.getAndUnboxInstFunRef(x.ref);
 
-            var args = [_]ValueMeta{int};
-            const ret = try self.function(instFun.fun, &args);
+            var args = [_]Value{int};
+            const ret = try self.function(instFun.get().fun, &args);
             return ret;
         },
         .ConstSize => |sz| {
-            return self.intValue(@intCast(sz));
+            return Value.int(sz);
         },
         .Float => |x| {
-            return self.floatValue(x);
+            return Value.float(x);
         },
         .BinOp => |op| {
             // first, short circuiting ops.
@@ -790,12 +819,12 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     // const boolVal = try self.boolValue(if (op.op == .Equals) eqResult else !eqResult);
                     const instFun = try self.getAndUnboxInstFunRef(ref);
 
-                    var args = [_]ValueMeta{ l, r };
-                    const eqResult = try self.function(instFun.fun, &args);
+                    var args = [_]Value{ l, r };
+                    const eqResult = try self.function(instFun.get().fun, &args);
 
                     return switch (op.op) {
                         .Equals => eqResult,
-                        .NotEquals => self.boolValue(!isTrue(eqResult)),
+                        .NotEquals => Value.bul(!isTrue(eqResult)),
                         else => unreachable,
                     };
                 },
@@ -805,7 +834,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                     const l = try self.expr(op.l);
                     const r = try self.expr(op.r);
                     return switch (op.op) {
-                        // .Equals => try self.boolValue(l.ref.int == r.ref.int), // TEMP!!!
+                        // .Equals => try self.boolValue(l.get().int == r.ref.int), // TEMP!!!
 
                         .Plus,
                         .Minus,
@@ -818,14 +847,14 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         => |ref| {
                             const instFun = try self.getAndUnboxInstFunRef(ref);
 
-                            var args = [_]ValueMeta{ l, r };
-                            const ret = try self.function(instFun.fun, &args);
+                            var args = [_]Value{ l, r };
+                            const ret = try self.function(instFun.get().fun, &args);
 
                             const realRet = switch (op.op) {
-                                .LessThan => try self.boolValue(ret.ref.enoom == 0),
-                                .LessEqualThan => try self.boolValue(ret.ref.enoom != 2),
-                                .GreaterThan => try self.boolValue(ret.ref.enoom == 2),
-                                .GreaterEqualThan => try self.boolValue(ret.ref.enoom != 0),
+                                .LessThan => Value.bul(ret.get().tag == 0),
+                                .LessEqualThan => Value.bul(ret.get().tag != 2),
+                                .GreaterThan => Value.bul(ret.get().tag == 2),
+                                .GreaterEqualThan => Value.bul(ret.get().tag != 0),
                                 else => ret,
                             };
 
@@ -845,13 +874,15 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         .Var => |v| {
             switch (v.v) {
                 .TNum => |tnum| {
-                    return self.getVar(tnum.asVar());
+                    return self.getTNum(tnum);
                 },
                 .Var => |vv| {
                     return self.getVar(vv.v);
                 },
 
                 .Fun => |fun| {
+                    // XXX(07.06.26): this is technically incorrect for functions that escape (since we should get the match from the union itself (which makes Match in variables kinda dumb???)).
+                    //  - however it works, because we get the snapshot (including the tymap stack!) and store it together with the function.
                     return try self.initFunction(fun, try self.typeContext.mapMatch(self.tymap, v.match)); // mapMatch fixes some mapping issues due to 6_t01 test. NOTE: check if it's needed for ClassFun? Couldn't trigger it manually.
                 },
 
@@ -877,13 +908,13 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                         extfun.name.name;
 
                     const fun = try self.funLoader.loadFunction(libName, funName);
-                    return try self.val(.{ .extptr = nanbox(fun, .ExternalFunction) }, @sizeOf(*anyopaque));
+                    return Value.initOwned(.{ .extptr = nanbox(fun, .ExternalFunction) }, Size.ptr);
                 },
             }
         },
         .Str => |slit| {
             const s: *anyopaque = @ptrCast(try self.evaluateString(slit));
-            return try self.val(.{ .extptr = s }, @sizeOf(*anyopaque));
+            return Value.initOwned(.{ .extptr = s }, Size.ptr);
         },
         .Call => |c| {
             const fun = try self.expr(c.callee);
@@ -892,44 +923,42 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         },
         .Con => |con| {
             if (con.tys.len == 0) {
-                return try self.val(.{ .enoom = con.tagValue }, self.sizeOf(e.t).size);
+                return try Value.soleTag(con.tagValue, self.sizeOf(e.t), sal);
             } else {
-                return try self.val(.{ .confun = nanbox(con, .ConstructorFunction) }, @sizeOf(*ast.Con));
+                return Value.initOwned(.{ .confun = nanbox(con, .ConstructorFunction) }, Size.ptr);
             }
         },
 
         .UnOp => |uop| {
             const v = try self.expr(uop.e);
             return switch (uop.op) {
-                .Deref => valFromRef(v.ref.ptr),
-                .Ref => try self.val(.{
-                    .ptr = v.ref,
-                }, self.sizeOf(e.t).size),
-                .Access => |mem| valFromRef(self.getFieldFromType(v.ref, uop.e.t, mem)),
+                .Deref => Value.initLValueFromRef(v.get().ptr, self.sizeOf(e.t)),
+                .Ref => try v.ref(self.scope.allocator()),
+                .Access => |mem| v.fieldOfValue(self.getFieldFromType(@constCast(&v).getRefToMemory(), uop.e.t, mem), self.sizeOf(e.t)), // NOTE(07.06.26): constCast - we know we won't modify the v itself, so it's okay.
                 .Update => |upd| b: {
-                    const vv = try self.copyValueMeta(v, uop.e.t);
+                    var vv = try v.copyTo(sal);
                     for (upd) |field| {
-                        const vp = self.getFieldFromType(vv.ref, uop.e.t, field.field);
+                        const vp = self.getFieldFromType(vv.getRefToMemory(), uop.e.t, field.field);
                         const fieldval = try self.expr(field.value);
                         const sz = self.sizeOf(field.value.t);
-                        @memcpy(vp.slice(sz.size), fieldval.ref.slice(sz.size));
+                        @memcpy(vp.slice(sz.size), @constCast(&fieldval).getSlice()); // NOTE(07.06.26): constCast - it's okay, we're copying FROM it.
                     }
 
                     break :b vv;
                 },
                 .As => v,
-                .Not => try self.boolValue(!isTrue(v)),
+                .Not => Value.bul(!isTrue(v)),
                 .Negate => |inst| b: {
                     const instFun = try self.getAndUnboxInstFunRef(inst);
-                    var args = [_]ValueMeta{v};
-                    const res = try self.function(instFun.fun, &args);
+                    var args = [_]Value{v};
+                    const res = try self.function(instFun.get().fun, &args);
                     break :b res;
                 },
                 .ElementAccess => |ea| b: {
                     const idx = try self.expr(ea.index);
                     const instFun = try self.getAndUnboxInstFunRef(ea.access);
-                    var args = [_]ValueMeta{ v, idx };
-                    const res = try self.function(instFun.fun, &args);
+                    var args = [_]Value{ v, idx };
+                    const res = try self.function(instFun.get().fun, &args);
                     break :b res;
                 },
             };
@@ -938,8 +967,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         .AnonymousRecord => |recs| {
             // THIS ASSUMES THAT RECORDS GET THAT `setType` TREATMENT
             // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
-            const buf = try self.arena.alloc(u8, self.sizeOf(e.t).size);
-            var stream = std.io.fixedBufferStream(buf);
+            var buf = try Value.initOwnedAlloc(self.sizeOf(e.t), sal);
+            var stream = std.io.fixedBufferStream(buf.getSlice());
             const w = stream.writer();
 
             switch (self.getType(e.t)) {
@@ -991,8 +1020,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 else => unreachable,
             }
 
-            const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
-            return valFromRef(vptr);
+            return buf;
         },
 
         .NamedRecord => |nrec| {
@@ -1000,8 +1028,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
             // THIS ASSUMES THAT RECORDS GET THAT `setType` TREATMENT
             // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
             // SECOND GRADE COPYPASTA FROM `AnonymousRecord`
-            const buf = try self.arena.alloc(u8, self.sizeOf(e.t).size);
-            var stream = std.io.fixedBufferStream(buf);
+            var buf = try Value.initOwnedAlloc(self.sizeOf(e.t), sal);
+            var stream = std.io.fixedBufferStream(buf.getSlice());
             const w = stream.writer();
 
             const fields = nrec.data.stuff.recs;
@@ -1017,34 +1045,32 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
                 } else unreachable;
             }
 
-            const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
-            return valFromRef(vptr);
+            return buf;
         },
 
         .Lam => |*l| {
-            const ptr = nanbox(try common.allocOne(self.arena, RawValue.Lam{
+            const ptr = nanbox(try common.allocOne(self.arena, SmolValue.Lam{
                 .lam = l,
                 .env = try self.initEnvSnapshot(l.env, null),
             }), .Lambda);
-            return try self.val(.{ .lam = ptr }, @sizeOf(*const RawValue.Lam));
+            return Value.initOwned(.{ .lam = ptr }, Size.ptr);
         },
 
         .StaticArray => |arr| {
             if (arr.len == 0) {
                 // I think this is correct, since we ain't gonna be accessing any elements.
                 // size should also be zero!
-                return valFromRef(@ptrFromInt(0xabcdabcdabcdabcd));
+                return Value.initOwned(.{ .ref = @ptrFromInt(0xabcdabcdabcdabcd) }, Size{});
             }
 
-            const elemSize = self.sizeOf(arr[0].t).size;
-            const array = try self.arena.alloc(u8, elemSize * arr.len); // NOTE: should be the same as sizeOf(Array). maybe we should factor this logic out?
+            const elemSize = self.sizeOf(arr[0].t);
+            var array = try Value.initOwnedAlloc(elemSize.times(arr.len), sal);
             for (arr, 0..) |elem, i| {
                 const ret = try self.expr(elem);
-                @memcpy(array[i * elemSize .. (i + 1) * elemSize], ret.ref.slice(elemSize));
+                @memcpy(array.getSlice()[i * elemSize.size .. (i + 1) * elemSize.size], @constCast(&ret).getSlice());
             }
 
-            const vptr: RawValueRef = @alignCast(@ptrCast(array.ptr));
-            return valFromRef(vptr);
+            return array;
         },
 
         .IfElse => |ifelse| {
@@ -1062,11 +1088,11 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
         },
 
         .CaseExpr => |sw| {
-            const switchOn = try self.expr(sw.switchOn);
+            var switchOn = try self.expr(sw.switchOn);
             for (sw.cases) |case| {
                 switch (case) {
                     .Expr => |cexpr| {
-                        if (try self.tryDeconstruct(cexpr.decon, switchOn.ref)) {
+                        if (try self.tryDeconstruct(cexpr.decon, switchOn.getRefToMemory())) {
                             return try self.expr(cexpr.expr);
                         }
                     },
@@ -1090,65 +1116,47 @@ fn expr(self: *Self, e: *ast.Expr) Err!ValueMeta {
 
 const TypeVal = struct {
     t: ast.Type,
-    v: ValueMeta,
+    v: Value,
 };
-fn call(self: *Self, fun: ValueMeta, cargs: []TypeVal, cfunTy: ast.Type) !ValueMeta {
-    const ptrAndfunType = nunbox(fun.ref.extptr); // funny, but in this case we *know* the inner value is a pointer, which just don't know what to. So, we use extptr (kind of incorrectly) as a "general pointer".
-    const funPtr: *align(1) const RawValue = @ptrCast(&ptrAndfunType.ptr); // and later get the address, so we can do the .<correct-type>
+
+// TODO: nocheckin we have to make sure we un-lvalue the arguments passed to the function to make sure we don't modify the og args. Should we do it here or at callsite? check for getRef()
+fn call(self: *Self, fun: Value, cargs: []TypeVal, cfunTy: ast.Type) !Value {
+    const ptrAndfunType = nunbox(fun.get().extptr); // funny, but in this case we *know* the inner value is a pointer, which just don't know what to. So, we use extptr (kind of incorrectly) as a "general pointer".
+    const ptrToFunPtr: *align(1) const RawValue = @ptrCast(&ptrAndfunType.ptr); // and later get the address, so we can do the .<correct-type>
     const funType = ptrAndfunType.fty;
 
+    const sal = self.alCurStack.?;
     switch (funType) {
         .ExternalFunction => {
-            // INCORRECT. check https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf
-            //  (also just ask an LLM, this time it seems to know what it's talking about.)
-            //    Depending on the data, return values are returned differently (like, floats are returned in XMM registers, so currently it wont work.)
-            //   We can have a function type for each case, then beat it for it to make sense for our types.
-            //   it's required, but since libc does not really return full structs, it's not needed. (rn: i only need to check for error codes)
-            //   Nah, I should just use inline assembly in this case.
-            // EDIT: OR LIBFFI.
-            const castFun: *const fn (...) callconv(.C) i64 = @ptrCast(funPtr.extptr);
-
-            // const MaxExtArgs = 8;
-            // if (c.args.len > MaxExtArgs) unreachable;
-
-            // var interopArgs: std.meta.Tuple(&(.{i64} ** MaxExtArgs)) = undefined; // max external function call args: 16 (ideally, should be equal to C's max limit)
-            // inline for (0..MaxExtArgs) |i| {
-            //     if (i < c.args.len) {
-            //         const av = try self.expr(c.args[i]);
-            //         interopArgs[i] = @as(*align(1) i64, @alignCast(@constCast(@ptrCast(av.ref)))).*;
-            //     }
-            // }
-
-            // const ret = @call(.auto, castFun, interopArgs);
-
-            // return try self.intValue(ret);
             const funTys = self.typeContext.getType(cfunTy).Fun;
+            const ffiFunPtr: *const fn (...) callconv(.C) i64 = @ptrCast(ptrToFunPtr.smol.extptr);
 
             var func: ffi.Function = undefined;
-            const paramFFITypes = try self.arena.alloc(*ffi.Type, funTys.args.len);
+            const paramFFITypes = try sal.alloc(*ffi.Type, funTys.args.len);
             // defer self.arena.free(paramFFITypes); // lifetime signature
 
-            const args = try self.arena.alloc(*anyopaque, funTys.args.len);
+            const args = try sal.alloc(*anyopaque, funTys.args.len);
             // defer self.arena.free(args); // lifetime signature
 
-            for (args, paramFFITypes, cargs) |*arg, *param, exp| {
-                const v = exp.v;
-                arg.* = @ptrCast(v.ref);
+            for (args, paramFFITypes, cargs) |*arg, *param, *exp| {
+                const v = &exp.v;
+                std.debug.assert(v.smol()); // TEMP(07.06.26): this is temporary. we can't really pass anything other yet to ffi.
+                arg.* = @ptrCast(v.getRefToMemory());
                 param.* = self.sizeOfFFI(exp.t);
             }
 
             try func.prepare(ffi.Abi.default, @intCast(args.len), paramFFITypes.ptr, self.sizeOfFFI(funTys.ret));
 
-            const result = try self.allocSpaceForVariable(self.sizeOf(funTys.ret).size);
+            var result = try Value.initOwnedAlloc(self.sizeOf(funTys.ret), sal);
 
-            func.call(castFun, args.ptr, result.ref);
+            func.call(ffiFunPtr, args.ptr, result.getRefToMemory());
 
             return result;
         },
 
         .LocalFunction => {
-            return try self.function_(funPtr.fun, TypeVal, cargs, struct {
-                fn mapFn(ref: TypeVal) ValueMeta {
+            return try self.function_(ptrToFunPtr.smol.fun, TypeVal, cargs, struct {
+                fn mapFn(ref: TypeVal) Value {
                     return ref.v;
                 }
             }.mapFn);
@@ -1156,17 +1164,20 @@ fn call(self: *Self, fun: ValueMeta, cargs: []TypeVal, cfunTy: ast.Type) !ValueM
 
         .ConstructorFunction => {
             const cretTy = self.getType(cfunTy).Fun.ret;
-            return self.initRecord(funPtr.confun, cargs, cretTy);
+            return self.initRecord(ptrToFunPtr.smol.confun, cargs, cretTy);
         },
 
         .Lambda => {
-            const lamAndEnv = funPtr.lam;
+            const lamAndEnv = ptrToFunPtr.smol.lam;
 
             // begin new scope
             const oldScope = self.scope;
-            var scope = Scope.init(oldScope, self.arena);
+            var scope = Scope.init(oldScope, self.alBase);
             self.scope = &scope;
-            defer self.scope = oldScope;
+            defer {
+                self.scope = oldScope;
+                scope.deinit();
+            }
 
             // also, don't forget the new tymap!
             const env = lamAndEnv.env;
@@ -1185,17 +1196,17 @@ fn call(self: *Self, fun: ValueMeta, cargs: []TypeVal, cfunTy: ast.Type) !ValueM
             const lam = lamAndEnv.lam;
             for (env.vars) |ee| {
                 switch (ee) {
-                    .Snap => |eee| try self.putRef(eee.v, eee.vv),
+                    .Snap => |eee| try self.putVar(eee.v, eee.vv),
                     .AssocID => |id| {
                         const efun = self.tymap.tryGetFunctionByID(id).?;
                         const efunv = try self.initFunction(efun.fun, efun.m);
-                        try self.putRef(efun.fun.name, efunv.ref);
+                        try self.putVar(efun.fun.name, efunv);
                     },
                 }
             }
 
-            for (lam.params, cargs) |decon, a| {
-                if (!try self.tryDeconstruct(decon.d, a.v.ref)) {
+            for (lam.params, cargs) |decon, *a| {
+                if (!try self.tryDeconstruct(decon.d, a.v.getRefToMemory())) {
                     return error.CaseNotMatched;
                 }
             }
@@ -1205,13 +1216,13 @@ fn call(self: *Self, fun: ValueMeta, cargs: []TypeVal, cfunTy: ast.Type) !ValueM
                     const ret = try self.expr(exp);
 
                     // BUG(return-decon-ref): Remember to copy the value before returning - when returning a deconstructed value, it's possible to return a ref - in this case, we must copy it.
-                    return try self.copyValueMeta(ret, exp.t);
+                    return ret.copyTo(sal); // a return value must not be an lvalue!
                 },
                 .Body => |bod| {
                     // COPYPASTA
                     self.stmts(bod.stmts) catch |err| switch (err) {
                         error.Return => {
-                            return self.returnValue;
+                            return try self.returnValue.copyTo(sal);
                         },
                         error.Break => {
                             std.debug.print("TRIED TO BREAK OUT OF LAMBDA FUNCTION\n", .{});
@@ -1231,6 +1242,8 @@ fn call(self: *Self, fun: ValueMeta, cargs: []TypeVal, cfunTy: ast.Type) !ValueM
     }
 }
 
+// TODO(07.06.26): I forgot about this. also make it use the sizer version.
+// this can also return a value?
 fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValueRef {
     switch (self.getType(t)) {
         .Anon => |fields| {
@@ -1254,7 +1267,8 @@ fn getFieldFromType(self: *Self, v: RawValueRef, t: ast.Type, mem: Str) RawValue
             // basically, when we're in a function which defines the tvars, the c.outerApplication has the tvar itself as its value
             // so if we don't get the value of the tvar first, we get an infinite loop.
             // maybe there is a better way which does not require allocation?
-            const outerApplication = self.arena.alloc(ast.TypeOrNum, con.outerApplication.len) catch unreachable; // TEMP
+            const outerApplication = self.alBase.alloc(ast.TypeOrNum, con.outerApplication.len) catch unreachable; // TEMP
+            defer self.alBase.free(outerApplication);
             for (0..outerApplication.len) |i| {
                 const app = con.outerApplication[i];
                 switch (app) {
@@ -1332,7 +1346,7 @@ fn getFieldFromFields_(self: *Self, v: RawValueRef, comptime T: type, fields: []
     }
 }
 
-fn getAndUnboxInstFunRef(self: *Self, assocRef: ast.InstFunInst) !*align(1) const RawValue {
+fn getAndUnboxInstFunRef(self: *Self, assocRef: ast.InstFunInst) !Value {
     const instFunBoxed = switch (assocRef.*.?) {
         .Id => |uid| b: {
             const instfun = self.tymap.tryGetFunctionByID(uid).?;
@@ -1341,30 +1355,36 @@ fn getAndUnboxInstFunRef(self: *Self, assocRef: ast.InstFunInst) !*align(1) cons
         .InstFun => |instfun| try self.initFunction(instfun.fun, instfun.m),
     };
 
-    const ptrVal = try self.val(.{ .extptr = @ptrCast(nunbox(instFunBoxed.ref.extptr).ptr) }, @sizeOf(*anyopaque));
-    const instFun: *align(1) const RawValue = ptrVal.ref;
-    return instFun;
+    std.debug.assert(instFunBoxed.size.size == Size.ptr.size);
+
+    const ubfun = nunbox(instFunBoxed.get().fun);
+    std.debug.assert(ubfun.fty == .LocalFunction);
+    const instFunUnboxed = Value.initOwned(.{ .fun = ubfun.ptr }, instFunBoxed.size);
+    return instFunUnboxed;
 }
 
-fn initFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) !ValueMeta {
-    return try self.val(.{
-        .fun = nanbox(try common.allocOne(self.arena, RawValue.Fun{
-            .fun = fun,
-            .env = self.scope.getFun(fun.name),
-            .match = m,
-        }), .LocalFunction),
-    }, @sizeOf(*RawValue.Fun));
+fn initFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) !Value {
+    // NOTE(07.06.26): what should I do with this?
+    const funThing = nanbox(try common.allocOne(self.arena, SmolValue.Fun{
+        .fun = fun,
+        .env = self.scope.getFun(fun.name),
+        .match = m,
+    }), .LocalFunction);
+    return Value.initOwned(.{ .fun = funThing }, Size.ptr);
 }
 
-fn function(self: *Self, funAndEnv: *RawValue.Fun, args: []ValueMeta) Err!ValueMeta {
-    return try self.function_(funAndEnv, ValueMeta, args, common.id(ValueMeta));
+fn function(self: *Self, funAndEnv: *SmolValue.Fun, args: []Value) Err!Value {
+    return try self.function_(funAndEnv, Value, args, common.id(Value));
 }
-fn function_(self: *Self, funAndEnv: *RawValue.Fun, comptime Arg: type, args: []Arg, comptime mapFun: fn (Arg) ValueMeta) Err!ValueMeta {
+fn function_(self: *Self, funAndEnv: *SmolValue.Fun, comptime Arg: type, args: []Arg, comptime mapFun: fn (Arg) Value) Err!Value {
     // begin new scope
     const oldScope = self.scope;
-    var scope = Scope.init(oldScope, self.arena);
+    var scope = Scope.init(oldScope, self.alBase);
     self.scope = &scope;
-    defer self.scope = oldScope;
+    defer {
+        self.scope = oldScope;
+        scope.deinit();
+    }
 
     // first setup the environment type mapping.
     // TOOD: here + self.function(). probably should factor it out?
@@ -1393,19 +1413,19 @@ fn function_(self: *Self, funAndEnv: *RawValue.Fun, comptime Arg: type, args: []
     const fun = funAndEnv.fun;
     for (env.vars) |e| {
         switch (e) {
-            .Snap => |ee| try self.putRef(ee.v, ee.vv),
+            .Snap => |ee| try self.putVar(ee.v, ee.vv),
             .AssocID => |id| {
                 const efun = self.tymap.tryGetFunctionByID(id).?;
                 const efunv = try self.initFunction(efun.fun, efun.m);
-                try self.putRef(efun.fun.name, efunv.ref);
+                try self.putVar(efun.fun.name, efunv);
             },
         }
     }
 
     for (fun.params, args) |decon, ar| {
         const a = mapFun(ar);
-        const av = try self.copyValue(a.ref, decon.d.t); // we can pass in a "ref", so make sure to copy the actual value.
-        if (!try self.tryDeconstruct(decon.d, av)) {
+        var av = try a.copyWithValue(scope.allocator()); // we can pass in a "ref", so make sure to copy the actual value.
+        if (!try self.tryDeconstruct(decon.d, av.getRefToMemory())) {
             return error.CaseNotMatched;
         }
     }
@@ -1414,14 +1434,13 @@ fn function_(self: *Self, funAndEnv: *RawValue.Fun, comptime Arg: type, args: []
         switch (tvOrNum) {
             .TVar => {},
             .TNum => |tnum| {
-                try self.putVar(
-                    tnum.asVar(),
+                try self.putTNum(
+                    tnum,
                     switch (self.typeContext.getNum(mtvOrNum.Num)) {
-                        .Literal => |lit| try self.intValue(lit),
-                        .TNum => |tnum2| self.getVar(tnum2.asVar()),
+                        .Literal => |lit| lit,
+                        .TNum => |tnum2| self.getTNum(tnum2).get().int,
                         .Unknown => unreachable,
                     },
-                    self.prelude.intTypeTemp,
                 );
             },
         }
@@ -1429,7 +1448,7 @@ fn function_(self: *Self, funAndEnv: *RawValue.Fun, comptime Arg: type, args: []
 
     self.stmts(fun.body) catch |err| switch (err) {
         error.Return => {
-            return self.returnValue;
+            return try self.returnValue.copyTo(self.alCurStack.?);
         },
         error.Break => {
             std.debug.print("TRIED TO BREAK OUT OF FUNCTION\n", .{});
@@ -1441,27 +1460,296 @@ fn function_(self: *Self, funAndEnv: *RawValue.Fun, comptime Arg: type, args: []
     unreachable; // NOTE: Return should be automatically added while parsing bruv ㅠㅠㅠ
 }
 
-fn evaluateString(self: *const Self, s: Str) ![:0]u8 {
-    return try self.arena.dupeZ(u8, s);
+fn evaluateString(self: *Self, s: Str) ![:0]u8 {
+    const res = try self.constStrings.getOrPut(s.ptr);
+    if (res.found_existing) {
+        return res.value_ptr.*;
+    } else {
+        res.value_ptr.* = try self.arena.dupeZ(u8, s);
+        return res.value_ptr.*;
+    }
+}
+
+const ExprStack = struct {
+    arena: std.heap.ArenaAllocator,
+    oldStackAllocator: ?std.mem.Allocator,
+};
+fn beginStack(self: *Self, es: *ExprStack) void {
+    if (ArenaAlloc) return;
+    es.*.arena = std.heap.ArenaAllocator.init(self.alBase);
+    es.*.oldStackAllocator = self.alCurStack;
+    self.alCurStack = es.arena.allocator();
+}
+fn restoreStack(self: *Self, es: *ExprStack) void {
+    if (ArenaAlloc) return;
+    es.arena.deinit();
+    self.alCurStack = es.oldStackAllocator;
 }
 
 const RawValueRef = *align(1) RawValue; // basically, because we don't know *where* the basic data might be, we must assume its offset can be whatever (imagine: struct with  three chars and getting a reference to one of them)
+const RawValueConstRef = *align(1) const RawValue;
 
 // shit name: basically the value + metadata.
-const ValueMeta = struct {
-    // header: Header,
-    ref: *align(1) RawValue,
+const Value = struct {
+    val: union(enum) {
+        // should I differentiate Stack and Smol?
+        // technically, when I get members of stack structs, the inner part can be smaller. and if it's not an lvalue, we can just copy it inside. but is it needed??? ah shid, whatever. I can just copy it, whatever  (although it IS funny.... we are already reinterpreting bytes tbh...)
+        // VERDICT: if offseting inside a small sized value, just copy it inside the value.
+        Owned: SmolValue,
+        LValue: *align(1) RawValue,
+    },
+    size: sizer.Size,
+
+    fn isLValue(self: *const @This()) bool {
+        return switch (self.val) {
+            .LValue => true,
+            else => false,
+        };
+    }
+
+    fn isSizeSmol(sz: Size) bool {
+        return sz.size <= @sizeOf(SmolValue);
+    }
+    fn smol(self: *const @This()) bool {
+        std.debug.assert(@sizeOf(SmolValue) <= 8);
+        return isSizeSmol(self.size);
+    }
+
+    // transisitions:
+    // LValue -> LValue
+    // Owned(&Smol.val) -> LValue
+    // Owned(Stack.val) -> LValue
+    // ----
+    // LValue.val& -> Owned(Smol)
+    // LValue.val -> Owned(Stack)
+    // ----
+    // &(LValue): Lvalue.val -> Smol
+    // &(Stack): alloc(stack only); Stack.val -> Smol
+    // &(Smol): alloc(smolvalue); Ptr(Smol.val) -> Smol
+    // ----
+    // LValue&: (reference  (SmolValue*) to a smol value which is a pointer): { Owned { ref: LValue&.ptr } }
+    // Stack/Smol&: (must be a "smol" value, cuz it's a pointer!): { Ownder { ref: Owned.val.ptr }}
+    // ----
+    // LValue.a: initfromref()  (should also create lvalue)
+    // Stack.a: initfromref(): (should create either stack or smol value)
+    // Smol.a: initfromref(): (same as stack, although we know it's gonna be smol)
+
+    fn lvalue(refd: *@This()) Value {
+        const r = refd.getRefToMemory();
+        return Value{ .val = .{ .LValue = r }, .size = refd.size };
+    }
+
+    fn get(self: @This()) SmolValue {
+        switch (self.val) {
+            .Owned => |own| return own,
+            .LValue => |lv| {
+                if (self.smol()) {
+                    return lv.smol;
+                } else {
+                    return SmolValue{ .ref = lv };
+                }
+            },
+        }
+    }
+
+    fn getRefToMemory(self: *@This()) RawValueRef {
+        switch (self.val) {
+            .LValue => |lv| return lv,
+            .Owned => |*own| {
+                if (self.smol()) {
+                    return @ptrCast(own);
+                } else {
+                    return own.ref;
+                }
+            },
+        }
+    }
+
+    fn getConstRefToMemory(self: *const @This()) RawValueConstRef {
+        return @constCast(@constCast(self).getRefToMemory());
+    }
+
+    // PTR
+
+    // this one allocates cuz it's tricky to get right.
+    fn ref(self: @This(), al: std.mem.Allocator) !Value {
+        switch (self.val) {
+            .LValue => |lv| return Value.initOwned(.{ .ptr = lv }, Size.ptr),
+            .Owned => {
+                const sz = self.size;
+                const space = try al.alloc(u8, sz.size);
+                @memcpy(space, self.getConstRefToMemory().constSlice(sz.size));
+                return Value.initOwned(.{ .ptr = @ptrCast(space) }, Size.ptr);
+            },
+        }
+    }
+
+    // for use in Interpreter function calls and such. does not allocate memory n stuff.
+    fn ptrToOwned(self: *@This()) Value {
+        return Value.initOwned(.{ .ptr = self.getRefToMemory() }, Size.ptr);
+    }
+
+    fn ptrFromRef(r: RawValueRef) Value {
+        return Value.initOwned(.{ .ptr = r }, Size.ptr);
+    }
+
+    // DEREF
+    fn deref(self: @This(), nuSize: Size) Value {
+        std.debug.assert(self.smol());
+        switch (self.val) {
+            .LValue => |lv| return Value.initLValueFromRef(lv.smol.ptr, nuSize),
+            .Owned => |own| return Value.initOwnedFromRef(own.ptr, nuSize),
+        }
+    }
+
+    // FIELD OF
+
+    fn fieldOfValue(og: *const @This(), refd: RawValueRef, nuSize: Size) Value {
+        if (og.size.size == nuSize.size) return og.*; // smol optimization for single field structs.
+
+        std.debug.assert(nuSize.size < og.size.size);
+        return switch (og.val) {
+            .LValue => Value.initLValueFromRef(refd, nuSize),
+
+            .Owned => Value.initOwnedFromRef(refd, nuSize),
+        };
+    }
+
+    // MISC
+    //
+    fn getRefFromLValue(self: *const @This()) RawValueRef {
+        std.debug.assert(self.isLValue());
+        return Value.getRefToMemory(@constCast(self));
+    }
+
+    fn getSlice(self: *@This()) []u8 {
+        const p: [*]u8 = @ptrCast(self.getRefToMemory());
+        var sl: []u8 = undefined;
+        sl.ptr = p;
+        sl.len = self.size.size;
+        return sl;
+    }
+
+    // if it's an lvalue, keep it lvalue. if it's stack, keep it stack. if it's smol, keep it smol.
+
+    fn copyToRef(v: *const @This(), r: RawValueRef) void {
+        @memcpy(r.slice(v.size.size), v.getConstRefToMemory().constSlice(v.size.size));
+    }
+
+    // note: if smol, does not allocate anything
+    fn copyTo(v: *const @This(), al: std.mem.Allocator) !Value {
+        var nu = try Value.initOwnedAlloc(v.size, al);
+        v.copyToRef(nu.getRefToMemory());
+        std.debug.assert(!nu.isLValue());
+        return nu;
+    }
+
+    fn copyWithValue(self: *const @This(), al: std.mem.Allocator) !*Value {
+        const val = try self.copyTo(al);
+        return try common.allocOne(al, val);
+    }
+
+    fn copyToValue(self: *const @This(), space: *Value) !*Value {
+        space.* = self;
+        unreachable;
+    }
+
+    fn copyToLValue(self: *const @This(), lval: *const @This()) void {
+        std.debug.assert(lval.isLValue());
+        std.debug.assert(self.size.size == lval.size.size);
+
+        @memcpy(lval.val.LValue.slice(self.size.size), (@constCast(self)).getSlice());
+    }
+
+    // HACK HACK HACK
+    fn isMaybeNone(self: *const @This()) bool {
+        if (self.smol()) {
+            return self.get().tag == 0; // probably not possible. (it IS possible, Maybe I32)
+        } else {
+            return self.get().ref.adt.tag == 0;
+        }
+    }
+
+    // constructors
+    fn initOwned(val: SmolValue, sz: Size) @This() {
+        const v = @This(){
+            .val = .{ .Owned = val },
+            .size = sz,
+        };
+        return v;
+    }
+
+    fn initOwnedFromRef(r: RawValueRef, sz: Size) @This() {
+        if (Value.isSizeSmol(sz)) {
+            const bytes = r.constSlice(sz.size);
+            var val = Value.initOwned(.{ .size = 0 }, sz);
+            std.debug.assert(val.smol());
+            @memcpy(val.getSlice(), bytes);
+            return val;
+        } else {
+            return Value.initOwned(.{ .ref = r }, sz);
+        }
+    }
+
+    fn initLValueFromRef(r: RawValueRef, sz: Size) @This() {
+        return Value{ .val = .{ .LValue = r }, .size = sz };
+    }
+
+    fn initOwnedAlloc(sz: Size, al: std.mem.Allocator) !@This() {
+        if (Value.isSizeSmol(sz)) {
+            return .{
+                .val = .{ .Owned = .{ .size = 0 } }, // zeroes out automatically just in case.
+                .size = sz,
+            };
+        } else {
+            const mem = try al.alloc(u8, sz.size);
+            return .{
+                .val = .{ .Owned = .{ .ref = @alignCast(@ptrCast(mem.ptr)) } },
+                .size = sz,
+            };
+        }
+    }
+
+    fn int(i: anytype) Value {
+        // var ty = @TypeOf(i);
+        // comptime if (Size.of(ty).size == 0) {
+        //     @panic("what");
+        // };
+        const size = Size.ofType(@TypeOf(i));
+        std.debug.assert(Value.isSizeSmol(size));
+
+        if (i < 0) {
+            return Value.initOwned(.{ .int = @intCast(i) }, size);
+        } else {
+            return Value.initOwned(.{ .size = @intCast(i) }, size);
+        }
+    }
+
+    // basic enum-tag thing.
+    fn enoom(i: sizer.Tag) Value {
+        return int(i);
+    }
+
+    fn float(f: f64) Value {
+        return Value.initOwned(.{ .float = f }, Size.ofType(f64));
+    }
+
+    fn bul(b: bool) Value {
+        return Value.initOwned(.{ .u32 = if (b) 1 else 0 }, Size.ofType(bool));
+    }
+
+    fn soleTag(e: sizer.Tag, size: Size, al: std.mem.Allocator) !Value {
+        var val = try initOwnedAlloc(size, al);
+        if (val.smol()) {
+            val.val.Owned.tag = e;
+        } else {
+            val.val.Owned.ref.adt.tag = e;
+        }
+        return val;
+    }
 };
 
-fn copyValueMeta(self: *Self, vm: ValueMeta, t: ast.Type) !ValueMeta {
-    const vref = try self.copyValue(vm.ref, t);
-    return valFromRef(vref);
-}
-
-// values n shit
-// note, that we must preserve the inner representation for compatibility with external functions.
-// note about alignments: in C structs the alignments are variable (because we might represent different structs), so everything must be align(1)
-const RawValue = extern union {
+const SmolValue = extern union {
     int: i64,
     i32: i32,
     u32: u32,
@@ -1471,16 +1759,14 @@ const RawValue = extern union {
     float: f64,
     char: u8,
     extptr: *anyopaque,
-    ptr: *align(1) RawValue,
+    ptr: RawValueRef,
+    ref: RawValueRef,
+    stack: RawValueRef,
+    refbytes: [*]u8,
     fun: *Fun,
     confun: *ast.Con,
     lam: *const Lam,
-    enoom: u32, // for enum-like data structures
-    record: Flexible, // one constructor / record type
-    adt: extern struct {
-        tag: u32,
-        data: Flexible,
-    },
+    tag: u32, // for enum-like data structures
     cstr: [*:0]u8,
 
     const Lam = struct {
@@ -1494,6 +1780,20 @@ const RawValue = extern union {
         match: *const ast.Match,
     };
 
+    // if (@sizeOf(SmolValue) > @sizeOf(*anyopaque)) @panic("too big :)"),
+};
+
+// values n shit
+// note, that we must preserve the inner representation for compatibility with external functions.
+// note about alignments: in C structs the alignments are variable (because we might represent different structs), so everything must be align(1)
+const RawValue = extern union {
+    smol: SmolValue,
+    record: Flexible, // one constructor / record type
+    adt: extern struct {
+        tag: u32,
+        data: Flexible,
+    },
+
     fn offset(self: *align(1) @This(), off: usize) RawValueRef {
         const p: [*]u8 = @ptrCast(self);
         const offp = p[off..];
@@ -1502,6 +1802,13 @@ const RawValue = extern union {
 
     fn slice(self: *align(1) @This(), sz: usize) []u8 {
         var sl: []u8 = undefined;
+        sl.len = sz;
+        sl.ptr = @ptrCast(self);
+        return sl;
+    }
+
+    fn constSlice(self: *align(1) const @This(), sz: usize) []const u8 {
+        var sl: []const u8 = undefined;
         sl.len = sz;
         sl.ptr = @ptrCast(self);
         return sl;
@@ -1518,7 +1825,7 @@ const RawValue = extern union {
 const EnvSnapshot = struct {
     const VarSnapshot = union(enum) {
         // i forgot what it was gegegeg
-        Snap: struct { v: ast.Var, vv: *align(1) RawValue },
+        Snap: struct { v: ast.Var, vv: Value },
         AssocID: ast.Association.ID,
     };
 
@@ -1547,77 +1854,37 @@ const FunctionType = enum(u64) {
     None,
 };
 
-fn copyValue(self: *Self, vt: RawValueRef, t: ast.Type) !RawValueRef {
-    // TODO: how do we retrieve functionType??
-    //  that points to a deeper problem of storing functions in datatypes... bruh.
-    //   1. Ignore for now. Just set it to null and just don't put functions in datatypes.
-    //   1.5. Ignore for now. Just store extra data in the packed union on second field. Incorrect offsets for C code tho, so you may not pass structs with external functions.
-    //   2. it's possible to solve this by packing shit into pointer's high bits. nan boxing. Now we can pass structs with functions in C. Obviously, C code trying to call our function will fail, because it's interpreted.
-    //   3. complete and utter possibility. instead of differentiating pointers, save the interpreter context SOMEWHERE, then this function would somehow retrieve it and run.
-    //      Problem 1: How to access context? We may not be able to provide it (eg. atexit) So, the interpreter state must be at some known location.
-    //      Problem 2: How to know which function it should execute? We might use global state if we solve Problem 1, but maybe there is a better way? Like, I need to differentiate the calls somehow. Slightly different pointer?
+// fn copyValue(self: *Self, vt: RawValueRef, t: ast.Type) !RawValueRef {
+//     // TODO: how do we retrieve functionType??
+//     //  that points to a deeper problem of storing functions in datatypes... bruh.
+//     //   1. Ignore for now. Just set it to null and just don't put functions in datatypes.
+//     //   1.5. Ignore for now. Just store extra data in the packed union on second field. Incorrect offsets for C code tho, so you may not pass structs with external functions.
+//     //   2. it's possible to solve this by packing shit into pointer's high bits. nan boxing. Now we can pass structs with functions in C. Obviously, C code trying to call our function will fail, because it's interpreted.
+//     //   3. complete and utter possibility. instead of differentiating pointers, save the interpreter context SOMEWHERE, then this function would somehow retrieve it and run.
+//     //      Problem 1: How to access context? We may not be able to provide it (eg. atexit) So, the interpreter state must be at some known location.
+//     //      Problem 2: How to know which function it should execute? We might use global state if we solve Problem 1, but maybe there is a better way? Like, I need to differentiate the calls somehow. Slightly different pointer?
 
-    // currently at 2!
-    const sz = self.sizeOf(t);
-    const memptr: []u8 = try self.arena.alloc(u8, sz.size);
-    @memcpy(memptr[0..sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
-    const vptr: RawValueRef = @alignCast(@ptrCast(memptr.ptr));
-    return vptr;
-}
-
-fn allocSpaceForVariable(self: *Self, size: usize) !ValueMeta {
-    const memptr: []u8 = try self.arena.alloc(u8, size);
-    const vptr: RawValueRef = @alignCast(@ptrCast(memptr.ptr));
-    return valFromRef(vptr);
-}
-
-fn intValue(self: *const Self, i: i64) !ValueMeta {
-    return self.val(.{ .int = i }, @sizeOf(@TypeOf(i)));
-}
-
-fn floatValue(self: *const Self, f: f64) !ValueMeta {
-    return self.val(.{ .float = f }, @sizeOf(@TypeOf(f)));
-}
-
-fn boolValue(self: *const Self, b: bool) !ValueMeta {
-    return self.val(.{ .enoom = @intFromBool(b) }, @sizeOf(RawValue.Tag));
-}
+//     // currently at 2!
+//     const sz = self.sizeOf(t);
+//     const memptr: []u8 = try self.arena.alloc(u8, sz.size);
+//     @memcpy(memptr[0..sz.size], @as([*]u8, @ptrCast(vt))[0..sz.size]);
+//     const vptr: RawValueRef = @alignCast(@ptrCast(memptr.ptr));
+//     return vptr;
+// }
 
 fn valArrayGet(ptr: *anyopaque, elemSize: usize, i: usize) RawValueRef {
     return @ptrCast(@as([*]u8, @ptrCast(ptr)) + elemSize * i);
 }
 
-fn valFromRef(ref: RawValueRef) ValueMeta {
-    return .{
-        // .header = .{ .ogPtr = null },
-        .ref = ref,
-    };
-}
-
-fn val(self: *const Self, v: RawValue, size: usize) !ValueMeta {
-    const ref: RawValueRef = @ptrCast((try self.arena.alloc(u8, size)).ptr);
-
-    // NOTE: equivalent to:
-    // ref.* = value
-    // EXCEPT the thing is, RawValue has size greater than 8! So assigning it leads to assigning random memory to possibly unallocated segments.
-    // SO, we have to mempy it.
-    common.bytecopy(ref, &v, size);
-
-    return .{
-        // .header = .{ .ogPtr = null },
-        .ref = ref,
-    };
-}
-
-fn initRecord(self: *Self, c: *ast.Con, args: []TypeVal, t: ast.Type) !ValueMeta {
+fn initRecord(self: *Self, c: *ast.Con, args: []TypeVal, t: ast.Type) !Value {
     // alignment:
     // https://youtu.be/E0QhZ6tNoR  <= "alignment" is actually a place where values can live.
     // I get it, but why (in the video example) the trailing padding is aligned to 8? because of last member?
     // I think it gets padded to the largest struct.
     //   (watch out: it's incomplete, because from some Zig issue I've seen, i128 padding might be 8)
     //  nested structs do not create "big alignments". If the struct's max alignment was 8, it gets carred to the outer struct.
-    const buf = try self.arena.alloc(u8, self.sizeOf(t).size);
-    var stream = std.io.fixedBufferStream(buf);
+    var buf = try Value.initOwnedAlloc(self.sizeOf(t), self.alCurStack.?);
+    var stream = std.io.fixedBufferStream(buf.getSlice());
     var w = stream.writer();
 
     var maxAlignment: usize = 1;
@@ -1636,8 +1903,7 @@ fn initRecord(self: *Self, c: *ast.Con, args: []TypeVal, t: ast.Type) !ValueMeta
     // write ending padding (from experiments it's based on max padding.)
     try pad(w, maxAlignment);
 
-    const vptr: RawValueRef = @alignCast(@ptrCast(buf.ptr));
-    return valFromRef(vptr);
+    return buf;
 }
 
 fn writeExpr(self: *Self, w: anytype, a: *ast.Expr) !usize {
@@ -1648,8 +1914,8 @@ fn writeVal(self: *Self, w: anytype, a: TypeVal) !usize {
     const ty = a.t;
     const sz = self.sizeOf(ty);
     try pad(w, sz.alignment);
-    const v = a.v;
-    try w.writeAll(v.ref.slice(sz.size));
+    var v = a.v;
+    try w.writeAll(v.getSlice());
 
     return sz.alignment;
 }
@@ -1749,7 +2015,7 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 //  BUG: works for Ints only accidentally, since i64 and ptr have the same size. FIXIT!
 const Sizes = sizer.Size;
 fn sizeOf(self: *Self, t: ast.Type) Sizes {
-    var ts = sizer.TypeSize.init(self.typeContext, &self.prelude, self.tymap, self.arena);
+    var ts = sizer.TypeSize.init(self.typeContext, &self.prelude, self.tymap, self.alBase);
     return ts.sizeOf(t);
 }
 
@@ -1763,46 +2029,82 @@ fn getType(self: *const Self, ogt: ast.Type) ast.TypeF(ast.Type) {
     };
 }
 
-fn getVar(self: *Self, v: ast.Var) ValueMeta {
-    const vref = self.scope.getVar(v);
-    return valFromRef(vref);
+fn getVar(self: *Self, vr: ast.Var) Value {
+    const vl = self.scope.getVar(vr);
+    return vl.lvalue(); // when it's a var, it should be owned, when it was a ref, it should be lvalue.
 }
 
-fn putVar(self: *Self, v: ast.Var, value: ValueMeta, t: ast.Type) !void {
-    try self.scope.vars.put(v, try self.copyValue(value.ref, t));
+fn getTNum(self: *Self, tnum: ast.TNum) Value {
+    const v = self.scope.getVar(tnum.asVar());
+    std.debug.assert(v.smol());
+    return v.*;
 }
 
-fn putRef(self: *Self, v: ast.Var, value: RawValueRef) !void {
-    try self.scope.vars.put(v, value);
+fn putVar(self: *Self, v: ast.Var, value: Value) !void {
+    const valspace = try self.scope.vars.getOrPut(v);
+    if (valspace.found_existing) {
+        value.copyToRef(valspace.value_ptr.*.getRefToMemory());
+    } else {
+        const nuval = try value.copyWithValue(self.scope.allocator());
+        std.debug.assert(!nuval.isLValue());
+        valspace.value_ptr.* = nuval;
+    }
+}
+
+fn putTNum(self: *Self, tnum: ast.TNum, i: i64) !void {
+    try self.putVar(tnum.asVar(), Value.int(i));
+}
+
+fn putRef(self: *Self, v: ast.Var, value: Value) !void {
+    std.debug.assert(value.isLValue());
+    const valspace = try self.scope.vars.getOrPut(v);
+    if (valspace.found_existing) {
+        valspace.value_ptr.*.* = value;
+    } else {
+        const alval = try common.allocOne(self.scope.allocator(), value);
+        try self.scope.vars.put(v, alval);
+    }
 }
 
 const Scope = struct {
     prev: ?*@This(),
     vars: Vars,
     funs: Funs,
+    scopeLocalAllocator: if (!ArenaAlloc) std.heap.ArenaAllocator else std.mem.Allocator,
 
-    const Vars = std.HashMap(ast.Var, RawValueRef, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
+    const Vars = std.HashMap(ast.Var, *Value, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 
     const Funs = std.HashMap(ast.Var, EnvSnapshot, ast.Var.comparator(), std.hash_map.default_max_load_percentage);
 
-    fn init(prev: ?*@This(), al: std.mem.Allocator) @This() {
+    fn init(prev: ?*@This(), alBase: std.mem.Allocator) @This() {
         return .{
             .prev = prev,
-            .vars = Vars.init(al),
-            .funs = Funs.init(al),
+            .vars = Vars.init(alBase),
+            .funs = Funs.init(alBase),
+            .scopeLocalAllocator = if (!ArenaAlloc) std.heap.ArenaAllocator.init(alBase) else alBase,
         };
     }
 
-    fn getVar(self: *const @This(), v: ast.Var) RawValueRef {
+    fn deinit(self: *@This()) void {
+        self.vars.deinit();
+        self.funs.deinit();
+        if (!ArenaAlloc) self.scopeLocalAllocator.deinit();
+    }
+
+    fn getVar(self: *const @This(), v: ast.Var) *Value {
         return self.vars.get(v) orelse (self.prev orelse unreachable).getVar(v);
     }
 
     fn getFun(self: *const @This(), v: ast.Var) EnvSnapshot {
         return self.funs.get(v) orelse (self.prev orelse unreachable).getFun(v);
     }
+
+    fn allocator(self: *@This()) std.mem.Allocator {
+        return if (!ArenaAlloc) self.scopeLocalAllocator.allocator() else self.scopeLocalAllocator;
+    }
 };
 
-fn registerSignal(self: *Self, sig: i32, fun: ValueMeta, funty: ast.Type) !void {
+fn registerSignal(self: *Self, sig: i32, fun: Value, funty: ast.Type) !void {
     try self.signalHandlers.put(sig, .{
         .funty = funty,
         .funval = fun,
@@ -1818,13 +2120,17 @@ fn sighandler(sig: c_int) callconv(.C) void {
     const self = sigself.?;
     const fun = self.signalHandlers.get(sig).?;
     const argty = self.getType(fun.funty).Fun.args[0];
-    var sigparamval = RawValue{ .int = sig };
-    const sigparamref = ValueMeta{ .ref = &sigparamval };
+    const sigparamref = Value.int(sig);
     const sigval: TypeVal = .{ .t = argty, .v = sigparamref };
     var params = [_]TypeVal{sigval};
 
     // NOTE: this is bad - we should not be allocating here, because it's on a separate thread and might break.
     // this problem is similar to how can I present threads n shii.
+    // set up temporary stack for dis.
+    var defaultStmtExprStack: ExprStack = undefined;
+    self.beginStack(&defaultStmtExprStack);
+    defer self.restoreStack(&defaultStmtExprStack);
+
     _ = self.call(fun.funval, &params, fun.funty) catch unreachable;
 }
 
@@ -1902,8 +2208,8 @@ fn nunbox(ptr: anytype) struct { ptr: @TypeOf(ptr), fty: FunctionType } {
 
 // check if value is true.
 // the impl is funny and not immediately obvious, so this function was made to document that.
-fn isTrue(v: ValueMeta) bool {
-    return v.ref.enoom > 0;
+fn isTrue(v: Value) bool {
+    return v.get().tag > 0;
 }
 
 // kek
