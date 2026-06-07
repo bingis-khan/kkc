@@ -1514,6 +1514,10 @@ pub fn TypeF(comptime a: ?type) type {
             t: Rec,
             field: Str,
 
+            pub fn mapRecord(self: Field) Field { // polymorphic.
+                return self;
+            }
+
             pub fn print(self: @This(), c: Ctx) void {
                 c.print(.{ self.field, ": ", self.t });
             }

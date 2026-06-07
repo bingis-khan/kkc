@@ -5,6 +5,7 @@ const TypeContext = @import("TypeContext.zig");
 const common = @import("common.zig");
 const Str = common.Str;
 const Prelude = @import("Prelude.zig");
+const TypeMap = @import("TypeMap.zig").TypeMap;
 
 // represents size of a struct.
 pub const Size = struct {
@@ -60,12 +61,19 @@ fn calculatePadding(cur: usize, alignment: usize) usize {
 
 pub const Tag = u32;
 
+// DON'T BOTHER ADDING CONST TO SELF NIGGA.
 pub const TypeSize = struct {
     tyc: *const TypeContext,
-    match: *const ast.Match,
+    tymap: *const TypeMap,
     prelude: *const Prelude,
+    al: std.mem.Allocator, // TEMP
 
     const Self = @This();
+
+    pub fn init(tyc: *const TypeContext, prelude: *const Prelude, tymap: *const TypeMap, al: std.mem.Allocator) Self {
+        return .{ .tyc = tyc, .prelude = prelude, .tymap = tymap, .al = al };
+    }
+
     // calculates total size of the record (including tag)
     //  size includes alignment!
     //  VERY SLOW, BECAUSE IT RECALCULATES ALIGNMENT EACH TIME.
@@ -79,85 +87,76 @@ pub const TypeSize = struct {
                 // before all that check for 'bytes' annotation.
                 if (ast.Annotation.find(c.type.annotations, "bytes")) |ann| {
                     const sz = std.fmt.parseInt(usize, ann.params[0], 10) catch unreachable; // TODO: USER ERROR
-                    return .{
-                        .size = sz,
-                        .alignment = sz,
-                    };
+                    return .{ .size = sz, .alignment = sz };
                 }
 
-                // const oldTyMap = self.tymap;
-                // // FIXES INFINITE LOOP for functions that operate on datatypes which have outer tvars.
-                // // VERY HACKY.
-                // // basically, when we're in a function which defines the tvars, the c.outerApplication has the tvar itself as its value
-                // // so if we don't get the value of the tvar first, we get an infinite loop.
-                // // maybe there is a better way which does not require allocation?
-                // const outerApplication = self.arena.alloc(ast.TypeOrNum, c.outerApplication.len) catch unreachable; // TEMP
-                // for (0..outerApplication.len) |i| {
-                //     const app = c.outerApplication[i];
-                //     switch (app) {
-                //         .Type => |appt| {
-                //             outerApplication[i] = .{
-                //                 .Type = switch (self.typeContext.getType(appt)) {
-                //                     .TVar => |tv| oldTyMap.getTVar(tv) orelse appt, // very bad!! xddd
-                //                     else => appt,
-                //                 },
-                //             };
-                //         },
-                //         .Num => |appnum| {
-                //             outerApplication[i] = .{
-                //                 .Num = switch (self.typeContext.getNum(appnum)) {
-                //                     .TNum => |tnum| oldTyMap.getTNum(tnum) orelse appnum,
-                //                     else => appnum,
-                //                 },
-                //             };
-                //         },
-                //     }
-                // }
-                // const outerTVScheme = ast.Scheme{
-                //     .tvars = c.type.outerTVars,
-                //     .envVars = &.{},
-                //     .associations = &.{},
-                //     .env = null,
-                // };
-                // const outerTVMatch = ast.Match{
-                //     .tvars = outerApplication,
-                //     .envVars = &.{},
-                //     .assocs = &.{},
-                //     .scheme = outerTVScheme,
-                // };
-                // const outerTVMap = TypeMap{
-                //     .prev = oldTyMap,
-                //     .scheme = &outerTVScheme,
-                //     .match = &outerTVMatch,
-                // };
-                // const tymap = TypeMap{
-                //     .prev = &outerTVMap,
-                //     .scheme = &c.type.scheme,
-                //     .match = c.application,
-                // };
-                // self.tymap = &tymap;
-                // defer self.tymap = oldTyMap;
+                const oldTyMap = self.tymap;
+                // FIXES INFINITE LOOP for functions that operate on datatypes which have outer tvars.
+                // VERY HACKY.
+                // basically, when we're in a function which defines the tvars, the c.outerApplication has the tvar itself as its value
+                // so if we don't get the value of the tvar first, we get an infinite loop.
+                // maybe there is a better way which does not require allocation?
+                const outerApplication = self.al.alloc(ast.TypeOrNum, c.outerApplication.len) catch unreachable; // TEMP
+                // NOTE(07.06.26): either this or mapping a type beforehand.
+                defer self.al.free(outerApplication);
+                for (0..outerApplication.len) |i| {
+                    const app = c.outerApplication[i];
+                    switch (app) {
+                        .Type => |appt| {
+                            outerApplication[i] = .{
+                                .Type = switch (self.tyc.getType(appt)) {
+                                    .TVar => |tv| oldTyMap.mapTVar(tv) orelse appt, // very bad!! what happens when they have nested tvars, huh?
+                                    else => appt,
+                                },
+                            };
+                        },
+                        .Num => |appnum| {
+                            outerApplication[i] = .{
+                                .Num = switch (self.tyc.getNum(appnum)) {
+                                    .TNum => |tnum| oldTyMap.mapTNum(tnum) orelse appnum,
+                                    else => appnum,
+                                },
+                            };
+                        },
+                    }
+                }
+                const outerTVScheme = ast.Scheme{
+                    .tvars = c.type.outerTVars,
+                    .envVars = &.{},
+                    .associations = &.{},
+                };
+                const outerTVMatch = ast.Match{
+                    .tvars = outerApplication,
+                    .envVars = &.{},
+                    .assocs = &.{},
+                    .scheme = outerTVScheme,
+                };
+                const outerTVMap = TypeMap{
+                    .prev = oldTyMap,
+                    .scheme = &outerTVScheme,
+                    .match = &outerTVMatch,
+                };
+                const tymap = TypeMap{
+                    .prev = &outerTVMap,
+                    .scheme = &c.type.scheme,
+                    .match = c.application,
+                };
+                self.tymap = &tymap;
+                defer self.tymap = oldTyMap;
 
                 // check if ptr
                 if (c.type.eq(self.prelude.defined(.Ptr))) {
-                    return Size.ptr;
+                    return .{ .size = @sizeOf(*anyopaque), .alignment = @alignOf(*anyopaque) };
                 }
-
-                // do the match thing
-                // TODO: incomplete, also do the outer vars.
-                const oldMatch = self.match;
-                defer self.match = oldMatch;
-                self.match = c.application;
 
                 // check if array
                 if (c.type.eq(self.prelude.defined(.Array))) {
                     // TODO: refactor
                     const count: usize = b: {
-                        const numref = c.application.tvars[0].Num;
+                        var numref = c.application.tvars[0].Num;
                         while (true) {
                             switch (self.tyc.getNum(numref)) {
-                                // .TNum => |tnum| numref = self.tymap.getTNum(tnum) orelse unreachable,
-                                .TNum => unreachable,
+                                .TNum => |tnum| numref = self.tymap.mapTNum(tnum) orelse unreachable,
                                 .Literal => |lit| break :b @intCast(lit),
                                 .Unknown => unreachable,
                             }
@@ -207,16 +206,22 @@ pub const TypeSize = struct {
                     },
                 }
             },
-            .TVar => unreachable, // |tv| return self.sizeOf(self.tymap.getTVar(tv)),
+            .TVar => |tv| return self.sizeOf(self.tymap.mapTVar(tv).?),
 
-            .Fun => {
-                // return .{
-                //     .size = @sizeOf(*RawValue.Fun),
-                //     .alignment = @alignOf(*RawValue.Fun),
-                // };
-                return Size.ptr;
+            .Fun => return Size.ptr,
+            .TyVar => |tyv| {
+                if (self.tyc.getFieldsForTVar(tyv)) |tyvs| {
+                    if (tyvs.total) {
+                        return self.sizeOfRecord(tyvs.fields);
+                    } else {
+                        unreachable;
+                    }
+                } else {
+                    unreachable;
+                }
+
+                // TEMP: we are handling empty records here for now. We should normally unify em while typecheckin bruh
             },
-            .TyVar => unreachable, // actual error. should not happen!
         }
     }
 
@@ -230,10 +235,10 @@ pub const TypeSize = struct {
     }
 
     // stupid copy
-    fn sizeOfRecord(self: *Self, fields: []ast.TypeF(ast.Type).Field) Size {
+    fn sizeOfRecord(self: *Self, fields: anytype) Size {
         var size = Size{};
         for (fields) |field| {
-            const ty = field.t;
+            const ty = field.mapRecord().t;
             const sz = self.sizeOf(ty);
             _ = size.add(sz);
         }

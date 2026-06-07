@@ -12,6 +12,7 @@ const errr = @import("error.zig");
 const stdlib = @cImport(@cInclude("stdlib.h"));
 const TypeMap = @import("TypeMap.zig").TypeMap;
 const posix = std.posix;
+const sizer = @import("sizer.zig");
 
 const Self = @This();
 var sigself: ?*Self = null;
@@ -1723,9 +1724,8 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
                     return ffi.types.schar;
                 }
 
-                // TEMP nocheckin
                 if (common.streq(c.type.name, "Char")) {
-                    return ffi.types.schar;
+                    @panic("tried to ffi Char (but the definition changed.)");
                 }
 
                 if (common.streq(c.type.name, "CInt")) {
@@ -1747,212 +1747,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 //  size includes alignment!
 //  VERY SLOW, BECAUSE IT RECALCULATES ALIGNMENT EACH TIME.
 //  BUG: works for Ints only accidentally, since i64 and ptr have the same size. FIXIT!
-const Sizes = struct {
-    size: usize,
-    alignment: usize,
-};
+const Sizes = sizer.Size;
 fn sizeOf(self: *Self, t: ast.Type) Sizes {
-    switch (self.getType(t)) {
-        .Anon => |fields| {
-            return self.sizeOfRecord(fields, 0);
-        },
-        .Con => |c| {
-            // before all that check for 'bytes' annotation.
-            if (ast.Annotation.find(c.type.annotations, "bytes")) |ann| {
-                const sz = std.fmt.parseInt(usize, ann.params[0], 10) catch unreachable; // TODO: USER ERROR
-                return .{ .size = sz, .alignment = sz };
-            }
-
-            const oldTyMap = self.tymap;
-            // FIXES INFINITE LOOP for functions that operate on datatypes which have outer tvars.
-            // VERY HACKY.
-            // basically, when we're in a function which defines the tvars, the c.outerApplication has the tvar itself as its value
-            // so if we don't get the value of the tvar first, we get an infinite loop.
-            // maybe there is a better way which does not require allocation?
-            const outerApplication = self.arena.alloc(ast.TypeOrNum, c.outerApplication.len) catch unreachable; // TEMP
-            for (0..outerApplication.len) |i| {
-                const app = c.outerApplication[i];
-                switch (app) {
-                    .Type => |appt| {
-                        outerApplication[i] = .{
-                            .Type = switch (self.typeContext.getType(appt)) {
-                                .TVar => |tv| oldTyMap.mapTVar(tv) orelse appt, // very bad!! xddd
-                                else => appt,
-                            },
-                        };
-                    },
-                    .Num => |appnum| {
-                        outerApplication[i] = .{
-                            .Num = switch (self.typeContext.getNum(appnum)) {
-                                .TNum => |tnum| oldTyMap.mapTNum(tnum) orelse appnum,
-                                else => appnum,
-                            },
-                        };
-                    },
-                }
-            }
-            const outerTVScheme = ast.Scheme{
-                .tvars = c.type.outerTVars,
-                .envVars = &.{},
-                .associations = &.{},
-            };
-            const outerTVMatch = ast.Match{
-                .tvars = outerApplication,
-                .envVars = &.{},
-                .assocs = &.{},
-                .scheme = outerTVScheme,
-            };
-            const outerTVMap = TypeMap{
-                .prev = oldTyMap,
-                .scheme = &outerTVScheme,
-                .match = &outerTVMatch,
-            };
-            const tymap = TypeMap{
-                .prev = &outerTVMap,
-                .scheme = &c.type.scheme,
-                .match = c.application,
-            };
-            self.tymap = &tymap;
-            defer self.tymap = oldTyMap;
-
-            // check if ptr
-            if (c.type.eq(self.prelude.defined(.Ptr))) {
-                return .{ .size = @sizeOf(*anyopaque), .alignment = @alignOf(*anyopaque) };
-            }
-
-            // check if array
-            if (c.type.eq(self.prelude.defined(.Array))) {
-                // TODO: refactor
-                const count: usize = b: {
-                    var numref = c.application.tvars[0].Num;
-                    while (true) {
-                        switch (self.typeContext.getNum(numref)) {
-                            .TNum => |tnum| numref = self.tymap.mapTNum(tnum) orelse unreachable,
-                            .Literal => |lit| break :b @intCast(lit),
-                            .Unknown => unreachable,
-                        }
-                    }
-                };
-                const ty = c.application.tvars[1].Type;
-                const sz = self.sizeOf(ty);
-
-                // NOTE: padding
-                // Then I compiler a ThreeChar struct in C, a 5 element 3 char array has 15 bytes, which means no padding between elements.
-                // Based on this, the algorithm seems correct.
-
-                return .{ .size = sz.size * count, .alignment = sz.alignment };
-            }
-
-            switch (c.type.structureType()) {
-                // NOTE: not sure if it's correct, but assume pointer size, because that's what opaque types mostly are. I guess I should also use some annotations to check size.
-                //  I wonder if I should make sizes in annotations OR will the compiler just *know* about inbuilt types?
-                .Opaque => return .{
-                    .size = @sizeOf(*anyopaque),
-                    .alignment = @alignOf(*anyopaque),
-                },
-                // ERROR: this is not correct for ints, so watch out.
-                //  I should be able to specify expected datatype size.
-                .EnumLike => {
-                    return .{
-                        .size = @sizeOf(RawValue.Tag),
-                        .alignment = @alignOf(RawValue.Tag),
-                    };
-                },
-                .RecordLike => {
-                    return switch (c.type.stuff) {
-                        .cons => |cons| self.sizeOfCon(&cons[0], 0),
-                        .recs => |recs| self.sizeOfRecord_(ast.Data.DecRecord, recs, 0, ast.Data.DecRecord.mapRecord),
-                    };
-                },
-                .ADT => {
-                    var max: ?Sizes = null;
-                    for (c.type.stuff.cons) |*con| {
-                        const sz = self.sizeOfCon(con, @sizeOf(RawValue.Tag));
-                        if (max) |*m| {
-                            if (sz.size > m.size) {
-                                m.size = sz.size;
-                            }
-
-                            // with unions, both are split. imagine union of 13 chars and one long.
-                            // it'll be aligned to 8, so size 16
-                            // (i tested it, it works like that)
-                            if (sz.alignment > m.alignment) {
-                                m.alignment = sz.alignment;
-                            }
-                        } else {
-                            max = sz;
-                        }
-                    }
-
-                    var m = max orelse unreachable;
-                    m.size += @sizeOf(RawValue.Tag); // don't forget to add a tag. we don't need to change alignment tho, because we took care of it beforehand.
-                    m.size += calculatePadding(m.size, m.alignment);
-                    return m;
-                },
-            }
-        },
-        .TVar => unreachable, // |tv| return self.sizeOf(self.tymap.getTVar(tv)),
-
-        .Fun => return .{
-            .size = @sizeOf(*RawValue.Fun),
-            .alignment = @alignOf(*RawValue.Fun),
-        },
-        .TyVar => |tyv| {
-            if (self.typeContext.getFieldsForTVar(tyv)) |tyvs| {
-                if (tyvs.total) {
-                    return self.sizeOfRecord(tyvs.fields, 0);
-                } else {
-                    unreachable;
-                }
-            } else {
-                unreachable;
-            }
-
-            // TEMP: we are handling empty records here for now. We should normally unify em while typecheckin bruh
-        },
-    }
-}
-
-fn sizeOfCon(self: *Self, con: *const ast.Con, beginOff: usize) Sizes {
-    var off = beginOff;
-    // SMELL: duplicate logic with initRecord
-    var maxAlignment: usize = 1;
-    for (con.tys) |ty| {
-        const sz = self.sizeOf(ty);
-        const padding = calculatePadding(off, sz.alignment);
-        off += padding + sz.size;
-        maxAlignment = @max(maxAlignment, sz.alignment);
-    }
-
-    off += calculatePadding(off, maxAlignment);
-    return .{
-        .size = off,
-        .alignment = maxAlignment,
-    };
-}
-
-// stupid copy
-fn sizeOfRecord(self: *Self, fields: []ast.Record, beginOff: usize) Sizes {
-    return self.sizeOfRecord_(ast.Record, fields, beginOff, common.id(ast.Record));
-}
-fn sizeOfRecord_(self: *Self, comptime T: type, fields: []T, beginOff: usize, comptime acc: fn (T) ast.Record) Sizes {
-    var off = beginOff;
-    // SMELL: duplicate logic with initRecord
-    var maxAlignment: usize = 1;
-    for (fields) |afield| {
-        const field = acc(afield);
-        const ty = field.t;
-        const sz = self.sizeOf(ty);
-        const padding = calculatePadding(off, sz.alignment);
-        off += padding + sz.size;
-        maxAlignment = @max(maxAlignment, sz.alignment);
-    }
-
-    off += calculatePadding(off, maxAlignment);
-    return .{
-        .size = off,
-        .alignment = maxAlignment,
-    };
+    var ts = sizer.TypeSize.init(self.typeContext, &self.prelude, self.tymap, self.arena);
+    return ts.sizeOf(t);
 }
 
 fn getType(self: *const Self, ogt: ast.Type) ast.TypeF(ast.Type) {
