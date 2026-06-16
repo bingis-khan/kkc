@@ -15,6 +15,7 @@ use Iter
 	next
 
 # TODO: make filename a general string
+# NOTE: silently allocate + 1 for a null terminator.
 fn try-read-contents (filename, al)
 	file = Cnile.fopen(filename, 'r')
 	if file Mem.is-ptr-null()
@@ -26,12 +27,12 @@ fn try-read-contents (filename, al)
 
 	file-buf = al allocate(Mem.i32-size(file-size) + 1) as Slice U8
 
-	Cnile.fread(file-buf.ptr, 1, file-size, file)
+	Cnile.fread(file-buf.ptr, file-size, 1, file)  # not 1, file-size, cuz of some article on hn i read.
 	file-buf Slice.set(Mem.i32-size(file-size), Char.nullchar() Char.char-u8())
 
 	Cnile.fclose(file)
 
-	str = StrView { contents: file-buf }
+	str = StrView { contents: file-buf Slice.subslice(0, file-buf.count - 1) }
 	return Just(str)
 
 

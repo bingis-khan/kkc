@@ -2,6 +2,10 @@
 #[ctype 'char', bytes '1']
 AsciiChar
 
+# wchar (4 bytes on linux, 2 on binbows)
+#[ctype 'wchar_t', bytes '4']
+WChar
+
 # different synonyms to check stuff
 CChar = AsciiChar
 
@@ -148,6 +152,16 @@ external
 
 	#[cstdinclude 'stdlib.h']
 	rand () -> CInt
+
+	# wchar stuff
+	#[cstdinclude 'stdlib.h']
+	mbstowcs (wchs Ptr WChar, cstr Ptr CChar, count Size) -> Size
+
+	#[cstdinclude 'wchar.h' '__USE_XOPEN']
+	wcwidth (wc WChar) -> CInt
+
+	#[cstdinclude 'locale.h']
+	setlocale (category CInt, locale ConstStr) -> ConstStr
 
 
 	#[cstdinclude 'string.h']
@@ -313,5 +327,8 @@ fn errno-EEXIST(): @errno == 17
 # sys/stat.h mode constants
 fn s-ifmt() -> U32: 61440   # 0o170000 - bitmask for file type bits
 fn s-ifdir() -> U32: 16384  # 0o040000 - directory file type
+
+# locale
+fn lc-ctype() -> CInt: 0
 
 # TODO: nullable CPtr and a function CPtr a -> Maybe (Ptr a)

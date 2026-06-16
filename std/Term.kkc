@@ -44,6 +44,10 @@ fn beep()
 	c = 7 Mem.cast() as Char
 	print(c)
 
+# C's wcwidth.
+Cnile.setlocale(Cnile.lc-ctype(), '')  # <- set this for wcwidth to work properly wtf (GNUfail)
+fn wcwidth (c Char): c Char.to-c-wchar() Cnile.wcwidth()
+
 
 ## color term stuff.
 ## SHOULD THIS BE IN THE SAME FILE???

@@ -35,7 +35,8 @@ pub fn main() !void {
 
     const compilationStartTime = try std.time.Instant.now();
     var modules = try preloadModules(&opts, aa);
-    _ = try compileFile(&modules, opts.filename);
+    const fileonly = std.fs.path.basename(opts.filename);
+    _ = try compileFile(&modules, fileonly);
 
     const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
 
@@ -186,7 +187,8 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
 
     const errors = try common.allocOne(aa, Errors.init(aa));
     const typeContext = try common.allocOne(aa, try TypeContext.init(aa, errors));
-    var modules = try Modules.init(aa, errors, typeContext, "", stdRoot, opts);
+    const root = std.fs.path.dirname(opts.filename) orelse "";
+    var modules = try Modules.init(aa, errors, typeContext, root, stdRoot, opts);
 
     const prelude = try modules.loadPrelude();
     typeContext.prelude = prelude;

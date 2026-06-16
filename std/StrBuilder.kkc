@@ -50,7 +50,7 @@ fn free(sb Ptr (StrBuilder Allocator))
 
 # DOES NOT REALLOCATE!
 fn as-str (builder Ptr (StrBuilder alloc)):
-	StrView { contents: builder&.chars.elements subslice(0, builder&.chars.count) Mem.cast() }
+	StrView { contents: builder&.chars.elements subslice(0, builder&.chars.count) Slice.cast-slice() }
 
 fn as-char-slice (builder Ptr (StrBuilder alloc)):
 	builder&.chars List.to-slice()

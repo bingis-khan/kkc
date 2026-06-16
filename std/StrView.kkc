@@ -28,6 +28,9 @@ fn from-str (s Str, al)
 fn from-ascii-slice (sl Slice Cnile.AsciiChar): StrView { contents: sl Slice.cast-slice() }
 fn from-bytes (sl Slice U8): StrView { contents: sl }
 
+# watch out, if it's a dynamic char, it won't work. how do I solve this?
+# fn from-char (char Char): StrView { contents: Slice { ptr: char.ptr, count: char.num-bytes } }
+
 # special clone, where StrView is compatible with C-style ConstStr
 fn clone-0(s StrView, al Allocator) -> StrView
 	cnt = s.contents.count
@@ -59,3 +62,48 @@ fn substr (s StrView, from Size, to Size)
 
 fn byte-substr (s StrView, from Size, to Size):
 	StrView { contents: s.contents Slice.subslice(from, to) }
+
+fn byte-substr-from (s StrView, from Size):
+	StrView { contents: s.contents Slice.from(from) }
+
+fn num-bytes (self StrView): self.contents.count
+
+
+
+#### Iterators
+
+SplitIter
+	og StrView
+	last Size
+	fun Char -> Bool
+
+fn split-by-filter (s StrView, fun Char -> Bool):
+	SplitIter { og: s, last: 0, fun }
+
+fn split-by-each (s StrView, c Char): split-by-filter(s, fn cc: cc == c)
+
+inst IntoIter SplitIter
+	into-iter (self SplitIter): self
+
+inst Iter SplitIter
+	next (self Ptr SplitIter) -> Maybe StrView
+		if self&.last > self&.og.contents.count
+			return None
+
+		# iterator is left after last encountered newline
+		i = self&.last
+		while i < self&.og.contents.count
+			ptr = self&.og.contents Slice.get-ptr(i)
+			c = ptr Char.scan-from-mem()
+			if self&.fun(c)
+				break
+			i <= i + ptr Char.next-char()
+
+		line = self&.og byte-substr(self&.last, i)
+		i <= i + 1  # skip past the newline
+
+		# modify the state
+		self <&.last= i
+
+		return Just(line)
+

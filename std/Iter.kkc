@@ -459,6 +459,7 @@ fn reduce (iterable it, base a, fun (item, a) -> a) -> a <= IntoIter it
 			Just(res)
 				x <= fun(res, x)
 
+	@panic('unreachable')
 	return @undefined  # unreachable. we need better return checking.
 
 fn count(it it) -> Size <= IntoIter it:

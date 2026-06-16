@@ -35,6 +35,8 @@ fn max(l, r)
 
 fn maximum(it): it Iter.reduce(None, fn(x, last-max): Misc.maybe(last-max, fn(lm): Just(max(lm,x)), Just(x)))
 
+fn minmax(l, r): if l < r: (l, r) else (r, l)
+
 
 fn abs(x):
 	if x >= 0: x

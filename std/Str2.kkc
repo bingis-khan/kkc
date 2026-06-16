@@ -19,6 +19,7 @@ use Iter
 	from
 	for-each
 	drop-while'
+	drop'
 use Error
 	panic
 	todo
@@ -142,7 +143,7 @@ inst IntoIter LineIter
 inst Iter LineIter
 	next (self Ptr LineIter) -> Maybe StrView
 		# should consume the last trailing newline
-		if self&.last >= self&.og.contents.count or self&.og.contents[self&.last] == Char.nullchar() Char.char-u8()
+		if self&.last >= self&.og.contents.count
 			return None
 
 		# iterator is left after last encountered newline
@@ -161,27 +162,58 @@ inst Iter LineIter
 
 
 
-SplitWhitespaceIter it
+#### split by multiple at a time.
+
+SplitWhitespaceIter it a
 	it it
 	# TODO: in the future, add custom separator function.
+	fun a -> Bool
 
-fn split(it)
+fn split-by(it, fun)
 	it = it into-iter()
-	it = it drop-while'(is-whitespace)
-	return SplitWhitespaceIter { it }
+	it = it drop-while'(fun)
+	return SplitWhitespaceIter { it, fun }
+
+fn split(it): split-by(it, is-whitespace)
 
 inst IntoIter SplitWhitespaceIter
 	into-iter (self): self
 
 inst Iter SplitWhitespaceIter
-	next (self Ptr (SplitWhitespaceIter it)) <= Iter it, IntoIter it
+	next (self Ptr (SplitWhitespaceIter it a)) <= Iter it, IntoIter it
 		if self&.it Iter.null()
 			return None
 
-		itAndTaken = self&.it Iter.take-while'(fn x: not x is-whitespace())
+		itAndTaken = self&.it Iter.take-while'(fn x: not self&.fun(x))
 		case itAndTaken
 			Tuple2(it, taken)
-				self <&.it= it drop-while'(is-whitespace)
+				self <&.it= it drop-while'(self&.fun)
+				return Just(taken)
+
+
+#### split by each character (does not trim in the beginninig)
+
+SplitEachWhitespaceIter it a
+	it it
+	# TODO: in the future, add custom separator function.
+	fun a -> Bool
+
+fn split-by-each(it, fun)
+	it = it into-iter()
+	return SplitWhitespaceIter { it, fun }
+
+inst IntoIter SplitEachWhitespaceIter
+	into-iter (self): self
+
+inst Iter SplitEachWhitespaceIter
+	next (self Ptr (SplitEachWhitespaceIter it a)) <= Iter it, IntoIter it
+		if self&.it Iter.null()
+			return None
+
+		itAndTaken = self&.it Iter.take-while'(fn x: not self&.fun(x))
+		case itAndTaken
+			Tuple2(it, taken)
+				(&self&.it) drop'(1)
 				return Just(taken)
 
 

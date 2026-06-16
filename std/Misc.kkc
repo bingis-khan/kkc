@@ -1,4 +1,14 @@
 fn id(x): x
+
+# this one is for stuff like this:
+# prev =& pane&.cursor  <- i didn't want to get the reference to the cursor,
+#                          i wanted to copy it, then make it accessible only as a reference.
+#                          we got a reference to the pane&.cursor value, which caused me to modify the og value.
+#                          `own` is to force a copy.
+# so, finally, it would be:
+# prev =& pane&.cursor own()
+fn own(x): x
+
 fn fst(Tuple2(l, _)): l
 fn snd(Tuple2(_, r)): r
 fn is-just(m Maybe a) -> Bool
@@ -7,6 +17,13 @@ fn is-just(m Maybe a) -> Bool
 			return False
 		Just(_)
 			return True
+
+fn is-none (m Maybe a)
+	case m
+		None
+			return True
+		Just(_)
+			return False
 
 fn and-maybe(m Maybe a, fun a -> Maybe b) -> Maybe b
 	case m
@@ -26,6 +43,14 @@ fn maybe (x Maybe a, fun a -> b, default b) -> b:
 	(case x)
 		Just(y): fun(y)
 		_: default
+
+fn if-just (x Maybe a, fun a -> ()) -> ()
+	case x
+		Just(xx)
+			fun(xx)
+		None
+			pass
+
 
 # I should add a Deallocatable/Freeable class to this and then I don't need to provide a deallocatable function!
 fn with (res a, free-fun a -> Unit, fun a -> b) -> b

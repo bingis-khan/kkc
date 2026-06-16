@@ -25,7 +25,13 @@ const getTypeMapped = Mono.getTypeMapped;
 const getUnion = Mono.getUnion;
 
 // out: Writer,
-imports: Set(Str, std.hash_map.StringContext),
+libdefines: Set(Str, std.hash_map.StringContext), // special hacky stuff - for defined needed before includes (_IMPL stuff and __USE_XOPEN)
+imports: std.HashMap(
+    Str,
+    Set(Str, std.hash_map.StringContext), // additional defines
+    std.hash_map.StringContext,
+    std.hash_map.default_max_load_percentage,
+),
 coptions: Set(Str, std.hash_map.StringContext),
 functionsGenerated: FunctionsGenerated,
 unionsGenerated: UnionsGenerated,
@@ -106,7 +112,13 @@ pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
     var c = @This(){
         .cur = CW.init(al),
         .al = al,
-        .imports = Set(Str, std.hash_map.StringContext).init(al),
+        .libdefines = Set(Str, std.hash_map.StringContext).init(al),
+        .imports = std.HashMap(
+            Str,
+            Set(Str, std.hash_map.StringContext),
+            std.hash_map.StringContext,
+            std.hash_map.default_max_load_percentage,
+        ).init(al),
         .coptions = Set(Str, std.hash_map.StringContext).init(al),
         .functionsGenerated = FunctionsGenerated.initContext(al, .{ .typeContext = tc }),
         .unionsGenerated = UnionsGenerated.initContext(al, .{ .typeContext = tc }),
@@ -127,7 +139,11 @@ pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
 pub fn writeTo(self: *const @This(), writer: anytype) anyerror!void {
     var importIt = self.imports.iterator();
     while (importIt.next()) |importName| {
-        try writer.print("#include <{s}>\n", .{importName.*});
+        var importDefinesIt = importName.value_ptr.iterator();
+        while (importDefinesIt.next()) |importDefine| {
+            try writer.print("#define {s}\n", .{importDefine.*});
+        }
+        try writer.print("#include <{s}>\n", .{importName.key_ptr.*});
     }
 
     try writer.print("int _global_argc;\n", .{});
@@ -1256,7 +1272,7 @@ const Stmt = struct {
                     }
 
                     if (ast.Annotation.find(efn.anns, "cstdinclude")) |ann| {
-                        try stmt.ctx.backend.imports.insert(ann.params[0]);
+                        try addImport(stmt.ctx, ann.params[0], ann.params[1..]);
                     }
 
                     if (ast.Annotation.find(efn.anns, "coption")) |ann| {
@@ -1416,7 +1432,7 @@ const Stmt = struct {
                         try stmt.genExpr(intr.args[1]);
                     },
                     .errno => {
-                        try stmt.ctx.backend.imports.insert("errno.h");
+                        try addImport(stmt.ctx, "errno.h", &.{});
                         try stmt.p("errno");
                     },
 
@@ -1517,7 +1533,7 @@ const Stmt = struct {
                                     try sigarrsetln.p(.{ sigarrname, "[", sigv, "]", "=", funv });
                                     try sigarrsetln.finishStmt();
 
-                                    try self.backend.imports.insert("signal.h");
+                                    try addImport(self, "signal.h", &.{});
                                     var sigcallln = startLine(self);
                                     try sigcallln.p(.{ "signal(", sigv, ",", sighandlerfnname, ")" });
                                     try sigcallln.finishStmt();
@@ -2070,7 +2086,7 @@ const Stmt = struct {
         const dp = ast.Decon.PathM{ .Tip = .{ .t = decon.t, .v = refvar } };
         try self.deconCondition_(&hadCondition, decon, &dp);
         if (!hadCondition) {
-            try self.ctx.backend.imports.insert("stdbool.h");
+            try addImport(self.ctx, "stdbool.h", &.{});
             try self.p("true");
         }
         return hadCondition;
@@ -2723,9 +2739,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
     const data = tyApp.type;
 
     if (ast.Annotation.find(data.annotations, "cstdinclude")) |ann| {
-        for (ann.params) |param| {
-            try self.backend.imports.insert(param);
-        }
+        try addImport(self, ann.params[0], ann.params[1..]);
     }
 
     if (ast.Annotation.find(data.annotations, "ctype")) |ann| {
@@ -3151,8 +3165,8 @@ fn genRecordConstructor(self: *Self, nuId: Unique, con: *const ast.Con, comptime
 }
 
 fn genPanic(self: *Self, s: anytype) !void {
-    try self.backend.imports.insert("stdlib.h");
-    try self.backend.imports.insert("stdio.h");
+    try addImport(self, "stdlib.h", &.{});
+    try addImport(self, "stdio.h", &.{});
 
     var l = startLine(self);
     if (@TypeOf(s) == Temp) {
@@ -3168,13 +3182,24 @@ fn genPanic(self: *Self, s: anytype) !void {
 }
 
 fn genInlinePanic(self: *Stmt, s: Str) !void {
-    try self.ctx.backend.imports.insert("stdlib.h");
-    try self.ctx.backend.imports.insert("stdio.h");
+    try self.ctx.addImport("stdlib.h", .{});
+    try self.ctx.addImport("stdio.h", .{});
 
     try self.p("({");
     try self.j(.{ "printf", "(", "\"%s\\n\", \"", s, "\");" });
     try self.p(.{ "exit", "(", 1, ");" });
     try self.p("})");
+}
+
+fn addImport(self: *Self, import: Str, defines: []Str) !void {
+    const kvr = try self.backend.imports.getOrPut(import);
+    if (!kvr.found_existing) {
+        kvr.value_ptr.* = Set(Str, std.hash_map.StringContext).init(self.backend.al);
+    }
+
+    for (defines) |def| {
+        try kvr.value_ptr.insert(def);
+    }
 }
 
 const FunInst = ast.TypeF(ast.Type).Fun;

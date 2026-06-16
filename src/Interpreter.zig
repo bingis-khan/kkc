@@ -17,7 +17,7 @@ const Size = sizer.Size;
 
 // this turns on non-deallocating mode. it makes it 5x faster (crying emoji ahh)
 // why so slou
-const ArenaAlloc = false;
+const ArenaAlloc = true;
 
 const Self = @This();
 var sigself: ?*Self = null;
@@ -1735,7 +1735,7 @@ const Value = struct {
     }
 
     fn bul(b: bool) Value {
-        return Value.initOwned(.{ .u32 = if (b) 1 else 0 }, Size.ofType(bool));
+        return Value.initOwned(.{ .u32 = if (b) 1 else 0 }, Size.tag);
     }
 
     fn soleTag(e: sizer.Tag, size: Size, al: std.mem.Allocator) !Value {
@@ -1988,6 +1988,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
 
                 if (common.streq(c.type.name, "AsciiChar")) {
                     return ffi.types.schar;
+                }
+
+                if (common.streq(c.type.name, "WChar")) {
+                    return ffi.types.uint32; // on tha leenuxes
                 }
 
                 if (common.streq(c.type.name, "Char")) {

@@ -113,6 +113,8 @@ use Misc
 	and-maybe
 	fmap-maybe
 	is-just
+	is-none
+	if-just  # im not sure if this should be exported by default geeeg.
 	with
 	flip
 use Math

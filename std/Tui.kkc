@@ -477,11 +477,14 @@ fn draw(tui Ptr Tui, cond, body () -> ())
 ### SCREEN
 
 
+# TODO: handle wcwidth stuff. maybe keep track of width in the Cell and when displaying cut the display early.
 Cell
-	c Cnile.AsciiChar
+	c Char
 	fg Color
 	bg Color
+	char-width I32  # set along the char yo.
 	# todo: transparent?
+
 
 inst Eq Cell
 	eq (l, r)
@@ -502,6 +505,14 @@ fn invert-cell-colors (cell Ptr Cell)
 	cell <&.fg = cell&.bg
 	cell <&.bg = fg
 
+fn default-cell (): Cell
+	{ c: ' '
+	, fg: Term.ColorDefault
+	, bg: Term.ColorDefault
+	, char-width: 1
+	}
+
+
 Screen
 	al Allocator
 	tui Ptr Tui
@@ -514,10 +525,10 @@ Screen
 
 fn mk-screen(tui Ptr Tui, al Allocator)
 	cur = al Alloc.allocate((tui&.width * tui&.height) u32-size())
-	cur Slice.map(fn _: Cell { c: ' ', fg: Term.ColorDefault, bg: Term.ColorDefault })
+	cur Slice.map(fn _: default-cell())
 
 	prev = al Alloc.allocate((tui&.width * tui&.height) u32-size())
-	prev Slice.map(fn _: Cell { c: ' ', fg: Term.ColorDefault, bg: Term.ColorDefault })
+	prev Slice.map(fn _: default-cell())
 
 	return Screen
 		{ current: cur
@@ -535,7 +546,11 @@ fn free-screen(screen Ptr (Screen Allocator))  # TODO: the parameter is not defi
 	al Alloc.free(screen&.previous)
 
 fn clear-screen(screen Ptr (Screen Allocator))
-	screen&.current Slice.map(fn _: Cell { c: ' ', fg: Term.ColorDefault, bg: Term.ColorDefault })
+	screen&.current Slice.map(fn _: default-cell())
+
+# fixed wcwidth as to how it's actually rendered
+fn rendered-wcwidth (c Char):
+	Math.max(Term.wcwidth(c), 1)
 
 RenderState
 	x U32
@@ -553,7 +568,7 @@ fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
 	# preprocess some stuff - handle disallowed chars.
 	char = c&.c
 	bg = c&.bg
-	if char == '\t' or char == '\r' or char == '\n'
+	if c&.char-width == -1
 		char <= ' '
 		bg <= Term.Color8(Term.Red8)
 
@@ -566,7 +581,8 @@ fn emit-cell(rs Ptr RenderState, c Ptr Cell, x U32, y U32)
 		rs <&.bg= bg
 
 	Str.print-str(char)
-	rs <&.x = rs&.x + 1
+	char-width = Math.max(c&.char-width, 1) Mem.i32-u32()
+	rs <&.x = rs&.x + char-width
 
 fn render-screen(screen Ptr (Screen Allocator))
 	w = screen&.tui&.width u32-i32()
@@ -574,14 +590,25 @@ fn render-screen(screen Ptr (Screen Allocator))
 	rs =& RenderState { x: 0, y: 0, fg: Term.ColorDefault, bg: Term.ColorDefault, changes: 0 }
 	Term.move-cursor-to(0, 0)
 	for y in 0 to (h - 1)
-		for x in 0 to (w - 1)
-			i = (y * w + x) i32-size()
+		x-v = 0
+		for x-i in 0 to (w - 1)
+			i = (y * w + x-i) i32-size()
 			cur = Slice.get-ptr(screen&.current, i)
 			prev = Slice.get-ptr(screen&.previous, i)
+			char-width = Math.max(cur&.char-width, 1)
+
+			# chars can be wider than total width. exit then.
+			# TODO: stop render when out-of-screen and fill the remaining area (char-width - 1) with spaces.
+			# NOTE: terminals seem to do it by themselves (they don't begin a new line, so it's pretty kewl)
+			# if x-v >= w
+			# 	break
+
 			if cur /= prev or screen&.requires-full-redraw
 				rs <&.changes= rs&.changes + 1
-				emit-cell(rs, cur, x i32-u32(), y i32-u32())
+				emit-cell(rs, cur, x-v i32-u32(), y i32-u32())
 				prev <&= cur&
+
+			x-v <= x-v + char-width
 
 	screen <&.requires-full-redraw= False
 	Term.reset-colors()
@@ -641,7 +668,6 @@ fn fill-default(screen Ptr (Screen Allocator))
 			cell <&.bg= screen&.default-bg
 
 # non-wrapping drawing thing.
-# TEMP: accepts char, converts to ascii
 fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	w = screen&.tui&.width u32-i32()
 	if x >= w or y >= screen&.tui&.height u32-i32() or x < 0 or y < 0
@@ -650,7 +676,10 @@ fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	fg = screen&.default-fg
 	bg = screen&.default-bg
 	c = c
-	screen&.current Slice.set(i, Cell { c: c Char.char-u8() Char.u8-ascii(), fg, bg })
+	char-width = Term.wcwidth(c)
+	# it means it's a control character (or an invalid one)
+	# keep char-width -1 to signal it's an invalid char (and render it differently)
+	screen&.current Slice.set(i, Cell { c, fg, bg, char-width })
 
 fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
 	w = screen&.tui&.width u32-i32()

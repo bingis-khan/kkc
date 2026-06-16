@@ -29,7 +29,7 @@ fn sync-char (p Ptr U8) -> Size  # BACKWARDS movement!
 
 # moves the character back from the previous correct character.
 fn previous-char (p Ptr U8) -> Size  # BACKWARDS movement!
-	return p Mem.offset-ptr(-1) sync-char()
+	return p Mem.offset-ptr(-1) sync-char() + 1  # (+1, because imagine: lands on a correct char. then sync-char() returns 0. so we must add 1)
 
 
 fn scan-from-mem(p Ptr U8) -> Char
@@ -117,6 +117,21 @@ fn nullchar() -> Char: '\0'
 
 
 ####
+
+fn to-c-wchar (c Char) -> Cnile.WChar
+	case c destructure()
+		Ref(c)
+			wcp =& Mem.zeroed()
+			num-chars = Cnile.mbstowcs(wcp, c.ptr Mem.cast-ptr(), 1)
+			if num-chars == (Mem.cast(-1 as I64) as Size)
+				@panic('could NOT convert char to wchar_t :c')  # maybe later return None if cannot convert.
+			return wcp&
+
+		Scalar(sc)
+			if not sc Mem.size-of() == (Mem.get-typesize() as Mem.TypeSize Cnile.WChar).size
+				@panic('Scalar size should be the same as Cnile.WChar')
+			return sc Mem.cast()
+
 
 fn printf-char (c Char)
 	case c destructure()
