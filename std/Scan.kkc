@@ -47,6 +47,9 @@ inst IntoIter Scanner
 fn mk (s it) <= IntoIter it:
 	Scanner { s: s into-iter() }
 
+# todo: bad name
+fn mk-from-strview (s StrView) -> Scanner StrView: { s }
+
 fn mk-from-str(s str) <= Str str:
 	Scanner { s: s chars() }
 
@@ -73,7 +76,6 @@ fn try-char (sc Ptr (Scanner s), char Char) -> Bool <= Iter s, IntoIter s
 
 	return False
 
-
 ###### U8 STUFF
 
 # actually, it does not require any specific type.
@@ -99,6 +101,18 @@ fn smol-str (sc Ptr (Scanner it), sz Size) -> SmolStr <= Iter it, IntoIter it
 	smol-str = SmolStr.from-bytes(sc&.s take(sz))
 	drop'(&sc&.s, sz)
 	return smol-str
+
+
+#### StrView
+
+fn take-str-while (sc Ptr (Scanner StrView), fun Char -> Bool) -> StrView
+	s = sc&.s StrView.take-while(fun)
+	sc <&.s= sc&.s StrView.byte-substr-from(s StrView.num-bytes())
+	return s
+
+# maybe we should just add an Iter instance to StrView?
+fn drop-str-while (sc Ptr (Scanner StrView), fun Char -> Bool)
+	_ = sc take-str-while(fun)
 
 
 #### Sub Scanner

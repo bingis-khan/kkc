@@ -3,7 +3,8 @@ use Str
 	Str
 	chars
 use Str2
-	allocate-str
+	# this is only for ConstStr, i need to update that.
+	# allocate-str
 	lines
 	split
 	is-blank

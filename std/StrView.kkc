@@ -2,6 +2,7 @@ use Iter
 	IntoIter
 	into-iter
 	map
+	sum
 use Cnile
 use Slice
 	Slice
@@ -68,6 +69,17 @@ fn byte-substr-from (s StrView, from Size):
 
 fn num-bytes (self StrView): self.contents.count
 
+
+fn take-while (self StrView, fun Char -> Bool) -> StrView
+	bi = self Str.chars() Iter.take-while(fun) map(fn c: c.num-bytes) sum()
+	return self byte-substr(0, bi)
+
+
+
+#### Instances
+
+inst Eq StrView
+	eq (l, r): l.contents == r.contents
 
 
 #### Iterators

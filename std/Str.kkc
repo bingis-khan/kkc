@@ -548,3 +548,6 @@ fn const-str-len (s ConstStr):
 
 inst Eq ConstStr
 	eq (l, r): Cnile.strcmp(l, r) == 0
+
+inst Eq StrView
+	eq (l, r): Cnile.strcmp(l, r) == 0
