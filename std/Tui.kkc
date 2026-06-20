@@ -590,23 +590,26 @@ fn render-screen(screen Ptr (Screen Allocator))
 	rs =& RenderState { x: 0, y: 0, fg: Term.ColorDefault, bg: Term.ColorDefault, changes: 0 }
 	Term.move-cursor-to(0, 0)
 	for y in 0 to (h - 1)
+
+		# (20.06.26): fyi, we changed the way we render characters. when we "packed" wcwidth > 1 characters,
+		# then we couldn't really index into screen positions (we had to look up the width for all previous characters.)
+		# i realized this was unacceptable in a Tui application (where screen position is for layouting n shii)
+		# -- after i unpacked stuff, we had problems where some characters weren't updated. check the stuff below.
 		x-v = 0
-		for x-i in 0 to (w - 1)
-			i = (y * w + x-i) i32-size()
+		while x-v < w
+			i = (y * w + x-v) i32-size()
 			cur = Slice.get-ptr(screen&.current, i)
-			prev = Slice.get-ptr(screen&.previous, i)
 			char-width = Math.max(cur&.char-width, 1)
+			curs = Slice.subslice(screen&.current, i, i + char-width Mem.i32-size())
+			prevs = Slice.subslice(screen&.previous, i, i + char-width Mem.i32-size())
 
-			# chars can be wider than total width. exit then.
-			# TODO: stop render when out-of-screen and fill the remaining area (char-width - 1) with spaces.
-			# NOTE: terminals seem to do it by themselves (they don't begin a new line, so it's pretty kewl)
-			# if x-v >= w
-			# 	break
-
-			if cur /= prev or screen&.requires-full-redraw
+			# (20.06.26): it got complicated due to wcwidth>1/utf8 char handling
+			# stuff wasn't getting updated when needed. i don't know why.
+			# checking all cells and updating them fixed it. but i don't know why this works :) (sub 40 iq)
+			if curs zip (prevs) Iter.any(fn ((c, p)): c /= p) or screen&.requires-full-redraw
 				rs <&.changes= rs&.changes + 1
 				emit-cell(rs, cur, x-v i32-u32(), y i32-u32())
-				prev <&= cur&
+				curs Slice.copy-to(prevs)
 
 			x-v <= x-v + char-width
 
@@ -618,8 +621,8 @@ fn render-screen(screen Ptr (Screen Allocator))
 # calls update-dimensions() anyway.
 fn resize-screen-if-needed(screen Ptr (Screen Allocator)) -> Bool
 	tui = screen&.tui
-	tui update-dimensions()
-	if not tui&.should-redraw
+	updated-dimensions = tui update-dimensions()
+	if not updated-dimensions
 		return False
 
 	screen <&.requires-full-redraw = True
@@ -633,6 +636,7 @@ fn resize-screen-if-needed(screen Ptr (Screen Allocator)) -> Bool
 	nuscreen = tui mk-screen(screen&.al)
 	screen <&.current= nuscreen.current
 	screen <&.previous= nuscreen.previous
+	# TODO: free?
 	return True
 
 fn set-screen-fg (screen Ptr (Screen Allocator), c Color)
@@ -677,9 +681,14 @@ fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	bg = screen&.default-bg
 	c = c
 	char-width = Term.wcwidth(c)
+
 	# it means it's a control character (or an invalid one)
 	# keep char-width -1 to signal it's an invalid char (and render it differently)
 	screen&.current Slice.set(i, Cell { c, fg, bg, char-width })
+	for xx in (x + 1) to (Math.min(x + char-width - 1, w))
+		i = (y * w + xx) i32-size()
+		# screen&.current Slice.set(i, Cell { c: '\0', fg, bg, char-width: -1 })
+		screen&.current Slice.set(i, Cell { c: ' ', fg, bg, char-width: 1 })  # display space (for example, when a wcwidth>1 char gets cut off.)
 
 fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
 	w = screen&.tui&.width u32-i32()
