@@ -275,8 +275,8 @@ fn from-char (c Char, buf Ptr U8) -> Slice U8
 		Char.Ref(c)
 			return Slice { ptr: c.ptr, count: c.num-bytes }
 		Char.Scalar(scalar)
-			if scalar > 127
+			if scalar.value > 127
 				@panic('(Slice.from-char) non-ascii characters not yet supported')
-			buf <&= scalar Mem.u32-u8()
+			buf <&= scalar.value Mem.u32-u8()
 			return Slice { ptr: buf, count: 1 }
 

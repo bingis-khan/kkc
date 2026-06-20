@@ -55,6 +55,33 @@ use Str
 use Time
 
 
+# (20.06.26): Open question: should Tui store Chars or Scalars?
+#   the problem i encountered is that Chars depend on some external state (kd text editor in this case)
+#   and that they might either change (and the rendering breaks, since no changes are detected)
+#    or have undefined behavior (piece table is "immutable", but adding to the `append` might cause reallocation)
+# ideally, it should store chars (grapheme clusters)
+# but in practice terminals:
+#  1. don't properly handle them anyway
+#  2. the underlying memory can change and the screen comparison can change.
+# my answer will depend on how terminals handle it (check that mitchell hashimoto blog post and how the new standard thing works and its adoption)
+
+# a few ways we can solve these (in no particular order)
+#  1. use scalars (Char.Scalar). no surprises and nice for GUIs. worse for text editors and wherever there is data entry/display
+#      (but it won't matter if terminals cant render it properly)
+#  2. leave it as is, let the use care about it. must add an "official" mechanism to invalidate the "previous" buffer.
+#      fastest put-char(), but error prone and rerender more often
+#      (in case of the kd text editor, forces us to rerender everything every time we add to the append string in the piece table
+#        or everytime with current TextBuf)
+#  3. (worse than 4 imo) copy the underlying string representations every time
+#                        (to some shared buffer? - problem when a new char is longer than the older one.)
+#  4. try scalarize. if scalar, then just put it in. if cluster, copy it (Allocator.allocate with the tui.al)
+#      then, every time we overwrite the cell, we first check if it's a cluster. if it is, we must free it.
+#      fast for general case (though we have to scalarize every time, but it should be pretty fast); no need to invalidate buffers.
+#      put-char() can now allocate and fail
+
+# my current favourite is 4! (but it allocates too often? makes it less robust??? we still need to reallocate when resizing though...)
+
+
 # there should be a global termios for signal handlers.
 # orig-termios = @undefined
 # but right now, idc.
@@ -589,6 +616,7 @@ fn render-screen(screen Ptr (Screen Allocator))
 	h = screen&.tui&.height u32-i32()
 	rs =& RenderState { x: 0, y: 0, fg: Term.ColorDefault, bg: Term.ColorDefault, changes: 0 }
 	Term.move-cursor-to(0, 0)
+
 	for y in 0 to (h - 1)
 
 		# (20.06.26): fyi, we changed the way we render characters. when we "packed" wcwidth > 1 characters,
@@ -606,7 +634,7 @@ fn render-screen(screen Ptr (Screen Allocator))
 			# (20.06.26): it got complicated due to wcwidth>1/utf8 char handling
 			# stuff wasn't getting updated when needed. i don't know why.
 			# checking all cells and updating them fixed it. but i don't know why this works :) (sub 40 iq)
-			if curs zip (prevs) Iter.any(fn ((c, p)): c /= p) or screen&.requires-full-redraw
+			if screen&.requires-full-redraw or curs zip (prevs) Iter.any(fn ((c, p)): c /= p)
 				rs <&.changes= rs&.changes + 1
 				emit-cell(rs, cur, x-v i32-u32(), y i32-u32())
 				curs Slice.copy-to(prevs)

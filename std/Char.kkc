@@ -7,13 +7,13 @@ use Cnile
 
 fn next-char (p Ptr U8) -> Size
 	pb = p&
-	if pb < 128
+	if pb < 0x80
 		return 1
-	elif pb >= 128 + 64 + 32 + 16
+	elif pb >= 0xF0
 		return 4
-	elif pb >= 128 + 64 + 32
+	elif pb >= 0xE0
 		return 3
-	elif pb >= 128 + 64
+	elif pb >= 0xC0
 		return 2
 	else
 		@panic('(TODO) invalid byte (handle this better...)')
@@ -47,34 +47,36 @@ inst FromChar Char
 		return ptr scan-from-mem()
 
 
-fn from-u8 (b U8) -> Char
-	ptr = Mem.set-ms-byte-of-pointer(b Mem.u8-size() Mem.cast() as Ptr U8, 0x67)
-	return Char { ptr, num-bytes: 1 }
-
 # TODO: from-scalar. I need to properly learn to decode it AND I must remember to set num-bytes to the correct value.
+Scalar
+	value U32
 
 CharDestructured
 	Ref Char
-	Scalar U32
+	Scalar Scalar
 
 fn destructure(c Char) -> CharDestructured
 	if Mem.get-ms-byte-of-pointer(c.ptr) == 0x67
-		return Scalar((c.ptr Mem.cast() as Size) Mem.size-u32())
+		return Scalar({ value: (c.ptr Mem.cast() as Size) Mem.size-u32() })
 	else
 		return Ref(c)
 
-fn scalarize (c Char) -> Char
+# it will fail for grapheme clusters. use only when you know what chars you're going to get.
+fn try-scalarize (c Char) -> Maybe Scalar
 	@panic('(scalarize) todo')
-	return @undefined
+	return None
 
 
+# bad. remove later. it's only for quick stuff.
 fn char-u8(c Char) -> U8
 	case c destructure()
 		Ref(c)
 			return c.ptr&
 		Scalar(scalar)
-			return Mem.u32-u8(scalar)
+			return Mem.u32-u8(scalar.value)
 
+inst Eq Scalar
+	eq (l _, r _): l.value == r.value
 
 inst Eq Char
 	eq (l Char, r Char)
@@ -97,11 +99,11 @@ inst Eq Char
 
 			(Scalar(lc), Ref(rc))
 				# TEMP!
-				return lc Mem.u32-u8() == rc.ptr&
+				return lc.value Mem.u32-u8() == rc.ptr&
 
 			(Ref(lc), Scalar(rc))
 				# TEMP!
-				return rc Mem.u32-u8() == lc.ptr&
+				return rc.value Mem.u32-u8() == lc.ptr&
 
 
 inst Ord Char
@@ -128,9 +130,9 @@ fn to-c-wchar (c Char) -> Cnile.WChar
 			return wcp&
 
 		Scalar(sc)
-			if not sc Mem.size-of() == (Mem.get-typesize() as Mem.TypeSize Cnile.WChar).size
+			if not sc.value Mem.size-of() == (Mem.get-typesize() as Mem.TypeSize Cnile.WChar).size
 				@panic('Scalar size should be the same as Cnile.WChar')
-			return sc Mem.cast()
+			return sc.value Mem.cast()
 
 
 fn printf-char (c Char)
@@ -138,9 +140,9 @@ fn printf-char (c Char)
 		Ref(c)
 			Cnile.printf2('%.*s', c.num-bytes Mem.size-i32(), c.ptr)
 		Scalar(scalar)
-			if scalar > 127
+			if scalar.value > 127
 				@panic('(TODO) scalar too large BRUH')
-			Cnile.printf1('%c', scalar Mem.u32-u8())
+			Cnile.printf1('%c', scalar.value Mem.u32-u8())
 
 fn fprintf-char (file Ptr FILE, c Char) -> I32
 	case c destructure()
@@ -148,14 +150,28 @@ fn fprintf-char (file Ptr FILE, c Char) -> I32
 			return Cnile.fprintf2(file, '%.*s', c.num-bytes Mem.size-i32(), c.ptr)
 
 		Scalar(scalar)
-			if scalar > 127
+			if scalar.value > 127
 				@panic('(TODO) scalar too large BRUH')
-			return Cnile.fprintf1(file, '%c', scalar Mem.u32-u8())
+			return Cnile.fprintf1(file, '%c', scalar.value Mem.u32-u8())
 
 
 ####
 
-# Should this even be here? It related to the AsciiChar.
+# another name for scalarize() - maybe better?
+# (also, it should be in another module, which can use the Error module (so we can display which chars failed.))
+# fn own (c Char) -> Char
+# 	case c try-scalarize()
+# 		Just(sc)
+# 			return sc
+
+# 		None
+# 			@panic('(Char.own) could not turn char into scalar.')
+
+fn from-u8 (b U8) -> Char
+	ptr = Mem.set-ms-byte-of-pointer(b Mem.u8-size() Mem.cast() as Ptr U8, 0x67)
+	return Char { ptr, num-bytes: 1 }
+
+# Should this even be here? It's related to the AsciiChar.
 
 fn ascii-u8(c Cnile.AsciiChar): @cast(c) as U8
 fn u8-ascii(b U8): @cast(b) as Cnile.AsciiChar
