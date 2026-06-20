@@ -49,6 +49,8 @@ use Iter
 	zip
 	from
 	count
+	map
+	sum
 use Str
 	Str
 	chars
@@ -712,6 +714,15 @@ fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)
 	c = c
 	char-width = Term.wcwidth(c)
 
+	# its so baaad. we need to keep track if we're drawing over wcwidth>1 chars and reset the cells there if needed.
+	# (20.06.26): maybe the packed representation is better? we can just translate the coordinates!
+	#             but then field access is O(n) and i should think of an interface that avoids recalculating offsets.
+	#    ...      no. if we pack it and then replace a wide char with a non-wide one, we would have to move everything a cell. it's crap too.
+	#  anyway. we're doing so much magic that option 4 would be nice.
+	if x > 0 and screen&.current[i - 1].char-width > 1  # i checked that max wcwidth == 2 i guess.
+		pc = screen&.current[i - 1]
+		screen&.current Slice.set(i - 1, { c: ' ', fg: pc.fg, bg: pc.bg, char-width: 1 })
+
 	# it means it's a control character (or an invalid one)
 	# keep char-width -1 to signal it's an invalid char (and render it differently)
 	screen&.current Slice.set(i, Cell { c, fg, bg, char-width })
@@ -728,11 +739,13 @@ fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
 	x = Math.min(x, w)  # clamp the result to bounds
 	max-len = (w - x) i32-size()
 
-	s chars() zip(from(0)) for-each(fn((c, xx)))
+	xx = 0
+	for c in s chars()
 		screen put-char(c, x + xx, y)
+		xx <= xx + rendered-wcwidth(c)
 
 fn draw-str-right(screen Ptr (Screen Allocator), s Str, x I32, y I32)
-	slen = s chars() count() size-i32()
+	slen = s chars() map(rendered-wcwidth) sum()
 	w = screen&.tui&.width u32-i32()
 	x = w - x - slen
 	screen draw-str(s, x, y)
