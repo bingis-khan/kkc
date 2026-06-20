@@ -44,6 +44,7 @@ use Iter
 	sum
 	product
 	flatten
+	cycle
 
 	permutations
 	cartesian

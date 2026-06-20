@@ -117,11 +117,13 @@ fn is-blank (s): s
 	all(is-whitespace)
 
 
+# TEMP: consider utf8 characters as alpha
 fn is-alpha (c Char):
-	c between('a', 'z') or c between ('A', 'Z')
+	c.num-bytes > 1 or c between('a', 'z') or c between ('A', 'Z')
 
+# TEMP: consider num-bytes in the comparison.
 fn is-digit (c Char):
-	c between('0', '9')
+	c.num-bytes == 1 and c between('0', '9')
 
 fn is-alphanumeric(c Char):
 	c is-alpha() or c is-digit()

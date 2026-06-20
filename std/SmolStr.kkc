@@ -63,3 +63,11 @@ inst Str SmolStr
 inst Eq SmolStr
 	eq (SmolStr(l), SmolStr(r)) -> Bool:
 		l == r
+
+inst FromString SmolStr
+	from-string (ptr Ptr U8, num-bytes Size) -> _
+		if num-bytes > max-sz()
+			panic('(SmolStr.from-string) String too long for SmolStr')
+
+		slice = Slice { ptr, count: num-bytes }
+		return from-bytes(slice)

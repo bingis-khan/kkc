@@ -86,8 +86,8 @@ inst Eq Char
 			(Ref(lc), Ref(rc))
 				# TODO(utf8): normalize??????
 				i = 0
-				while i < lc.num-bytes
-					if @offset-ptr(lc.ptr, @cast(i))& /= @offset-ptr(rc.ptr, @cast(i))&
+				while @cast(i) < lc.num-bytes
+					if @offset-ptr(lc.ptr, i)& /= @offset-ptr(rc.ptr, i)&
 						return False
 					i <= i + 1
 				return True

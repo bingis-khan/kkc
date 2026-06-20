@@ -418,6 +418,28 @@ fn sep-by (it, sep)
 	return SepByIter { all-it: all-it&, sep, next-it-type }
 
 
+CycleIter it
+	og it
+	cur it
+
+inst IntoIter CycleIter
+	into-iter (self): self
+
+inst Iter CycleIter
+	next (self Ptr _)
+		case next(&self&.cur)
+			Just (x)
+				return Just(x)
+
+			None
+				self <&.cur= self&.og
+				return next(&self&.cur)
+
+fn cycle (it IntoIter)
+	it = it into-iter()
+	return CycleIter { og: it, cur: it }
+
+
 # consoomers
 
 fn for-each (iterable, fun)
