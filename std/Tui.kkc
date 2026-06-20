@@ -58,11 +58,9 @@ use Time
 # (20.06.26): Open question: should Tui store Chars or Scalars?
 #   the problem i encountered is that Chars depend on some external state (kd text editor in this case)
 #   and that they might either change (and the rendering breaks, since no changes are detected)
-#    or have undefined behavior (piece table is "immutable", but adding to the `append` might cause reallocation)
+#    or have undefined behavior (piece table is "immutable", but adding to the `append` might cause reallocation and invalide the pointers in Char)
 # ideally, it should store chars (grapheme clusters)
-# but in practice terminals:
-#  1. don't properly handle them anyway
-#  2. the underlying memory can change and the screen comparison can change.
+# but in practice terminals don't properly handle them anyway
 # my answer will depend on how terminals handle it (check that mitchell hashimoto blog post and how the new standard thing works and its adoption)
 
 # a few ways we can solve these (in no particular order)
@@ -79,7 +77,7 @@ use Time
 #      fast for general case (though we have to scalarize every time, but it should be pretty fast); no need to invalidate buffers.
 #      put-char() can now allocate and fail
 
-# my current favourite is 4! (but it allocates too often? makes it less robust??? we still need to reallocate when resizing though...)
+# my current favourite is 4! (but it allocates too often? makes it less robust??? we still reallocate when resizing though...)
 
 
 # there should be a global termios for signal handlers.
