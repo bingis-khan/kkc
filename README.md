@@ -149,7 +149,7 @@ In active development.
 
 - The core of the language is fairly finished.
 - 2 complete backends: interpreter and C gen
-- I can now write real program in it.
+- I can now write real programs in it.
 
 
 The core is finished, so now I'm polishing up all the rough edges:
