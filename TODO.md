@@ -40,6 +40,10 @@
 		```
 
 
+# Other stuff
+
+- I had two instances for `Eq StrView` left over, one with the wrong types. Somehow detect it and maybe signal that the instance is wrong OR tell the user that a different instance than always is surprisingly used.
+
 
 # Finished
 

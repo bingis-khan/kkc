@@ -267,6 +267,19 @@ fn contains-slice (haystack Slice a, needle Slice a) -> Bool <= Eq a: haystack f
 fn cast-slice (s Slice a) -> Slice b:
 	Slice { ptr: Mem.cast-ptr(s.ptr), count: s.count }
 
+fn last(s Slice a) -> a
+	if s.count == 0
+		panic('(Slice.last) called on empty slice.')
+
+	return s[s.count - 1]
+
+fn last-ptr(s Slice a) -> Ptr a
+	if s.count == 0
+		panic('(Slice.last-ptr) called on empty slice.')
+
+	return s get-ptr(s.count - 1)
+
+
 
 #### spiritually Char module method.
 

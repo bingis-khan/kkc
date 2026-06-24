@@ -67,6 +67,13 @@ inst Str StrView
 
 	chars (self StrView): self into-iter()
 
+inst Str StrViewIter
+	print-str (self StrViewIter) -> Unit
+		@panic('(StrViewIter.print-str) todo')
+
+	chars (self _): self
+
+
 
 ##### ConstStr ######
 
@@ -549,5 +556,6 @@ fn const-str-len (s ConstStr):
 inst Eq ConstStr
 	eq (l, r): Cnile.strcmp(l, r) == 0
 
-inst Eq StrView
-	eq (l, r): Cnile.strcmp(l, r) == 0
+# NOTE(24.06.26): i'll leave it as a demonstration for what can happen when instances are left over (the arguments defaulted to ConstStr due to strcmp)
+# inst Eq StrView
+# 	eq (l, r): Cnile.strcmp(l, r) == 0

@@ -74,12 +74,13 @@ fn take-while (self StrView, fun Char -> Bool) -> StrView
 	bi = self Str.chars() Iter.take-while(fun) map(fn c: c.num-bytes) sum()
 	return self byte-substr(0, bi)
 
+fn null (sv StrView): sv num-bytes() == 0
 
 
 #### Instances
 
 inst Eq StrView
-	eq (l, r): l.contents == r.contents
+	eq (l _, r _): l.contents == r.contents
 
 
 #### Iterators

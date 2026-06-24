@@ -17,6 +17,8 @@ use StrView
 use Mem
 use Slice
 	Slice
+use Error
+	panic
 
 
 # TODO: utf8 support
@@ -38,9 +40,20 @@ fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator a
 fn writeln (builder, s):
 	builder write('\(s)\n')
 
+# TODO: change to num-bytes
+fn count(sb Ptr (StrBuilder alloc)): sb&.chars.count
+fn num-bytes(sb Ptr (StrBuilder alloc)): sb&.chars.count
+
+
 fn pop (sb Ptr (StrBuilder alloc)) <= Allocator alloc: List.pop(&sb&.chars)
 
-fn count(sb Ptr (StrBuilder alloc)): sb&.chars.count
+fn trim-bytes (sb Ptr (StrBuilder Allocator), new-count Size): List.trim(&sb&.chars, new-count)
+fn popn-bytes (sb Ptr (StrBuilder Allocator), pop-bytes Size)
+	sb-bytes = sb num-bytes()
+	if pop-bytes > sb-bytes
+		panic('(StrBuilder.popn-bytes) poppin too many bytes (\(pop-bytes)), but can only pop \(sb-bytes)')
+	return sb trim-bytes(sb-bytes - pop-bytes)
+
 
 fn mk (al alloc) -> StrBuilder alloc <= Allocator alloc
 	return StrBuilder { chars: List.mk(al) }
@@ -76,7 +89,7 @@ fn mk-dyn-str(s, al)
 	sb =& mk(al)
 	sb write(s)
 	sb write-char(Char.nullchar())
-	dynstr =  sb as-str()  # freeing dynstr frees all memory of this sb
+	dynstr = sb as-str()  # freeing dynstr frees all memory of this sb
 	# hide nullchar
 	return StrView { contents: Slice { ptr: dynstr.contents.ptr, count: dynstr.contents.count - 1 } }
 

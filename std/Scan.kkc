@@ -35,23 +35,30 @@ use SmolStr
 
 Scanner it
 	s it
+	byte-offset Size
 
 
 inst Iter Scanner
-	next (self): (&self&.s) next()
+	next (self)
+		case ((&self&.s) next())
+			Just(c)
+				self <&.byte-offset= self&.byte-offset + c.num-bytes
+				return Just(c)
+			None
+				return None
 
 inst IntoIter Scanner
 	into-iter (self): self
 
 
 fn mk (s it) <= IntoIter it:
-	Scanner { s: s into-iter() }
+	Scanner { s: s into-iter(), byte-offset: 0 }
 
 # todo: bad name
-fn mk-from-strview (s StrView) -> Scanner StrView: { s }
+fn mk-from-strview (s StrView) -> Scanner StrView: { s, byte-offset: 0 }
 
 fn mk-from-str(s str) <= Str str:
-	Scanner { s: s chars() }
+	Scanner { s: s chars(), byte-offset: 0 }
 
 
 ###### CHAR STUFF
@@ -69,12 +76,48 @@ fn int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s, Str s: scan-int(
 
 fn char(sc Ptr (Scanner s)) -> Maybe Char <= Iter s, IntoIter s: next(&sc&.s)
 
+fn peek (sc Ptr (Scanner s)) <= Iter s, IntoIter s: sc&.s Iter.head()
+
 fn try-char (sc Ptr (Scanner s), char Char) -> Bool <= Iter s, IntoIter s
-	if sc&.s Iter.head() == Just(char)
+	if sc peek() == Just(char)
 		sc drop'(1)
 		return True
 
 	return False
+
+fn char-satisfies (sc Ptr (Scanner s), condition Char -> Bool) -> Bool <= Iter s, IntoIter s
+	case sc&.s Iter.head()
+		Just(c)
+			if condition(c)
+				sc drop'(1)
+				return True
+			else
+				return False
+		None
+			return False
+
+fn matches-str (sc Ptr (Scanner s), s Str) -> Bool <= Iter s, IntoIter s
+	skip = 0
+	ss =& s chars()
+	sccp =& sc&.s Misc.own()
+	while True
+		case (sccp next(), ss next())
+			((_, None))
+				sc drop'(skip)
+				return True
+
+			((Just(c1), Just(c2)))
+				if c1 /= c2
+					return False
+				skip <= skip + 1
+
+			_
+				return False
+
+# different name :)
+fn skip-while (sc Ptr (Scanner s), condition Char -> Bool) <= Iter s, IntoIter s
+	while sc char-satisfies(condition)
+		pass
 
 ###### U8 STUFF
 
@@ -136,7 +179,7 @@ inst Iter CounterIter
 				return Just(x)
 
 fn sub-scanner (sc Ptr (Scanner it), scanmap it -> it') -> Scanner (CounterIter it'):
-	Scanner { s: CounterIter { it: scanmap(sc&.s), count: 0 } }
+	Scanner { s: CounterIter { it: scanmap(sc&.s), count: 0 }, byte-offset: sc&.byte-offset }
 
 fn finish-sub-scanner (sc Ptr (Scanner it), ssc Ptr (Scanner (CounterIter it'))) <= Iter it
 	sc drop'(ssc&.s.count)

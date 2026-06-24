@@ -125,8 +125,22 @@ fn is-alpha (c Char):
 fn is-digit (c Char):
 	c.num-bytes == 1 and c between('0', '9')
 
+fn is-hex (c Char):
+	c.num-bytes == 1 and (c is-digit() or c between('a', 'f') or c between('A', 'F'))
+
+fn is-binary (c Char):
+	c.num-bytes == 1 and (c == '0' or c == '1')
+
+fn is-octal (c Char):
+	c.num-bytes == 1 and c between('0', '7')
+
 fn is-alphanumeric(c Char):
 	c is-alpha() or c is-digit()
+
+
+# TEMP: only for ascii for now.
+fn is-upper (c Char): c.num-bytes == 1 and c between('A', 'Z')
+fn is-lower (c Char): not c is-upper()
 
 
 #### Instances

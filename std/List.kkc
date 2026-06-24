@@ -215,6 +215,7 @@ fn addresses (l): l
 	Slice.addresses()
 
 fn size (l Ptr (List al a)): l&.count
+fn count (l Ptr (List al a)): l&.count
 
 
 fn from-iter (iter it, al alloc) -> List alloc a <= Allocator alloc, IntoIter it

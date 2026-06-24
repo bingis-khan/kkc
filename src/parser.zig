@@ -987,6 +987,8 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             } };
         } // while
         else if (self.check(.FOR)) {
+            self.beginScope();
+            defer self.endScope();
             const refvar = self.deconRefVar();
             const decon = .{
                 .d = try self.deconstruction(refvar),
@@ -3338,6 +3340,7 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                 'n' => try s.append('\n'),
                 'r' => try s.append('\r'),
                 '\\' => try s.append('\\'),
+                '\'' => try s.append('\''),
                 'x' => {
                     // TODO: do error checking.
                     const hex = og[i .. i + 2];

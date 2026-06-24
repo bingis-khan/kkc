@@ -104,6 +104,10 @@ pub const Lexer = struct {
                         // TODO: ERROR.
                         unreachable;
                     }
+
+                    if (self.curChar() == '\\') {
+                        _ = self.nextChar(); // skip just in case it's a '
+                    }
                     _ = self.nextChar();
                 }
 
