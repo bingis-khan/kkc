@@ -100,9 +100,10 @@ fn allocate-str (s, al) -> ConstStr
 	str = al Alloc.allocate(len + 1) as Slice U8
 	i = 0
 	for c in s chars()
-		for ii in 0 to (c.num-bytes Mem.size-i32() - 1)
-			str Slice.set(i + ii Mem.i32-size(), c.ptr Mem.offset-ptr(ii Mem.i32-i64())&)
-		i <= i + c.num-bytes
+		cc = c Char.regularize(&@undefined)
+		for ii in 0 to (cc.num-bytes Mem.size-i32() - 1)
+			str Slice.set(i + ii Mem.i32-size(), cc.ptr Mem.offset-ptr(ii Mem.i32-i64())&)
+		i <= i + cc.num-bytes
 
 	str Slice.set(len, 0)
 	return str.ptr Mem.cast()

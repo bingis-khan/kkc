@@ -40,6 +40,13 @@ external
 	
 	#[cfunname 'DrawText']
 	draw-text (s ConstStr, x CInt, y CInt, n CInt, color Color) -> Void
+	
+	
+	#[cfunname 'GetScreenWidth']
+	get-screen-width () -> CInt
+	
+	#[cfunname 'GetScreenHeight']
+	get-screen-height () -> CInt
 
 
 fn raywhite(): Color { r: 245, g: 245, b: 245, a: 255 }

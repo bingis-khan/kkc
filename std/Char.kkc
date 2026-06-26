@@ -75,6 +75,25 @@ fn char-u8(c Char) -> U8
 		Scalar(scalar)
 			return Mem.u32-u8(scalar.value)
 
+# unfinished. only handles u8 stuff.
+fn unscalarize (scalar Scalar) -> Array 4 U8
+	if scalar.value > 128
+		@panic('(unscalarize) non-ascii characters not supported for now')
+	b = Mem.u32-u8(scalar.value)
+	return [ b, 0, 0, 0 ]
+
+
+# not sure about the name. basically, deconstruct the char and
+# make it behave like a Ref char. (to make algorithms easier)
+fn regularize (c Char, possible-scalar-mem Ptr (Array 4 U8)) -> Char
+	case c destructure()
+		Ref(cc)
+			return cc
+		Scalar(scalar)
+			possible-scalar-mem <&= scalar unscalarize()
+			return Char { ptr: Mem.cast-ptr(possible-scalar-mem), num-bytes: c.num-bytes }
+
+
 inst Eq Scalar
 	eq (l _, r _): l.value == r.value
 
