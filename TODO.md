@@ -5,7 +5,7 @@
 - [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] exports
 - [ ] import wildcard (export wildcard too to export everything defined in a module)
-- [ ] import synonyms
+- [x] import synonyms
 - [ ] pointer deconstructions are a footgun
 	```
 		NextElem(next-elem)

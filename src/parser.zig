@@ -649,6 +649,13 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
 
             const mmodule = try self.loadModuleFromPath(modpath.items, l);
 
+            if (self.check(.AS)) {
+                const synonym = try self.expect(.TYPE);
+                const path = try self.arena.alloc([]const u8, 1);
+                path[0] = synonym.literal(self.lexer.source);
+                try self.importedModules.put(path, mmodule);
+            }
+
             // IMPORT LIST YO.
             if (self.check(.INDENT)) {
                 while (true) {
