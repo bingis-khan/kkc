@@ -1,0 +1,20 @@
+
+# later operate on a Path type which represents an already parsed type.
+
+# abc.def -> Just(def)
+# abc. -> Just()  <- is this correct.
+# .abc -> None  <- trims preceeding dots...
+fn extension (path StrView) -> Maybe StrView
+	path = path StrView.drop-while(fn c: c == '.')
+	i = path.contents.count
+	while i > 0
+		i <= i - 1
+		if path.contents[i] == '.' Char.ascii-u8()
+			break
+	
+	# no extension
+	if i == 0
+		return None
+	
+	ext = path StrView.byte-substr(i + 1, path.contents.count)
+	return Just(ext)

@@ -20,33 +20,33 @@ fn println (s)
 
 fn todo() -> a
 	print('todo\n')
-	Cnile.exit(1)
+	Cnile.abort()
 	return Mem.undefined()
 
 fn todo'(s Str) -> a
 	print('todo: \(s)\n')
-	Cnile.exit(1)
+	Cnile.abort()
 	return Mem.undefined()
 
 fn unreachable() -> a
 	print('unreachable\n')
-	Cnile.exit(1)
+	Cnile.abort()
 	return Mem.undefined()
 
 # NOTE: When we add iterator style printing to this, performance tanks!!
 fn panic (errmsg) -> Unit
 	Str.print-str('PANIC: \(errmsg)\n')
-	Cnile.exit(1)
+	Cnile.abort()
 
 fn panic' (errmsg) -> a
 	print('PANIC: \(errmsg)\n')
-	Cnile.exit(1)
+	Cnile.abort()
 	return Mem.undefined()
 
 fn assert(cond, msg)
 	if not cond
 		Str.print-str('ASSERTION FAILED: \(msg)\n')
-		Cnile.exit(1)
+		Cnile.abort()
 
 
 class Failable

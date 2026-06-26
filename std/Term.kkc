@@ -302,8 +302,7 @@ inst Eq RGB
 
 fn rgb(r, g, b): RGB { r, g, b }
 
-fn rgb-from-hex(hex) -> RGB
-	n = hex from-hex() as U32
+fn rgb-from-hex(n) -> RGB
 	return { r: (n rshift(16)) Mem.u32-u8(), g: n rshift(8) Math.mod(256) Mem.u32-u8(), b: n Math.mod(256) Mem.u32-u8() }
 
 fn set-fg-rgb(c RGB)

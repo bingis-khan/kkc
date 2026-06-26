@@ -125,6 +125,9 @@ Dirent
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
 external
+	#[cstdinclude 'stdlib.h']
+	abort () -> Void
+
 	#[cfunname 'printf', cstdinclude 'stdio.h']
 	printf0(format ConstStr) -> Void
 

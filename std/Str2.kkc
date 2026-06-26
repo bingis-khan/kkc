@@ -143,6 +143,21 @@ fn is-upper (c Char): c.num-bytes == 1 and c between('A', 'Z')
 fn is-lower (c Char): not c is-upper()
 
 
+fn begins-with (s Str, beg Str) -> Bool
+	scs =& s chars()
+	begcs =& beg chars()
+	while True
+		case (scs next(), begcs next())
+			((Just(lc), Just(rc)))
+				if lc /= rc
+					return False
+
+			((None, Just(_)))
+				return False
+			_
+				return True
+
+
 #### Instances
 
 LineIter

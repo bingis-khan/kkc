@@ -1,0 +1,46 @@
+use Cnile
+	CInt
+	Void
+
+# TODO: the annotation is temporary. I should probably use the `external` keyword.
+#[cstruct, ctype 'Color']
+Color
+	#[cfield 'r']
+	r U8
+	#[cfield 'g']
+	g U8
+	#[cfield 'b']
+	b U8
+	#[cfield 'a']
+	a U8
+
+# the X11 option is temporary bruh!
+#[dylib 'libraylib.so', cstdinclude 'raylib.h', coption '-lraylib' '-lm' '-lX11']
+external
+	#[cfunname 'InitWindow']
+	init-window (x CInt, y CInt, name ConstStr) -> Void
+	
+	#[cfunname 'CloseWindow']
+	close-window () -> Void
+	
+	#[cfunname 'WindowShouldClose']
+	window-should-close () -> Bool
+
+	#[cfunname 'SetTargetFPS']
+	set-target-fps (fps CInt) -> Void
+	
+	#[cfunname 'BeginDrawing']
+	begin-drawing () -> Void
+	
+	#[cfunname 'EndDrawing']
+	end-drawing () -> Void
+	
+	#[cfunname 'ClearBackground']
+	draw-background (bg Color) -> Void
+	
+	#[cfunname 'DrawText']
+	draw-text (s ConstStr, x CInt, y CInt, n CInt, color Color) -> Void
+
+
+fn raywhite(): Color { r: 245, g: 245, b: 245, a: 255 }
+fn lightgray(): Color { r: 200, g: 200, b: 200, a: 255 }

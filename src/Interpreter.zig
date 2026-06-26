@@ -1142,10 +1142,19 @@ fn call(self: *Self, fun: Value, cargs: []TypeVal, cfunTy: ast.Type) !Value {
                 const v = &exp.v;
                 std.debug.assert(v.smol()); // TEMP(07.06.26): this is temporary. we can't really pass anything other yet to ffi.
                 arg.* = @ptrCast(v.getRefToMemory());
-                param.* = self.sizeOfFFI(exp.t);
+                param.* = try self.sizeOfFFI(exp.t);
             }
 
-            try func.prepare(ffi.Abi.default, @intCast(args.len), paramFFITypes.ptr, self.sizeOfFFI(funTys.ret));
+            defer {
+                for (paramFFITypes) |param| {
+                    self.freeFFIType(param);
+                }
+            }
+
+            const ret = try self.sizeOfFFI(funTys.ret);
+            defer self.freeFFIType(ret);
+
+            try func.prepare(ffi.Abi.default, @intCast(args.len), paramFFITypes.ptr, ret);
 
             var result = try Value.initOwnedAlloc(self.sizeOf(funTys.ret), sal);
 
@@ -1934,7 +1943,7 @@ fn calculatePadding(cur: usize, alignment: usize) usize {
     return padding;
 }
 
-fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
+fn sizeOfFFI(self: *Self, t: ast.Type) !*ffi.Type {
     switch (self.getType(t)) {
         .Con => |c| {
             if (c.type.eq(self.prelude.defined(.Ptr))) {
@@ -1966,6 +1975,24 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
                 if (common.streq(ann.params[0], "void*")) {
                     return ffi.types.pointer;
                 }
+            }
+
+            if (ast.Annotation.find(c.type.annotations, "cstruct")) |_| {
+                // allocate a new type bruh.
+                var x: *ffi.Type = try common.allocOne(self.alBase, std.mem.zeroes(ffi.Type));
+                x.id = .@"struct";
+
+                std.debug.assert(c.type.scheme.isEmpty()); // we don't care about polymorphic stuff now.
+                switch (c.type.stuff) {
+                    .cons => @panic(c.type.name), // not yet needed.
+                    .recs => |recs| {
+                        x.elements = try self.alBase.allocSentinel(?*ffi.Type, recs.len, null);
+                        for (recs, 0..) |rec, i| {
+                            x.elements.?[i] = try self.sizeOfFFI(rec.rec.t);
+                        }
+                    },
+                }
+                return x;
             }
 
             // TEMP TEMP TEMP
@@ -2002,6 +2029,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
                     return ffi.types.sint;
                 }
 
+                if (common.streq(c.type.name, "Bool")) {
+                    return ffi.types.sint;
+                }
+
                 if (common.streq(c.type.name, "ExecVpArgv")) {
                     return ffi.types.pointer;
                 }
@@ -2010,6 +2041,18 @@ fn sizeOfFFI(self: *Self, t: ast.Type) *ffi.Type {
             @panic(c.type.name);
         },
         else => unreachable,
+    }
+}
+
+fn freeFFIType(self: *Self, ffiType: *ffi.Type) void {
+    if (ffiType.id == .@"struct") {
+        const elems = ffiType.elements.?;
+        var i: usize = 0;
+        while (elems[i]) |elem| : (i += 1) {
+            self.freeFFIType(elem);
+        }
+
+        self.alBase.free(ffiType.elements.?[0 .. i + 1]);
     }
 }
 

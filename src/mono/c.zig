@@ -1276,7 +1276,9 @@ const Stmt = struct {
                     }
 
                     if (ast.Annotation.find(efn.anns, "coption")) |ann| {
-                        try stmt.ctx.backend.coptions.insert(ann.params[0]);
+                        for (ann.params) |param| {
+                            try stmt.ctx.backend.coptions.insert(param);
+                        }
                     }
                 },
                 .ClassFun => |cfun| {

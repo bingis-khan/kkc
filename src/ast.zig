@@ -1818,6 +1818,10 @@ pub const Scheme = struct {
         };
     }
 
+    pub fn isEmpty(self: @This()) bool {
+        return self.tvars.len == 0 and self.envVars.len == 0 and self.associations.len == 0;
+    }
+
     pub const Empty = empty();
 
     pub fn print(self: @This(), c: Ctx) void {

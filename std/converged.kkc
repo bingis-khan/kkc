@@ -9,10 +9,14 @@ use Str2
 	split
 	is-blank
 	is-digit
+	is-alpha
+	is-alphanumeric
+	is-hex
 	parse-int
 	as-if-list
 	is-whitespace
 	is-not-whitespace
+	begins-with
 
 
 use Iter

@@ -4,6 +4,8 @@
 - [ ] recursion (including nested recursion, which would make mutual recursion possible)
 - [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] exports
+- [ ] import wildcard (export wildcard too to export everything defined in a module)
+- [ ] import synonyms
 - [ ] pointer deconstructions are a footgun
 	```
 		NextElem(next-elem)
@@ -38,6 +40,9 @@
 		        cmp (l, r): funcmp(l, r)
 		    Slice.sort(slice)
 		```
+
+- [ ] external structs.
+	- [ ] in external structs, don't scramble the field name by default.
 
 
 # Other stuff
