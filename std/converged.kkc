@@ -24,6 +24,7 @@ use Iter
 
 	from
 	to
+	down-to
 
 	map
 	filter

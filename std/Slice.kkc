@@ -13,6 +13,7 @@ use Iter
 	for-each
 	from
 	to
+	down-to
 	zip
 	all
 use Str
@@ -55,6 +56,10 @@ fn get (slice Slice a, i Idx) -> a:
 fn set (slice Slice a, i Idx, x a)
 	ep = slice get-ptr(i)
 	ep <&= x
+
+
+inst Indexable Slice
+	elem-get (self, idx): get(self, idx)
 
 
 fn subslice (slice Slice a, from Idx, to Idx) -> Slice a
@@ -116,6 +121,15 @@ fn sort (slice Slice a) <= Ord a
 	sort(slice subslice(0, p + 1))
 	sort(slice subslice(p + 1, slice.count))
 
+
+fn rotate-right (s Slice a)
+	if s.count <= 1
+		return
+
+	t = s[s.count - 1]
+	for i in Mem.size-i32(s.count - 1) down-to (1)
+		s set(Mem.i32-size(i), s[Mem.i32-size(i - 1)])
+	s set(0, t)
 
 
 SliceIter a
@@ -184,9 +198,6 @@ inst Eq Slice
 			return False
 
 		return l zip(r) all(fn ((le, re)): le == re)
-
-inst Indexable Slice
-	elem-get (self, idx): get(self, idx)
 
 inst Str Slice
 	print-str (self): Str.print-as-list(self)

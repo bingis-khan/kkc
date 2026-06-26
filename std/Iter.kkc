@@ -164,8 +164,6 @@ inst Iter RangeIter
 				return x
 
 
-
-
 # Unbounded range
 FromIter
 	from I32
@@ -180,6 +178,34 @@ inst Iter FromIter
 		v = self.from
 		self <.from= self.from + 1
 		return Just(v)
+
+
+# downto iterator
+DownToRange
+	from I32
+	to   I32
+
+DownToIter
+	dtrange DownToRange
+	i I32
+
+fn down-to (from, to): DownToRange { from, to }
+
+inst IntoIter DownToRange
+	into-iter (self _): DownToIter { dtrange: self, i: self.from  }
+
+inst IntoIter DownToIter
+	into-iter (self _): self
+
+inst Iter DownToIter
+	next (self Ptr _) -> Maybe I32
+		if self&.i < self&.dtrange.to
+			return None
+
+		x = Just(self&.i)
+		self <&.i= self&.i - 1
+		return x
+
 
 	
 Zip it it'
