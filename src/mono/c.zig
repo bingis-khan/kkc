@@ -1330,6 +1330,7 @@ const Stmt = struct {
                 if (stmt.spaced) {
                     try writer.writeByte(' ');
                 }
+                try writer.writeAll("(uint8_t*)"); // cast it to u8 ptr, cuz thats how it's used inside.
                 try writer.writeByte('"');
                 try std.zig.stringEscape(s, "", .{}, stmt.buf.writer()); // TODO: escape '?' in strings to avoid trigraphs
                 try writer.writeByte('"');

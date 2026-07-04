@@ -23,6 +23,7 @@ use Iter
 use Error
 	panic
 	todo
+	assert
 use Alloc
 use Slice
 	Slice
@@ -142,6 +143,13 @@ fn is-alphanumeric(c Char):
 # TEMP: only for ascii for now.
 fn is-upper (c Char): c.num-bytes == 1 and c between('A', 'Z')
 fn is-lower (c Char): not c is-upper()
+
+fn char-case-diff (): 'a' Char.char-u8() - 'A' Char.char-u8()
+fn to-lower (c Char)
+	if is-upper(c)
+		assert(c.num-bytes == 1, '(to-lower) utf8 not yet supported.')
+		return Char.from-u8(c Char.char-u8() + char-case-diff())
+	return c
 
 
 fn begins-with (s Str, beg Str) -> Bool

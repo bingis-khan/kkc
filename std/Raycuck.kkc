@@ -36,7 +36,7 @@ external
 	end-drawing () -> Void
 	
 	#[cfunname 'ClearBackground']
-	draw-background (bg Color) -> Void
+	clear-background (bg Color) -> Void
 	
 	#[cfunname 'DrawText']
 	draw-text (s ConstStr, x CInt, y CInt, n CInt, color Color) -> Void

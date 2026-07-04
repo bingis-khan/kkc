@@ -61,6 +61,9 @@ fn mk-from-str(s str) <= Str str:
 	Scanner { s: s chars(), byte-offset: 0 }
 
 
+fn is-at-end (sc Ptr (Scanner s)) -> Bool <= Iter s
+	return sc null()
+
 ###### CHAR STUFF
 
 fn scan-int (sc Ptr (Scanner s)) -> Maybe I64 <= Iter s, IntoIter s

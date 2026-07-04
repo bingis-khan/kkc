@@ -3,6 +3,8 @@ use Iter
 	into-iter
 	map
 	sum
+	drop
+	head
 use Cnile
 use Slice
 	Slice
@@ -12,6 +14,8 @@ use Str
 	print-str
 use Alloc
 	Allocator
+use Error
+	or-fail
 
 
 ### Iter & Str in Str.kkc
@@ -71,6 +75,13 @@ fn byte-substr-from (s StrView, from Size):
 	StrView { contents: s.contents Slice.from(from) }
 
 fn num-bytes (self StrView): self.contents.count
+
+
+fn nth-char (self StrView, i Size):
+	self Str.chars() drop(i) head() or-fail('(StrView.nth-char) StrView does not have enough chars (wanted \(i)-th char)')
+
+fn char-at-offset (self StrView, i Size):
+	StrView { contents: self.contents Slice.from(i) } Str.chars() head() or-fail('(StrView.char-at-offset) off too great for this StrView (\(i))')
 
 
 fn take-while (self StrView, fun Char -> Bool) -> StrView

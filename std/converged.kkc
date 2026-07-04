@@ -18,6 +18,10 @@ use Str2
 	is-not-whitespace
 	begins-with
 
+	is-upper
+	is-lower
+	to-lower
+
 
 use Iter
 	Range

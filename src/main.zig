@@ -90,7 +90,7 @@ pub fn main() !void {
                 const writer = file.writer();
                 try cbackend.writeTo(writer);
 
-                {
+                if (!opts.dontCompile) {
                     var copts = std.ArrayList([]const u8).init(aa);
                     try copts.appendSlice(&.{ "cc", c_filename, "-o", outname });
 
@@ -117,7 +117,7 @@ pub fn main() !void {
                 const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
                 std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
 
-                if (!opts.dontRun) {
+                if (!opts.dontCompile and !opts.dontRun) {
                     try stdoutbuf.flush();
 
                     const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });

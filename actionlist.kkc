@@ -1,0 +1,25 @@
+use StrBuilder
+	StrBuilder
+
+MenuItem
+	key Char
+	description StrView
+	action (Ptr ()) -> ()  # TEMP!!!
+
+Menu
+	name StrView
+	items Slice MenuItem
+
+
+EditorMode al
+	Normal
+	Cmd I32 (StrBuilder al)
+	Search I32 (StrBuilder al)
+	Menu Menu
+
+Editor al
+	asd I32
+	mode EditorMode al
+
+ed =& @undefined as Editor Alloc.CAllocator
+

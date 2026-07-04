@@ -12,6 +12,7 @@ printRootAST: bool = false,
 printExports: bool = false,
 noImplicitPrelude: bool = false,
 dontRun: bool = false,
+dontCompile: bool = false,
 noDefaultImports: bool = false,
 hideErrors: bool = false,
 programArgs: []Arg = &.{},
@@ -61,6 +62,7 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
                 .noimplicit => opts.noImplicitPrelude = true,
                 .@"no-default-imports" => opts.noDefaultImports = true,
                 .dontRun => opts.dontRun = true,
+                .@"dont-compile" => opts.dontCompile = true,
                 .@"hide-errors" => opts.hideErrors = true,
                 .backend => {
                     if (argIt.next()) |barg| {
@@ -115,6 +117,7 @@ const ProgramOption = enum {
     noimplicit,
     @"no-default-imports",
     dontRun,
+    @"dont-compile",
     @"hide-errors",
     backend,
 };

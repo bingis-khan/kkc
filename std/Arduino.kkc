@@ -1,0 +1,10 @@
+
+# slighly hacky module to compile for arduino platform.
+
+
+external
+	delay(d I32) -> Cnile.Void
+	
+	# HACK to simulate member calls.
+	#[cfunname 'Serial.println']
+	println(s ConstStr) -> Cnile.Void

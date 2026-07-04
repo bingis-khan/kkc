@@ -1,8 +1,5 @@
 # TODO
 
-- [ ] **unions** + typeclass-bound anonymous unions?
-- [ ] recursion (including nested recursion, which would make mutual recursion possible)
-- [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] exports
 - [ ] import wildcard (export wildcard too to export everything defined in a module)
 - [x] import synonyms
@@ -24,8 +21,12 @@
 		- smoler thing, an error/warning might be too annoying, especially if we're currently debugging, and we just maybe want to have a reference...
 - [ ] string matching in deconstruction.
 - [ ] polymorphic number matching (use a combination of FromIntegral + Eq)
+- [ ] recursion (including nested recursion, which would make mutual recursion possible)
+- [ ] recursive datatypes (incl Ptr which breaks depth checking).
+- [ ] **unions** + typeclass-bound anonymous unions?
 - [ ] deconstruction on assignment
 - [ ] hidden tvars
+- [ ] trailing commas in the syntax
 - [ ] better occurs check (iirc we init an FTV struct which is pretty slow, make a dedicated function for this)
 - [ ] crappy code - separate tvars into tvars and tnums
 - [ ] reevaluate type defaulting (currently, the first encountered class default gets defaulted, which makes the process effectively stochastic)
@@ -43,6 +44,14 @@
 
 - [ ] external structs.
 	- [ ] in external structs, don't scramble the field name by default.
+- [ ] this snippet confused me, although the error is obvious in hindsight:
+	```
+	MenuItem
+		action () -> ()
+	item = MenuItem { action: fn x: Unit  }
+	```
+	- the error was "mismatching param lens" and the thing is, action here has an EMPTY parameter list. I should add a special case for this to remind the user that this is indeed an empty param list and not a tuple -> tuple function.
+
 
 
 # Other stuff
