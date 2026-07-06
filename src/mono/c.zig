@@ -1591,7 +1591,7 @@ const Stmt = struct {
                         try stmt.p("~");
                         try stmt.genExpr(intr.args[0]);
                     },
-                    .@"i64-f64" => {
+                    .@"size-f64" => {
                         try stmt.p("(double)");
                         try stmt.genExpr(intr.args[0]);
                     },
@@ -2094,7 +2094,23 @@ const Stmt = struct {
             .Var => return,
             .Num => |num| {
                 try self.deconConnect(hadCondition);
-                try self.p(.{ dp, "==", num });
+
+                try self.instFun(num.instEq); // Eq
+                try self.p(.{ "(", dp, "," });
+                {
+                    if (num.instNegate) |instNegate| {
+                        try self.instFun(instNegate); // Negation?
+                        try self.p(.{"("});
+                    }
+                    {
+                        try self.instFun(num.instFromIntegral); // FromIntegral
+                        try self.p(.{ "(", num.num, ")" });
+                    }
+                    if (num.instNegate != null) {
+                        try self.p(.{")"});
+                    }
+                }
+                try self.p(.{")"});
             },
             .Str => |s| {
                 try self.deconConnect(hadCondition);

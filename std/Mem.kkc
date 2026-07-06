@@ -84,7 +84,7 @@ fn u8-size(x U8) -> Size: cast-on-zeroed(x)
 fn u8-i64(x U8) -> I64: cast-on-zeroed(x)
 fn u8-i32(x U8) -> I32: cast-on-zeroed(x)
 fn u8-u32(x U8) -> U32: cast-on-zeroed(x)
-fn i64-f64(x I64) -> F64: @i64-f64(x)
+fn size-f64(x Size) -> F64: @size-f64(x)
 
 
 # used for pointer tagging.

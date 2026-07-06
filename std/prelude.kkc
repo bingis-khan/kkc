@@ -121,7 +121,7 @@ class Ord
 
 
 class FromIntegral: I32
-	from-integral(I64) -> _
+	from-integral(Size) -> _
 
 # numeric ops yooo
 class Addition
@@ -209,7 +209,7 @@ Either e a
 # Num
 
 inst FromIntegral I64
-	from-integral (x): x
+	from-integral (x): @cast(x)
 
 inst FromIntegral I32
 	from-integral (x): @cast(x)
@@ -230,10 +230,10 @@ inst FromIntegral U64
 	from-integral (x): @cast(x)
 
 inst FromIntegral Size
-	from-integral (x): @cast(x)
+	from-integral (x): x
 
 inst FromIntegral F64
-	from-integral (x): @i64-f64(x)
+	from-integral (x): @size-f64(x)
 
 	
 # FromChar

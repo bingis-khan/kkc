@@ -16,3 +16,7 @@ writeup.md is for more typechecking logic and stuff.
     - but not being able to match against formatted strings is ugly and "breaks" their "connection" to the language (i forgot the right vocab)
     - should I want polymorphic arguments? should I add a `eq-strview()` function maybe? (with a default impl.)
     - it seems that list deconstruction is partially broken after the Interpreter rewrite. I'll need to add test cases for this....
+
+- added polymorphic number matching for case expressions. uses `FromIntegral`, `Eq` and optionally `Negation` if the number is negative.
+    - also changed the default number type from I64 to Size, because it can't be negative by default.
+    - makes me think about side effects - should I make any guarantees about functions being re-called, or can I just make it unspecified?

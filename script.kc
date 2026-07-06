@@ -1,5 +1,5 @@
-case ['miau', 'asd'] as Slice StrView
-	['miau', ..., 'asd']
+case (-420, -1)
+	(-420, -1)
 		println('ye')
 	_
 		println('nay')

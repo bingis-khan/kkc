@@ -778,11 +778,11 @@ pub const Decon = struct {
     l: Loc,
     d: union(enum) {
         None: struct {},
-        Num: i64,
+        Num: NumDecon,
         Str: struct {
             str: Str,
-            instEq: InstFunInst,
             instFromString: InstFunInst,
+            instEq: InstFunInst,
         },
         Var: Var,
         Con: struct {
@@ -817,11 +817,25 @@ pub const Decon = struct {
         }
     };
 
+    // taken out, so it can be returned by a function.
+    pub const NumDecon = struct {
+        num: usize,
+
+        instFromIntegral: InstFunInst,
+        instNegate: ?InstFunInst,
+        instEq: InstFunInst,
+    };
+
     pub fn print(self: *const @This(), c: Ctx) void {
         switch (self.d) {
             .None => c.s("_"),
             .Var => |v| v.print(c),
-            .Num => |num| c.print(num),
+            .Num => |numd| {
+                if (numd.instNegate != null) {
+                    c.print("-");
+                }
+                c.print(numd.num);
+            },
             .Str => |s| {
                 c.print('"');
                 c.print(s.str);
@@ -910,7 +924,7 @@ pub const Expr = struct {
         Var: struct { v: VarType, match: *Match, locality: Locality }, // NOTE: Match is owned here!
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
-        Int: struct { int: i64, ref: InstFunInst }, // obv temporary. (now I remember why temporary. instead of ref here, we'll do it like Chars and Strings, where we just generate more AST )
+        Int: struct { int: usize, ref: InstFunInst }, // obv temporary. (now I remember why temporary. instead of ref here, we'll do it like Chars and Strings, where we just generate more AST )
         ConstSize: usize, // instead of bullshit with instantiating a class, we can do this.
         Float: f64,
         IfElse: struct {
@@ -2229,7 +2243,7 @@ pub const TypeOrNum = union(enum) {
 
     pub const TyNum = union(enum) {
         TNum: TNum,
-        Literal: i64,
+        Literal: usize,
         Unknown,
 
         pub fn print(self: @This(), c: Ctx) void {

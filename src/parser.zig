@@ -1851,12 +1851,27 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
         };
     } // ignore var
     else if (self.consumeInteger()) |numTok| b: {
+        const l = self.loc(numTok);
+        const numd = try self.instantiateNumDecon(self.parseInt(numTok), false, l);
+
         break :b .{
-            .t = try self.definedType(.I32),
-            .l = self.loc(numTok),
-            .d = .{ .Num = self.parseInt(numTok) },
+            .t = numd.t,
+            .l = l,
+            .d = .{ .Num = numd.d },
         };
     } // number
+    else if (self.consume(.MINUS)) |minus| b: {
+        const numTok = try self.expectInteger();
+        const l = self.loc(minus).between(self.loc(numTok));
+        const numd = try self.instantiateNumDecon(self.parseInt(numTok), true, l);
+
+        break :b .{
+            .t = numd.t,
+            .l = l,
+            .d = .{ .Num = numd.d },
+        };
+        //
+    } // -number
     else if (self.consume(.STRING)) |strtok| b: {
         const l = self.loc(strtok);
 
@@ -2175,6 +2190,56 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
     };
 
     return try Common.allocOne(self.arena, decon);
+}
+
+fn instantiateNumDecon(self: *Self, num: IntType, negative: bool, l: Loc) !struct { t: AST.Type, d: AST.Decon.NumDecon } {
+    // copied from .Int in expr
+    // class FromIntegral
+    const intTy = try self.definedType(.Size);
+    const fiTy = try self.typeContext.fresh();
+    const funTyFromIntegral = try self.makeType(.{ .Fun = .{
+        .args = [_]AST.Type{intTy},
+        .ret = fiTy,
+    } });
+    const classFromIntegral = try self.definedClass(.FromIntegral);
+    const cfunFromIntegral = classFromIntegral.classFuns[0];
+    const instFromIntegral = try self.instantiateClassFunction(cfunFromIntegral, l);
+    try self.typeContext.unify(funTyFromIntegral, instFromIntegral.t, &.{ .l = l });
+
+    var instNegate: ?AST.InstFunInst = null;
+    if (negative) {
+        // class Negation
+        const funTyNegation = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{fiTy},
+            .ret = fiTy,
+        } });
+        const classNegation = try self.definedClass(.Negation);
+        const cfunNegation = classNegation.classFuns[0];
+        const instNegation = try self.instantiateClassFunction(cfunNegation, l);
+        try self.typeContext.unify(funTyNegation, instNegation.t, &.{ .l = l });
+
+        instNegate = instNegation.ref;
+    }
+
+    // class Eq
+    const funTyEq = try self.makeType(.{ .Fun = .{
+        .args = [_]AST.Type{ fiTy, fiTy },
+        .ret = try self.definedType(.Bool),
+    } });
+    const classEq = try self.definedClass(.Eq);
+    const cfunEq = classEq.classFuns[0];
+    const instEq = try self.instantiateClassFunction(cfunEq, l);
+    try self.typeContext.unify(funTyEq, instEq.t, &.{ .l = l });
+
+    return .{
+        .t = fiTy,
+        .d = .{
+            .num = num,
+            .instFromIntegral = instFromIntegral.ref,
+            .instNegate = instNegate,
+            .instEq = instEq.ref,
+        },
+    };
 }
 
 // jon blow my c0c :3
@@ -2879,8 +2944,8 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     break :b unit;
                 },
 
-                .@"i64-f64" => b: {
-                    try self.typeContext.unify(args.items[0].t, try self.definedType(.I64), &.{ .l = l });
+                .@"size-f64" => b: {
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.Size), &.{ .l = l });
                     break :b try self.definedType(.F64);
                 },
                 .@"f64-i64-floor" => b: {
@@ -3014,7 +3079,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         return try self.qualified(con);
     } // con
     else if (self.consumeInteger()) |i| {
-        const intTy = try self.definedType(.I64);
+        const intTy = try self.definedType(.Size);
         const retTy = try self.typeContext.fresh();
         const funTy = try self.makeType(.{ .Fun = .{
             .args = [_]AST.Type{intTy},
@@ -6095,6 +6160,16 @@ fn consumeInteger(self: *Self) ?Token {
     };
 }
 
+fn expectInteger(self: *Self) !Token {
+    return self.consumeInteger() orelse {
+        // dont use the generic error thing.
+        try self.parseError(.{ .UnexpectedTokens = .{
+            .got = self.currentToken,
+            .expected = &comptime [_]TokenType{ .INTEGER, .HEX_INTEGER, .OCTAL_INTEGER },
+        } });
+    };
+}
+
 // IMPORTANT: DON'T MODIFY SKIP, SINCE AFTER PEEK/CONSUME THE MODE SHOULD BE CHANGED. LET PEEK / CONSUME CONSUME ALL THE WHITESPACE BEFOREHAND.
 // ALSO, THEY ALL DEPEND ON SKIP.
 fn skip(self: *Self) void {
@@ -6186,11 +6261,12 @@ pub const ParserError = error{
 const Fold = *u32;
 
 // assume integer is well formed because lexer guarantees it.
-fn parseInt(self: *const Self, tok: Token) i64 {
+const IntType = usize;
+fn parseInt(self: *const Self, tok: Token) IntType {
     return switch (tok.type) {
-        .INTEGER => std.fmt.parseInt(i64, tok.literal(self.lexer.source), 10) catch unreachable,
-        .HEX_INTEGER => std.fmt.parseInt(i64, tok.literal(self.lexer.source)[2..], 16) catch unreachable,
-        .OCTAL_INTEGER => std.fmt.parseInt(i64, tok.literal(self.lexer.source)[2..], 8) catch unreachable,
+        .INTEGER => std.fmt.parseInt(IntType, tok.literal(self.lexer.source), 10) catch unreachable,
+        .HEX_INTEGER => std.fmt.parseInt(IntType, tok.literal(self.lexer.source)[2..], 16) catch unreachable,
+        .OCTAL_INTEGER => std.fmt.parseInt(IntType, tok.literal(self.lexer.source)[2..], 8) catch unreachable,
         else => unreachable,
     };
 }

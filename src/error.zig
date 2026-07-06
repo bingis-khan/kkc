@@ -114,9 +114,9 @@ pub const Error = union(enum) {
     },
 
     MismatchingTNum: struct {
-        l: i64,
+        l: usize,
         lloc: Loc,
-        r: i64,
+        r: usize,
         rloc: ?Loc,
     },
 

@@ -29,7 +29,7 @@
 		- smoler thing, an error/warning might be too annoying, especially if we're currently debugging, and we just maybe want to have a reference...
 - [x] string matching in deconstruction. (currently only StrView)
 	- [ ] polymorphic string matching? (what would be the correct way to handle this? should it be polymorphic? maybe an additional function in Str with default implementation like `strview-eq()`?)
-- [ ] polymorphic number matching (use a combination of FromIntegral + Eq)
+- [x] polymorphic number matching (use a combination of FromIntegral + Eq)
 - [ ] recursion (including nested recursion, which would make mutual recursion possible)
 - [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] **unions** + typeclass-bound anonymous unions?

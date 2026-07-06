@@ -356,7 +356,15 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
             return true;
         },
         .Num => |num| {
-            return v.smol.int == num;
+            const sz = self.sizeOf(decon.t);
+            const vref = Value.initLValueFromRef(v, sz);
+            const vnum = Value.int(num.num);
+
+            const vfi = try self.quickCallInst(num.instFromIntegral, &.{vnum});
+            const vneg = if (num.instNegate) |instNeg| try self.quickCallInst(instNeg, &.{vfi}) else vfi;
+            const veq = try self.quickCallInst(num.instEq, &.{ vneg, vref });
+
+            return isTrue(veq);
         },
         .Str => |s| {
             const sv = Value.initLValueFromRef(v, self.sizeOf(decon.t));
@@ -604,8 +612,8 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                     return Value.enoom(0); // unit
                 },
 
-                .@"i64-f64" => {
-                    const i = (try self.expr(intr.args[0])).get().int;
+                .@"size-f64" => {
+                    const i = (try self.expr(intr.args[0])).get().size;
                     return Value.float(@floatFromInt(i));
                 },
 
@@ -1380,6 +1388,12 @@ fn getFieldFromFields_(self: *Self, v: RawValueRef, comptime T: type, fields: []
     }
 }
 
+fn quickCallInst(self: *Self, assocRef: ast.InstFunInst, args: []const Value) !Value {
+    const instFun = try self.getAndUnboxInstFunRef(assocRef);
+    const res = try self.function(instFun.get().fun, args);
+    return res;
+}
+
 fn getAndUnboxInstFunRef(self: *Self, assocRef: ast.InstFunInst) !Value {
     const instFunBoxed = switch (assocRef.*.?) {
         .Id => |uid| b: {
@@ -1407,10 +1421,10 @@ fn initFunction(self: *Self, fun: *ast.Function, m: *const ast.Match) !Value {
     return Value.initOwned(.{ .fun = funThing }, Size.ptr);
 }
 
-fn function(self: *Self, funAndEnv: *SmolValue.Fun, args: []Value) Err!Value {
+fn function(self: *Self, funAndEnv: *SmolValue.Fun, args: []const Value) Err!Value {
     return try self.function_(funAndEnv, Value, args, common.id(Value));
 }
-fn function_(self: *Self, funAndEnv: *SmolValue.Fun, comptime Arg: type, args: []Arg, comptime mapFun: fn (Arg) Value) Err!Value {
+fn function_(self: *Self, funAndEnv: *SmolValue.Fun, comptime Arg: type, args: []const Arg, comptime mapFun: fn (Arg) Value) Err!Value {
     // begin new scope
     const oldScope = self.scope;
     var scope = Scope.init(oldScope, self.alBase);
@@ -1472,7 +1486,7 @@ fn function_(self: *Self, funAndEnv: *SmolValue.Fun, comptime Arg: type, args: [
                     tnum,
                     switch (self.typeContext.getNum(mtvOrNum.Num)) {
                         .Literal => |lit| lit,
-                        .TNum => |tnum2| self.getTNum(tnum2).get().int,
+                        .TNum => |tnum2| self.getTNum(tnum2).get().size,
                         .Unknown => unreachable,
                     },
                 );
@@ -2125,7 +2139,7 @@ fn putVar(self: *Self, v: ast.Var, value: Value) !void {
     }
 }
 
-fn putTNum(self: *Self, tnum: ast.TNum, i: i64) !void {
+fn putTNum(self: *Self, tnum: ast.TNum, i: usize) !void {
     try self.putVar(tnum.asVar(), Value.int(i));
 }
 

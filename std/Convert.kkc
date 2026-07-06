@@ -2,7 +2,7 @@ use Str
 use Char
 	char-u8
 use Mem
-	u8-i64
+	u8-size
 use Iter
 	map
 	reduce
@@ -31,7 +31,7 @@ fn hex-digit(c Char)
 # official hexadecimal number function.
 # I WILL ADD 0x and 0o integer format. It's just funny to do those things like this.
 fn from-hex(arr): arr
-	map(fn c: c hex-digit() or-fail('"\(c)" is not a hex digit.') u8-i64() from-integral())
+	map(fn c: c hex-digit() or-fail('"\(c)" is not a hex digit.') u8-size() from-integral())
 	reduce(0, fn(elem, b): b * 16 + elem)
 
 fn u8-str(byte U8)
