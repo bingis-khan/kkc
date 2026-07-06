@@ -779,6 +779,11 @@ pub const Decon = struct {
     d: union(enum) {
         None: struct {},
         Num: i64,
+        Str: struct {
+            str: Str,
+            instEq: InstFunInst,
+            instFromString: InstFunInst,
+        },
         Var: Var,
         Con: struct {
             con: *Con,
@@ -817,6 +822,11 @@ pub const Decon = struct {
             .None => c.s("_"),
             .Var => |v| v.print(c),
             .Num => |num| c.print(num),
+            .Str => |s| {
+                c.print('"');
+                c.print(s.str);
+                c.print('"');
+            },
             .Con => |con| {
                 con.con.print(c);
                 if (con.decons.len > 0) {

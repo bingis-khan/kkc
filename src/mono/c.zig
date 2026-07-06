@@ -1325,15 +1325,8 @@ const Stmt = struct {
                 }
             },
             .Str => |s| {
-                const writer = stmt.buf.writer();
-
-                if (stmt.spaced) {
-                    try writer.writeByte(' ');
-                }
-                try writer.writeAll("(uint8_t*)"); // cast it to u8 ptr, cuz thats how it's used inside.
-                try writer.writeByte('"');
-                try std.zig.stringEscape(s, "", .{}, stmt.buf.writer()); // TODO: escape '?' in strings to avoid trigraphs
-                try writer.writeByte('"');
+                // it's ugly. maybe we should have instance associated with Str? but at the same time we need StrConcats too...
+                try stmt.genStr(s);
             },
             .Intrinsic => |intr| {
                 switch (intr.intr.ty) {
@@ -2103,6 +2096,14 @@ const Stmt = struct {
                 try self.deconConnect(hadCondition);
                 try self.p(.{ dp, "==", num });
             },
+            .Str => |s| {
+                try self.deconConnect(hadCondition);
+                try self.instFun(s.instEq); // eq
+                try self.p(.{ "(", dp, "," });
+
+                try self.instFromString(s.str, s.instFromString);
+                try self.p(.{")"});
+            },
             .Con => |con| {
                 if (con.con.data.isPointer()) {
                     const ptrdp = ast.Decon.PathM{ .Concat = .{ .path = .Ptr, .next = dp } };
@@ -2305,6 +2306,25 @@ const Stmt = struct {
             .application = &ast.Match.Empty,
             .outerApplication = &.{},
         });
+    }
+
+    fn instFromString(stmt: *@This(), s: Str, inst: ast.InstFunInst) !void {
+        try stmt.instFun(inst);
+        try stmt.p(.{"("});
+        try stmt.genStr(s);
+        try stmt.p(.{ ",", s.len, ")" });
+    }
+
+    fn genStr(stmt: *@This(), s: Str) !void {
+        const writer = stmt.buf.writer();
+
+        if (stmt.spaced) {
+            try writer.writeByte(' ');
+        }
+        try writer.writeAll("(uint8_t*)"); // cast it to u8 ptr, cuz thats how it's used inside.
+        try writer.writeByte('"');
+        try std.zig.stringEscape(s, "", .{}, stmt.buf.writer()); // TODO: escape '?' in strings to avoid trigraphs
+        try writer.writeByte('"');
     }
 
     /////////////////////

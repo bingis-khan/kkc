@@ -351,11 +351,23 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
         .None => return true,
         .Var => |vn| {
             const sz = self.sizeOf(decon.t);
-            try self.putRef(vn, Value.initLValueFromRef(v, sz));
+            const vref = Value.initLValueFromRef(v, sz);
+            try self.putRef(vn, vref);
             return true;
         },
         .Num => |num| {
             return v.smol.int == num;
+        },
+        .Str => |s| {
+            const sv = Value.initLValueFromRef(v, self.sizeOf(decon.t));
+            const cmpsv = try self.strFromString(s.str, s.instFromString);
+
+            const instFun = try self.getAndUnboxInstFunRef(s.instEq);
+
+            var args = [_]Value{ cmpsv, sv };
+            const eqResult = try self.function(instFun.get().fun, &args);
+
+            return isTrue(eqResult);
         },
         .Record => |fields| {
             for (fields) |field| {
@@ -477,7 +489,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
 
             // var lit = valArrayIterator(lslice.ptr, elemSize);
             for (listDecon.l, 0..) |ldecon, i| {
-                const lvalref = valArrayGet(lptrptr.get().ref.smol.ptr.smol.ptr, elemSize, i); // maybe we should just use val.offset()?
+                const lvalref = valArrayGet(lptrptr.get().ref.smol.ref, elemSize, i); // maybe we should just use val.offset()?
                 if (!try self.tryDeconstruct(ldecon, lvalref)) {
                     return false;
                 }
@@ -485,7 +497,7 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
 
             if (rsize > 0) {
                 for (listDecon.r.?.r, 0..) |rdecon, i| {
-                    const rvalref = valArrayGet(rptrptr.get().ref.smol.ptr.smol.ptr, elemSize, i);
+                    const rvalref = valArrayGet(rptrptr.get().ref.smol.ref, elemSize, i);
                     if (!try self.tryDeconstruct(rdecon, rvalref)) {
                         return false;
                     }
@@ -500,6 +512,19 @@ fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
         },
         // else => unreachable,
     }
+}
+
+fn strFromString(self: *Self, s: Str, inst: ast.InstFunInst) !Value {
+    const fromStringFun = try self.getAndUnboxInstFunRef(inst);
+
+    // NOTE: copied from .Str case of expr
+    const sopq: *anyopaque = @ptrCast(try self.evaluateString(s));
+    const sptr = Value.initOwned(.{ .extptr = sopq }, Size.ptr);
+
+    const slen = Value.int(@as(usize, s.len));
+    var args = [_]Value{ sptr, slen };
+    const res = try self.function(fromStringFun.get().fun, &args);
+    return res;
 }
 
 fn exprs(self: *Self, es: []*ast.Expr) ![]TypeVal {

@@ -9,3 +9,10 @@ writeup.md is for more typechecking logic and stuff.
 
 - thinking about FromString. StrView is a reasonable default (unlike Haskell, which needs the fromString, because the default String is bad)
     (FromChar can eval to StrView and ConstStr too, so FromString would be natural.... but stuff like `['a', 'miau']` breaks and we then would need default resolution rules...)
+
+- added string matching, but only for a type that has both FromString and Eq. uses FromString + Eq instances. so we create the same type as the compared string.
+    - og idea was to use StrView and have a function like `streq()` to compare any type that has a Str instance?
+    - good enough for now - works with strview and chars.
+    - but not being able to match against formatted strings is ugly and "breaks" their "connection" to the language (i forgot the right vocab)
+    - should I want polymorphic arguments? should I add a `eq-strview()` function maybe? (with a default impl.)
+    - it seems that list deconstruction is partially broken after the Interpreter rewrite. I'll need to add test cases for this....

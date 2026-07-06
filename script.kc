@@ -1,0 +1,5 @@
+case ['miau', 'asd'] as Slice StrView
+	['miau', ..., 'asd']
+		println('ye')
+	_
+		println('nay')

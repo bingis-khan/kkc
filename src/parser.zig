@@ -1850,27 +1850,54 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
             .d = .{ .None = .{} },
         };
     } // ignore var
-    else if (self.consume(.INTEGER)) |numTok| b: {
+    else if (self.consumeInteger()) |numTok| b: {
         break :b .{
             .t = try self.definedType(.I32),
             .l = self.loc(numTok),
             .d = .{ .Num = self.parseInt(numTok) },
         };
     } // number
-    else if (self.consume(.HEX_INTEGER)) |numTok| b: {
+    else if (self.consume(.STRING)) |strtok| b: {
+        const l = self.loc(strtok);
+
+        const svt = try self.typeContext.fresh();
+        const fromStringClass = try self.definedClass(.FromString);
+        const fromStringFun = fromStringClass.classFuns[0];
+        const fromStringInst = try self.instantiateClassFunction(fromStringFun, l);
+        const strPtrTy = try self.ptrTo(try self.definedType(.U8));
+        const fsFunTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{
+                strPtrTy,
+                try self.definedType(.Size),
+            },
+            .ret = svt,
+        } });
+        try self.typeContext.unify(fromStringInst.t, fsFunTy, &.{ .l = l });
+
+        const eqClass = try self.definedClass(.Eq);
+        const eqfun = eqClass.classFuns[0];
+        const eqInst = try self.instantiateClassFunction(eqfun, l);
+
+        const eqfunTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{ svt, svt },
+            .ret = try self.typeContext.fresh(),
+        } });
+        try self.typeContext.unify(eqInst.t, eqfunTy, &.{ .l = l });
+
+        const litWithQuotes = strtok.literal(self.lexer.source);
+        const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
         break :b .{
-            .t = try self.definedType(.I32),
-            .l = self.loc(numTok),
-            .d = .{ .Num = std.fmt.parseInt(i64, numTok.literal(self.lexer.source), 16) catch unreachable },
+            .t = svt,
+            .l = l,
+            .d = .{
+                .Str = .{
+                    .str = lit,
+                    .instEq = eqInst.ref,
+                    .instFromString = fromStringInst.ref,
+                },
+            },
         };
-    } // hex number
-    else if (self.consume(.OCTAL_INTEGER)) |numTok| b: {
-        break :b .{
-            .t = try self.definedType(.I32),
-            .l = self.loc(numTok),
-            .d = .{ .Num = std.fmt.parseInt(i64, numTok.literal(self.lexer.source), 8) catch unreachable },
-        };
-    } // octal number
+    } // string
     else if (self.consume(.LEFT_PAREN)) |lp| b: {
         const path = try AST.Decon.Path.concat(self.arena, dp, .None);
         const first = try self.deconstruction_(path);
@@ -2805,7 +2832,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             const t = switch (intr.ty) {
                 .cast => try self.typeContext.fresh(),
                 .panic => b: {
-                    try self.typeContext.unify(args.items[0].t, try self.definedType(.ConstStr), &.{ .l = args.items[0].l });
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.ConstStr), &.{ .l = args.items[0].l }); // todo: remove or use ConstStr?
                     break :b try self.definedType(.Unit);
                 },
                 .undefined => try self.typeContext.fresh(),

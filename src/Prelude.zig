@@ -26,6 +26,7 @@ pub const PremadeType = enum {
     F64,
 
     ConstStr,
+    // StrView,
     Char,
     Ptr,
     Array,
