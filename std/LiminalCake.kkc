@@ -27,7 +27,7 @@ Vector ^e a
 
 inst ListLike Vector
 	from-listlike (arr):
-		Vector { backing: arr }
+		Vector { backing: arr& }
 
 inst Indexable Vector
 	elem-get (self, idx): Array.get(&self.backing, idx)
@@ -44,7 +44,10 @@ fn mult (m Matrix n o a, m' Matrix o p a) -> Matrix n p a
 
 inst ListLike Matrix
 	from-listlike (arr):
-		Matrix { backing: arr }
+		Matrix { backing: arr& }
+
+# make a MatrixIndexer class for Indexable, so I can use both [0][2] and [(0, 2)]? just an idea.
+
 
 
 # Why have an Iter instance for Vector, but not for Array?

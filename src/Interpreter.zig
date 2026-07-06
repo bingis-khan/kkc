@@ -1583,6 +1583,8 @@ const Value = struct {
     // this one allocates cuz it's tricky to get right.
     fn ref(self: @This(), al: std.mem.Allocator) !Value {
         switch (self.val) {
+            // NOTE(06.07.26): is this correct? when it's an lvalue, we keep the same thing, but when it's owned, we... copy it?
+            //    is it because one might not be single expression-local? (a scope allocator instead of an expr. allocator?)
             .LValue => |lv| return Value.initOwned(.{ .ptr = lv }, Size.ptr),
             .Owned => {
                 const sz = self.size;

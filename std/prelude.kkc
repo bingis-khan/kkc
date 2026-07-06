@@ -154,7 +154,7 @@ class Indexable
 class ListLike: Array
 	# type Elem
 	# maybe take in pointer to it?
-	from-listlike (arr Array count elem) -> _
+	from-listlike (arr Ptr (Array count elem)) -> _
 
 
 # List decostruction
@@ -438,7 +438,7 @@ inst Division F64
 
 
 inst ListLike Array
-	from-listlike (self Array n a): self
+	from-listlike (self Ptr (Array n a)): self&
 
 
 

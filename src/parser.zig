@@ -3123,20 +3123,31 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         }), &.{ .l = l }, &.{ .lfull = arrInst.dataInst.t, .rfull = null });
         try self.typeContext.unify(arrInst.dataInst.tyArgs[1].Type, elemTy, &.{ .l = l });
 
-        const funTy = try self.makeType(.{ .Fun = .{
-            .args = [_]AST.Type{arrInst.dataInst.t},
-            .ret = selfType,
-        } });
-
-        try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
-
-        const arg = try self.allocExpr(.{
+        // static array expression
+        const arr = try self.allocExpr(.{
             .e = .{
                 .StaticArray = listLikeThing.items,
             },
             .t = arrInst.dataInst.t,
             .l = l,
         });
+
+        // &[...] expr
+        const arrPtr = (try self.defined(.Ptr)).dataInst;
+        try self.typeContext.unify(arrPtr.tyArgs[0].Type, arrInst.dataInst.t, &.{ .l = l });
+
+        // we create a ref expression to not have to update the backends :)
+        const arg = try self.allocExpr(.{
+            .e = .{ .UnOp = .{ .e = arr, .op = .Ref } },
+            .t = arrPtr.t,
+            .l = l,
+        });
+
+        const funTy = try self.makeType(.{ .Fun = .{
+            .args = [_]AST.Type{arrPtr.t},
+            .ret = selfType,
+        } });
+        try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
 
         const args = try self.arena.alloc(*AST.Expr, 1);
         args[0] = arg;

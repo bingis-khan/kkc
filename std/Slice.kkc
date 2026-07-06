@@ -63,6 +63,10 @@ fn set (slice Slice a, i Idx, x a)
 inst Indexable Slice
 	elem-get (self, idx): get(self, idx)
 
+inst ListLike Slice
+	from-listlike (arr Ptr (Array n a)) -> Slice a:
+		{ ptr: arr Mem.cast-ptr(), count: n Mem.i32-size() }  # i32-size conversion temporary (related to type number type TODO entry)
+
 
 fn subslice (slice Slice a, from Idx, to Idx) -> Slice a
 	# just return an empty slice or trim it bruh.
