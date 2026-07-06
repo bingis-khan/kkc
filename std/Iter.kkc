@@ -1,3 +1,5 @@
+export Iter(*), IntoIter(*), *
+
 use Mem  # might be temporary - for test ListLike instance for range.
 
 # Basic instances

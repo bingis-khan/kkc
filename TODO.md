@@ -1,7 +1,12 @@
 # TODO
 
-- [ ] exports
-- [ ] import wildcard (export wildcard too to export everything defined in a module)
+- [x] exports
+	- [x] `{..}` for multiple imports.
+		- [ ] ~multiline export list in `{...}`~
+		- [x] indented export list
+	- [x] `*` wildcard (and `Class(*)`)
+	- [ ] parse error recovery
+- [ ] import wildcard
 - [x] import synonyms
 - [ ] pointer deconstructions are a footgun
 	```

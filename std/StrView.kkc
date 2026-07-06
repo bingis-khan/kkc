@@ -1,3 +1,5 @@
+export StrView, *
+
 use Iter
 	IntoIter
 	into-iter

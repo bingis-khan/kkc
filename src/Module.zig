@@ -49,6 +49,37 @@ pub const Exports = struct {
         cc.s("End Instances\n");
     }
 
+    pub fn init(al: std.mem.Allocator) @This() {
+        return .{
+            .vars = std.StringHashMap(VarOrFun).init(al),
+            .types = std.StringHashMap(DataOrClass).init(al),
+            .cons = std.StringHashMap(*ast.Con).init(al),
+            .instances = std.AutoHashMap(*ast.Class, DataInstance).init(al),
+        };
+    }
+
+    pub fn mergeWith(self: *@This(), other: *const @This()) !void {
+        try common.addToHash(&self.vars, &other.vars);
+        try common.addToHash(&self.cons, &other.cons);
+        try common.addToHash(&self.types, &other.types);
+        var it = other.instances.iterator();
+        while (it.next()) |insts| {
+            const class = insts.key_ptr.*;
+            var iit = insts.value_ptr.iterator();
+            while (iit.next()) |inst| {
+                const getOrPutResult = try self.instances.getOrPut(class);
+                if (!getOrPutResult.found_existing) {
+                    getOrPutResult.value_ptr.* = DataInstance.init(self.instances.allocator);
+                }
+
+                const dataInsts = getOrPutResult.value_ptr;
+
+                const data = inst.key_ptr.*;
+                try dataInsts.put(data, inst.value_ptr.*);
+            }
+        }
+    }
+
     pub fn clone(self: *const @This()) @This() {
         // noop, because all this data should be immutable.
         return self.*;

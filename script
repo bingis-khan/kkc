@@ -7,7 +7,10 @@
 # x = { a: 1 }
 # y = x { a: 2 }
 # println(y.a)
-println(Term.is-terminal())
+# println(Term.is-terminal())
 # beep = 7 Mem.cast() as Char
 # println(beep)
 # Term.beep()
+
+Mreow.mreow-println('cock')
+Mreow.miau-print('cock')

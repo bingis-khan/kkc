@@ -1,133 +1,51 @@
+export
+	Str.Str(chars)
+	Str2.
+		lines, split, is-blank, is-digit, is-alpha, is-alphanumeric, is-hex
+		parse-int, as-if-list, is-whitespace, is-not-whitespace, begins-with
+		is-upper, is-lower, to-lower
+
+	Iter.
+		Range, from, to, down-to
+
+		map, filter, drop, take, take-while, drop-while, break', zip, append, sep-by
+		for-each, for-each-break, reduce, count, all, any, head, last, null
+		sum, product, flatten, cycle, permutations, cartesian, combinations, unordered-pairs, drop', drop-while', take-while'
+
+		cons, nil
+
+	Mem.{ undefined, u32-i32, size-u32, i32-u32, i32-size, i64-i32, i64-size, i64-u32, u32-i64, size-i32 }
+	Error.{ or-else, or-fail, todo, todo', unreachable, panic, assert }
+	Slice.{ Slice, subslice }
+	List.{ List, to-list }
+	Alloc.{ Allocator }
+	Term.{ println }
+
+	Hash.{ Hash }
+	Misc.{ id, fst, snd, and-maybe, fmap-maybe, is-just, is-none, if-just, with, flip }
+	Math.{ maximum, minimum }
+
+	# for build.kkc-type stuff
+	# probably not fit for default exports, just let the user do `use Sh *`
+	Sh.{ deps }
+
+	*  # this at the end to make sure the instances get exported in the correct order???? this is kinda fukked. also, i don't think any instances should be overlapping in the std anyway (and if they were, it should be marked as a bug/unintended)
+
+# `use` are needed to reexport instances.
 use Char
 use Str
-	Str
-	chars
 use Str2
-	# this is only for ConstStr, i need to update that.
-	# allocate-str
-	lines
-	split
-	is-blank
-	is-digit
-	is-alpha
-	is-alphanumeric
-	is-hex
-	parse-int
-	as-if-list
-	is-whitespace
-	is-not-whitespace
-	begins-with
-
-	is-upper
-	is-lower
-	to-lower
-
-
 use Iter
-	Range
-
-	from
-	to
-	down-to
-
-	map
-	filter
-	drop
-	take
-	take-while
-	drop-while
-	break'
-	zip
-	append
-	sep-by
-
-	for-each
-	for-each-break
-	reduce
-	count
-	all
-	any
-	head
-	last
-	null
-	sum
-	product
-	flatten
-	cycle
-
-	permutations
-	cartesian
-
-	combinations
-	unordered-pairs
-
-	drop'
-	drop-while'
-	take-while'
-
-	# funny ones, not sure if they'll state exported
-	cons
-	nil
-
-
 use Array
-
 use Mem
-	undefined
-	u32-i32
-	size-u32
-	i32-u32
-	i32-size
-	i64-i32
-	i64-size
-	i64-u32
-	u32-i64
-	size-i32
-
 use Error  # imports instances of failable.
-	or-else
-	or-fail
-
-	todo
-	todo'
-	unreachable
-	panic
-	assert
-
 use Slice
-	Slice
-	subslice
-
 use List
-	List
-	to-list
-
 use Alloc
-	Allocator
-
 use Term
-	println
-
-# for build.kkc-type stuff
-# probably not fit for default exports, just let the user do `use Sh *`
 use Sh
-	deps
-
 use CnileInst
 use Into
 use Hash
-	Hash
 use Misc
-	id
-	fst
-	snd
-	and-maybe
-	fmap-maybe
-	is-just
-	is-none
-	if-just  # im not sure if this should be exported by default geeeg.
-	with
-	flip
 use Math
-	maximum
-	minimum

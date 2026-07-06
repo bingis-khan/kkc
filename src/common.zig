@@ -111,3 +111,26 @@ pub fn mapSlice(al: std.mem.Allocator, comptime From: type, comptime To: type, c
     }
     return nuslice;
 }
+
+pub fn addToHash(dest: anytype, src: anytype) !void {
+    var it = src.iterator();
+    while (it.next()) |e| {
+        try dest.put(e.key_ptr.*, e.value_ptr.*);
+    }
+}
+
+pub fn SliceIter(slice: anytype) struct {
+    i: usize,
+    slice: @TypeOf(slice),
+
+    const Elem = @typeInfo(@TypeOf(slice.ptr)).Pointer.child;
+
+    pub fn next(self: *@This()) ?Elem {
+        if (self.i >= self.slice.len) return null;
+        const elem = self.slice[self.i];
+        self.i += 1;
+        return elem;
+    }
+} {
+    return .{ .slice = slice, .i = 0 };
+}

@@ -23,6 +23,11 @@ pub const Error = union(enum) {
         expected: TokenType,
     },
 
+    UnexpectedTokens: struct {
+        got: Token,
+        expected: []const TokenType,
+    },
+
     UnexpectedThing: struct {
         expected: Str,
         got: TokenType,
@@ -138,7 +143,10 @@ pub const Error = union(enum) {
         l: Loc,
     },
 
-    DataDoesNotExportThing: struct {},
+    DataDoesNotExportThing: struct {
+        thing: Str,
+        loc: Loc,
+    },
     ClassDoesNotExportThing: struct {},
 
     CouldNotFindInstanceForType: struct {
@@ -192,6 +200,11 @@ pub const Error = union(enum) {
         loc: Loc,
     },
 
+    TypeIsNotAnEnum: struct {
+        d: *const ast.Data,
+        loc: Loc,
+    },
+
     TypeIsNotARecord: struct {
         t: ast.Type,
         field: Str,
@@ -242,7 +255,15 @@ pub const Error = union(enum) {
                 err.atLocation(e.got.toLocation(module.source, module.name), .{
                     .label = .{ "expected ", ast.Ctx.wrap(e.expected), ", but got ", ast.Ctx.wrap(e.got.type) },
                 });
-                // p("expected {}, but got {}", .{ e.expected, e.got });
+            },
+            .UnexpectedTokens => |e| {
+                err.atLocation(e.got.toLocation(module.source, module.name), .{
+                    .label = .{ "expected one of: ", ast.Ctx.iter_(Common.SliceIter(e.expected), ", ", struct {
+                        pub fn mapFn(x: anytype, cc: ast.Ctx) void {
+                            return x.print(cc);
+                        }
+                    }.mapFn), "; but got ", ast.Ctx.wrap(e.got.type) },
+                });
             },
             .UnexpectedThing => |e| {
                 err.atLocation(e.at, .{ .label = .{ "expect ", e.expected, ", but got ", e.got } });
@@ -432,6 +453,9 @@ pub const Error = union(enum) {
             .RecordsAndConstructorsPresent => p("records and constructors present", .{}),
             .TypeDoesNotHaveField => |e| {
                 err.atLocation(e.loc, .{ .label = .{ "type ", e.t, " does not have field '", e.field, "'" } });
+            },
+            .TypeIsNotAnEnum => |e| {
+                err.atLocation(e.loc, .{ .label = .{ "type ", e.d.name, " is not an enum" } });
             },
             .TypeIsNotARecord => |e| {
                 err.atLocation(e.loc, .{ .label = .{ "type ", e.t, " is not a record, so it cannot have a field ", e.field } });
