@@ -34,7 +34,7 @@
 - [ ] trailing commas in the syntax
 - [ ] better occurs check (iirc we init an FTV struct which is pretty slow, make a dedicated function for this)
 - [ ] crappy code - separate tvars into tvars and tnums
-- [ ] reevaluate type defaulting (currently, the first encountered class default gets defaulted, which makes the process effectively stochastic)
+- [ ] reevaluate type defaulting (currently, the first encountered class default gets defaulted, which makes the process effectively stochastic. problem if a single type has two classes with type defaulting rules; or just throw out FromString and make StrView the one and only class.)
 - [ ] review the architecture of the type checker. (connected with "numbers in type parameters")
 - [ ] apostrophe in string interpolation breaks it (actually tokenize string interpolation? allow actual expressions? or just track parens?)
 - [ ] module search should start at program path, not cwd.

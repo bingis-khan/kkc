@@ -98,6 +98,10 @@ Array ^count a
 class FromChar: Char
 	from-charlike (ptr Ptr U8, num-bytes Size) -> _
 
+# im more likely to throw out this class.
+# it's not like haskell, where the default String datatype is just bad for high performance - StrView is a reasonable default which should not be changed.
+# we can just use conversion functions for them anyway.
+# otoh, FromChar can convert to StrView and ConstStr, so this is kinda funny.
 class FromString: StrView
 	from-string (ptr Ptr U8, num-bytes Size) -> _
 

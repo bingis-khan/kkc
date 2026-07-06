@@ -15,6 +15,8 @@
 # Mreow.mreow-println('cock')
 # Mreow.miau-print('cock')
 
-xs = [1, 2, 3] as Slice I32
-for x in xs
-	println(x)
+# xs = [1, 2, 3] as Slice I32
+# for x in xs
+# 	println(x)
+
+Term.get-dimensions() println()

@@ -14,24 +14,24 @@ export
 
 		cons, nil
 
-	Mem.{ undefined, u32-i32, size-u32, i32-u32, i32-size, i64-i32, i64-size, i64-u32, u32-i64, size-i32 }
-	Error.{ or-else, or-fail, todo, todo', unreachable, panic, assert }
-	Slice.{ Slice, subslice }
-	List.{ List, to-list }
-	Alloc.{ Allocator }
-	Term.{ println }
+	Mem.( undefined, u32-i32, size-u32, i32-u32, i32-size, i64-i32, i64-size, i64-u32, u32-i64, size-i32 )
+	Error.( or-else, or-fail, todo, todo', unreachable, panic, assert )
+	Slice.( Slice, subslice )
+	List.( List, to-list )
+	Alloc.( Allocator )
+	Term.( println )
 
-	Hash.{ Hash }
-	Misc.{ id, fst, snd, and-maybe, fmap-maybe, is-just, is-none, if-just, with, flip }
-	Math.{ maximum, minimum }
+	Hash.( Hash )
+	Misc.( id, fst, snd, and-maybe, fmap-maybe, is-just, is-none, if-just, with, flip )
+	Math.( maximum, minimum )
 
 	# for build.kkc-type stuff
 	# probably not fit for default exports, just let the user do `use Sh *`
-	Sh.{ deps }
+	Sh.( deps )
 
 	*  # this at the end to make sure the instances get exported in the correct order???? this is kinda fukked. also, i don't think any instances should be overlapping in the std anyway (and if they were, it should be marked as a bug/unintended)
 
-# `use` are needed to reexport instances.
+# `use` are needed to reexport instances in the correct order.
 use Char
 use Str
 use Str2

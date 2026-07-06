@@ -361,15 +361,15 @@ fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: 
             .exportedThing = try self.exportedThing(ty),
         });
     } else {
-        if (self.check(.LEFT_BRACE)) {
-            while (!self.check(.RIGHT_BRACE)) {
+        if (self.check(.LEFT_PAREN)) {
+            while (!self.check(.RIGHT_PAREN)) {
                 try definedExports.append(.{
                     .externalModule = moduleQualifier.items,
                     .qualifierLoc = qualifierLoc,
                     .exportedThing = try self.exportedThing(null),
                 });
 
-                if (self.check(.RIGHT_BRACE)) break;
+                if (self.check(.RIGHT_PAREN)) break;
                 try self.devour(.COMMA);
             }
         } //
