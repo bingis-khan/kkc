@@ -53,6 +53,7 @@
 
 - [ ] external structs.
 	- [ ] in external structs, don't scramble the field name by default.
+	- also keep the C ordering by default. (I want that Zig ability of being able to reorder fields)
 - [ ] this snippet confused me, although the error is obvious in hindsight:
 	```
 	MenuItem

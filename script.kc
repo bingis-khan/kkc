@@ -1,6 +1,15 @@
+use XDG (config-home, data-home)
 
-case (-420, -1)
-	(-420, -1)
-		println('ye')
+println(config-home())
+println(data-home())
+
+url = ['watch', 'miau', 'asd'] as Slice StrView
+case url
+	[]
+		println('default')
+
+	['watch', vid-id, ...]
+		println('watching vid \'\(vid-id)\'')
+
 	_
-		println('nay')
+		println(404)

@@ -1,27 +1,13 @@
 use Cnile
 use Iter
-	Iter
-	IntoIter
-	into-iter
-	next
-	head
-	zip
-	all
-	for-each
-	Drop
-	Take
-	TakeWhile
-	drop
-	AppendIter
-	count
-	to
-use Mem
-	TypeSize
+	Iter(*), IntoIter(*)
+	head, zip, all, for-each, drop, count, to
+	Drop, Take, TakeWhile, AppendIter
+use Mem (TypeSize)
 use Char
 use Math
-use Misc
-	fst
-	snd
+use Misc (fst, snd)
+
 
 class Str
 	# later should write to some buffer instead of printing directly.

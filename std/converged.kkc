@@ -31,7 +31,7 @@ export
 
 	*  # this at the end to make sure the instances get exported in the correct order???? this is kinda fukked. also, i don't think any instances should be overlapping in the std anyway (and if they were, it should be marked as a bug/unintended)
 
-# `use` are needed to reexport instances in the correct order.
+# `use` are needed to reexport instances in the correct order... is there even a correct order here? I don't have overlapping instances.
 use Char
 use Str
 use Str2

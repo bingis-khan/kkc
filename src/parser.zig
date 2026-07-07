@@ -131,25 +131,25 @@ pub fn parse(self: *Self) !Module {
     var decs = std.ArrayList(*AST.Stmt).init(self.arena);
     self.consumeSeps();
 
-    // first start with an export list.
+    // first collect exports
     // we must parse it, BUT EVALUATE IT AT THE END!
     var definedExports = std.ArrayList(Export).init(self.arena);
     if (self.check(.EXPORT)) {
         defer self.consumeSeps();
 
         if (self.check(.INDENT)) {
-            while (!self.check(.DEDENT)) {
-                while (true) {
-                    const endedInIndent = try self.oneHotExport(&definedExports, &.{});
-                    if (endedInIndent) break;
+            while (true) {
+                const endedInIndent = try self.oneHotExport(&definedExports, &.{});
 
-                    if (!self.check(.COMMA)) {
-                        try self.endStmt();
-                        break;
-                    }
+                if (endedInIndent) {
+                    if (self.check(.DEDENT)) break;
+                    continue;
                 }
 
-                self.consumeSeps();
+                if (!self.check(.COMMA) or self.isEndStmt()) {
+                    try self.endStmt();
+                    if (self.check(.DEDENT)) break;
+                }
             }
         } else {
             while (true) {
@@ -193,305 +193,14 @@ pub fn parse(self: *Self) !Module {
         });
     }
 
-    const exports: Module.Exports = if (definedExports.items.len == 0) b: {
-        break :b try self.scopeToExports();
-    } else b: {
-        var exports = Module.Exports.init(self.arena);
-        for (definedExports.items) |thing| {
-            switch (thing.exportedThing) {
-                .Wildcard => {
-                    if (thing.externalModule.len == 0) {
-                        try exports.mergeWith(&try self.scopeToExports());
-                    } else {
-                        const otherModule = try self.loadModuleFromPath(thing.externalModule, thing.qualifierLoc.?);
-                        try exports.mergeWith(&(otherModule orelse {
-                            unreachable; // TODO. maybe loadModuleFromPath should not return null and error out inside?
-                        }).exports);
-                    }
-                },
-                .VariableOrFunction => |vtok| {
-                    const vorf = try self.lookupVar(thing.externalModule, vtok);
-                    try exports.vars.put(vtok.literal(self.lexer.source), vorf.vorf);
-                },
-                .Type => |dataType| {
-                    // looks like "Type" - whatever it is, just export it.
-                    // also, when we explicitly export no constructors, we don't care which type it is and stuff.
-                    if (!dataType.constructors.explicitlyHasConstructors()) {
-                        const tyname = dataType.typename;
-                        const tynameStr = tyname.literal(self.lexer.source);
-                        const mWhatever = try self.findQualifiedDataOrClass(
-                            thing.externalModule,
-                            tynameStr,
-                            self.loc(dataType.typename).between(thing.qualifierLoc),
-                        );
-
-                        if (mWhatever) |whatever| {
-                            try exports.types.put(tynameStr, whatever);
-
-                            if (dataType.constructors == .AllCons) {
-                                switch (whatever) {
-                                    .Data => |data| switch (data.stuff) {
-                                        .cons => |cons| {
-                                            for (cons) |*con| {
-                                                try exports.cons.put(con.name, con);
-                                            }
-                                        },
-                                        .recs => {},
-                                    },
-                                    .Class => |class| {
-                                        for (class.classFuns) |cfun| {
-                                            try exports.vars.put(cfun.name.name, .{ .ClassFun = cfun });
-                                        }
-                                    },
-                                    else => {},
-                                }
-                            }
-                        }
-                    }
-
-                    // looks like a datatype with constructors. error out when it's not a constructor datatype.
-                    else {
-                        const tyname = dataType.typename;
-                        const tynameStr = tyname.literal(self.lexer.source);
-                        const tynameLoc = thing.qualifierLoc.?.between(self.loc(dataType.typename));
-
-                        const mWhatever = try self.findQualifiedDataOrClass(
-                            thing.externalModule,
-                            tynameStr,
-                            tynameLoc,
-                        );
-
-                        if (mWhatever) |whatever| {
-                            try exports.types.put(tynameStr, whatever);
-
-                            switch (whatever) {
-                                .Data => |data| switch (data.stuff) {
-                                    .cons => |dcons| {
-                                        const cons = dataType.constructors.Cons; // .AllCons should be caught in the first case.
-                                        for (cons) |con| { // exported cons
-                                            const cname = con.literal(self.lexer.source);
-                                            for (dcons) |*dcon| { // data cons
-                                                if (Common.streq(dcon.name, cname)) {
-                                                    try exports.cons.put(cname, dcon);
-                                                    break;
-                                                }
-                                            } else {
-                                                try self.reportError(.{ .DataDoesNotExportThing = .{
-                                                    .thing = cname,
-                                                    .loc = tynameLoc,
-                                                } });
-                                            }
-                                        }
-                                    },
-                                    .recs => {
-                                        try self.reportError(.{ .TypeIsNotAnEnum = .{
-                                            .d = data,
-                                            .loc = tynameLoc,
-                                        } });
-                                    },
-                                },
-                                .Class => |class| {
-                                    const cfuns = dataType.constructors.Cons;
-                                    const dcfuns = class.classFuns;
-
-                                    for (cfuns) |cfun| { // exported cons
-                                        const cname = cfun.literal(self.lexer.source);
-                                        for (dcfuns) |dcfun| { // data cons
-                                            if (Common.streq(dcfun.name.name, cname)) {
-                                                try exports.vars.put(cname, .{ .ClassFun = dcfun });
-                                                break;
-                                            }
-                                        } else {
-                                            try self.reportError(.{ .DataDoesNotExportThing = .{
-                                                .thing = cname,
-                                                .loc = tynameLoc,
-                                            } });
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
-                        }
-                    }
-                },
-            }
-        }
-        break :b exports;
-    };
+    // export stuff.
+    const exports = try self.exportListToExports(definedExports.items);
 
     return .{
         .ast = AST{ .toplevel = decs.items },
         .exports = exports,
         .calls = self.topLevels.items,
     };
-}
-
-// not related to one hot encoding.
-// true when it finished at indent.
-// TODO: maybe the code will be cleaner if I utilize parsing modes and just make it a single folded line?
-fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: Module.Path) !bool {
-    // try qualified type thing.
-    // due to the way we parse it, we first must check which type was parsed yo.
-    var moduleQualifier = std.ArrayList(Str).init(self.arena);
-    try moduleQualifier.appendSlice(outerPath);
-
-    var qualifierLoc: ?Loc = null;
-    var exportedType: ?Token = null;
-    if (self.consume(.TYPE)) |first| {
-        exportedType = first;
-        while (self.check(.DOT)) {
-            const curLoc = self.loc(exportedType.?);
-            try moduleQualifier.append(first.literal(self.lexer.source));
-            qualifierLoc = if (qualifierLoc) |l| l.between(curLoc) else curLoc;
-
-            if (self.consume(.TYPE)) |tytok| {
-                exportedType = tytok;
-            } //
-            else {
-                exportedType = null;
-                break;
-            }
-        }
-    }
-
-    if (exportedType) |ty| {
-        try definedExports.append(.{
-            .externalModule = moduleQualifier.items,
-            .qualifierLoc = qualifierLoc,
-            .exportedThing = try self.exportedThing(ty),
-        });
-    } else {
-        if (self.check(.LEFT_PAREN)) {
-            while (!self.check(.RIGHT_PAREN)) {
-                try definedExports.append(.{
-                    .externalModule = moduleQualifier.items,
-                    .qualifierLoc = qualifierLoc,
-                    .exportedThing = try self.exportedThing(null),
-                });
-
-                if (self.check(.RIGHT_PAREN)) break;
-                try self.devour(.COMMA);
-            }
-        } //
-        else if (self.check(.INDENT)) {
-            while (!self.check(.DEDENT)) {
-                while (true) {
-                    const endedInIndent = try self.oneHotExport(definedExports, moduleQualifier.items);
-                    if (endedInIndent) break;
-
-                    if (!self.check(.COMMA)) {
-                        try self.endStmt();
-                        break;
-                    }
-                }
-
-                self.consumeSeps();
-            }
-
-            return true;
-        } //
-        else {
-            try definedExports.append(.{
-                .externalModule = moduleQualifier.items,
-                .qualifierLoc = qualifierLoc,
-                .exportedThing = try self.exportedThing(null),
-            });
-        }
-    }
-
-    return false;
-}
-
-fn exportedThing(self: *Self, firstType: ?Token) !Export.Thing {
-    const parseInParens = struct {
-        fn parseInParens(this: *Self) !Export.ConsDef {
-            if (this.check(.LEFT_PAREN)) {
-                if (this.check(.TIMES)) {
-                    try this.devour(.RIGHT_PAREN);
-                    return .AllCons;
-                } else {
-                    // can be class or data yo!
-                    var constructors = std.ArrayList(Token).init(this.arena);
-                    while (!this.check(.RIGHT_PAREN)) {
-                        try constructors.append(try this.expectOneOf(&.{ .TYPE, .IDENTIFIER }));
-
-                        if (this.check(.RIGHT_PAREN)) break;
-                        try this.devour(.COMMA);
-                    }
-
-                    return .{ .Cons = constructors.items };
-                }
-            }
-
-            // by default, no cons exported??? i gotta think about this.
-            return .{ .Cons = &.{} };
-        }
-    }.parseInParens;
-
-    // the firstType thing is here (even doe it's ugly), so the parsing behavior is localized
-    // since i might change it slighlty
-    if (firstType) |tytok| {
-        const constructors = try parseInParens(self);
-        return .{ .Type = .{ .typename = tytok, .constructors = constructors } };
-    } else {
-        if (self.check(.TIMES)) {
-            return .Wildcard;
-        } // wildcard
-        else if (self.consume(.IDENTIFIER)) |vt| {
-            return .{ .VariableOrFunction = vt };
-        } // var or fun
-        else if (self.consume(.TYPE)) |tytok| {
-            const constructors = try parseInParens(self);
-            return .{ .Type = .{
-                .typename = tytok,
-                .constructors = constructors,
-            } };
-        } //
-        else {
-            unreachable; // parse error. todo, because we need recover logic.
-        }
-    }
-}
-
-pub fn addExports(self: *Self, exports: *const Module.Exports) !void {
-    try addImportToScope(&self.scope.currentScope().vars, &exports.vars);
-    try addImportToScope(&self.scope.currentScope().cons, &exports.cons);
-    try addImportToScope(&self.scope.currentScope().types, &exports.types);
-    try self.addAllInstances(exports);
-}
-
-fn addImportToScope(dest: anytype, src: anytype) !void {
-    var it = src.iterator();
-    while (it.next()) |e| {
-        try dest.put(e.key_ptr.*, .{ .thing = e.value_ptr.*, .fromWhere = .Imported });
-    }
-}
-
-// NOTE: assumes Module.Exports now owns the thing.
-fn scopeToExports(self: *Self) !Module.Exports {
-    std.debug.assert(self.errors.items.len > 0 or self.scope.scopes.current == 1);
-
-    const scope = self.scope.currentScope();
-
-    return .{
-        .vars = try cloneImported(Module.VarOrFun, self.arena, scope.vars),
-        .types = try cloneImported(Module.DataOrClass, self.arena, scope.types),
-        .cons = try cloneImported(*AST.Con, self.arena, scope.cons),
-        .instances = scope.instances,
-    };
-}
-
-fn cloneImported(comptime T: type, al: std.mem.Allocator, src: std.StringHashMap(CurrentScope.Import(T))) !std.StringHashMap(T) {
-    var dest = std.StringHashMap(T).init(al);
-
-    var it = src.iterator();
-    while (it.next()) |e| {
-        const val = e.value_ptr.*;
-        if (val.fromWhere == .Imported) continue;
-        try dest.put(e.key_ptr.*, val.thing);
-    }
-
-    return dest;
 }
 
 fn dataDef(self: *Self, typename: Token, tvarToks: []Token, annotations: []AST.Annotation) !void {
@@ -980,100 +689,26 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             }
 
             // IMPORT LIST YO.
-            if (self.check(.INDENT)) {
-                while (true) {
-                    if (self.consume(.IDENTIFIER)) |v| {
-                        try self.endStmt();
-                        if (mmodule) |mod| {
-                            const varName = v.literal(self.lexer.source);
-                            if (mod.lookupVar(varName)) |vv| {
-                                try self.scope.currentScope().vars.put(varName, .{ .thing = vv, .fromWhere = .Imported });
-                            } else {
-                                try self.reportError(.{ .ModuleDoesNotExportThing = .{
-                                    .moduleName = modpath.items,
-                                    .thing = varName,
-                                    .l = self.loc(v),
-                                } });
-                            }
-                        }
-                    } else if (self.consume(.TYPE)) |tt| {
-                        const typeName = tt.literal(self.lexer.source);
-                        try self.endStmt();
-                        const dataOrClass: ?Module.DataOrClass = bb: {
-                            if (mmodule) |mod| {
-                                const doc = mod.lookupData(typeName) orelse {
-                                    try self.reportError(.{ .UndefinedType = .{ .typename = typeName, .loc = self.loc(tt) } });
-                                    break :bb null;
-                                };
-                                try self.scope.currentScope().types.put(typeName, .{ .thing = doc, .fromWhere = .Imported });
-                                break :bb doc;
-                            } else {
-                                break :bb null;
-                            }
-                        };
+            if (self.check(.LEFT_PAREN)) {
+                while (!self.check(.RIGHT_PAREN)) {
+                    try self.importThing(mmodule, modpath.items);
 
-                        if (self.check(.LEFT_PAREN)) {
-                            if (!self.check(.RIGHT_PAREN)) while (true) {
-                                if (self.consume(.IDENTIFIER)) |vt| {
-                                    const vname = vt.literal(self.lexer.source);
-                                    if (dataOrClass) |doc| {
-                                        switch (doc) {
-                                            .Class => |c| {
-                                                for (c.classFuns) |cfun| {
-                                                    if (Common.streq(cfun.name.name, vname)) {
-                                                        try self.scope.currentScope().vars.put(vname, .{ .thing = .{ .ClassFun = cfun }, .fromWhere = .Imported });
-                                                        break;
-                                                    }
-                                                } else {
-                                                    try self.reportError(.{ .ClassDoesNotExportThing = .{} });
-                                                }
-                                            },
-                                            .Data => try self.reportError(.{ .ModuleDoesNotExportThing = .{
-                                                .moduleName = modpath.items,
-                                                .thing = vname,
-                                                .l = self.loc(vt),
-                                            } }),
-                                            .Synonym => unreachable, // TODO
-                                        }
-                                    }
-                                } else if (self.consume(.TYPE)) |ct| {
-                                    const cname = ct.literal(self.lexer.source);
-                                    if (dataOrClass) |doc| {
-                                        switch (doc) {
-                                            .Data => |d| {
-                                                for (d.stuff.cons) |*con| {
-                                                    if (Common.streq(con.name, cname)) {
-                                                        try self.scope.currentScope().cons.put(cname, .{ .thing = con, .fromWhere = .Imported });
-                                                        break;
-                                                    }
-                                                } else {
-                                                    try self.reportError(.{ .DataDoesNotExportThing = .{
-                                                        .thing = cname,
-                                                        .loc = self.loc(ct),
-                                                    } });
-                                                }
-                                            },
-                                            .Class => try self.reportError(.{ .ModuleDoesNotExportThing = .{
-                                                .moduleName = modpath.items,
-                                                .thing = cname,
-                                                .l = self.loc(ct),
-                                            } }),
-                                            .Synonym => unreachable, // TODO
-                                        }
-                                    }
-                                } else {
-                                    return try self.errorExpect("imported stuff");
-                                }
-
-                                if (self.check(.RIGHT_PAREN)) break;
-                                try self.devour(.COMMA);
-                            };
-                        }
-                    } else {
-                        return try self.errorExpect("import");
+                    if (!self.check(.COMMA)) {
+                        try self.devour(.RIGHT_PAREN);
+                        break;
                     }
+                }
 
-                    if (self.check(.DEDENT)) break;
+                try self.endStmt();
+            } //
+            else if (self.check(.INDENT)) {
+                while (true) {
+                    try self.importThing(mmodule, modpath.items);
+
+                    if (!self.check(.COMMA) or self.isEndStmt()) {
+                        try self.endStmt();
+                        if (self.check(.DEDENT)) break;
+                    }
                 }
             } else {
                 try self.endStmt();
@@ -1562,7 +1197,117 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
     return null;
 }
 
-// fn importedThing(self: *Self) !void {}
+fn importThing(self: *Self, mmodule: ?Module, modpath: Module.Path) !void {
+    if (self.consume(.IDENTIFIER)) |v| {
+        if (mmodule) |mod| {
+            const varName = v.literal(self.lexer.source);
+            if (mod.lookupVar(varName)) |vv| {
+                try self.scope.currentScope().vars.put(varName, .{ .thing = vv, .fromWhere = .Imported });
+            } else {
+                try self.reportError(.{ .ModuleDoesNotExportThing = .{
+                    .moduleName = modpath,
+                    .thing = varName,
+                    .l = self.loc(v),
+                } });
+            }
+        }
+    } else if (self.consume(.TYPE)) |tt| {
+        const typeName = tt.literal(self.lexer.source);
+        const dataOrClass: ?Module.DataOrClass = bb: {
+            if (mmodule) |mod| {
+                const doc = mod.lookupData(typeName) orelse {
+                    try self.reportError(.{ .UndefinedType = .{ .typename = typeName, .loc = self.loc(tt) } });
+                    break :bb null;
+                };
+                try self.scope.currentScope().types.put(typeName, .{ .thing = doc, .fromWhere = .Imported });
+                break :bb doc;
+            } else {
+                break :bb null;
+            }
+        };
+
+        if (self.check(.LEFT_PAREN)) {
+            while (!self.check(.RIGHT_PAREN)) {
+                if (self.consume(.IDENTIFIER)) |vt| {
+                    const vname = vt.literal(self.lexer.source);
+                    if (dataOrClass) |doc| {
+                        switch (doc) {
+                            .Class => |c| {
+                                for (c.classFuns) |cfun| {
+                                    if (Common.streq(cfun.name.name, vname)) {
+                                        try self.scope.currentScope().vars.put(vname, .{ .thing = .{ .ClassFun = cfun }, .fromWhere = .Imported });
+                                        break;
+                                    }
+                                } else {
+                                    try self.reportError(.{ .ClassDoesNotExportThing = .{} });
+                                }
+                            },
+                            .Data => try self.reportError(.{ .ModuleDoesNotExportThing = .{
+                                .moduleName = modpath,
+                                .thing = vname,
+                                .l = self.loc(vt),
+                            } }),
+                            .Synonym => unreachable, // TODO
+                        }
+                    }
+                } //
+                else if (self.consume(.TYPE)) |ct| {
+                    const cname = ct.literal(self.lexer.source);
+                    if (dataOrClass) |doc| {
+                        switch (doc) {
+                            .Data => |d| {
+                                for (d.stuff.cons) |*con| {
+                                    if (Common.streq(con.name, cname)) {
+                                        try self.scope.currentScope().cons.put(cname, .{ .thing = con, .fromWhere = .Imported });
+                                        break;
+                                    }
+                                } else {
+                                    try self.reportError(.{ .DataDoesNotExportThing = .{
+                                        .thing = cname,
+                                        .loc = self.loc(ct),
+                                    } });
+                                }
+                            },
+                            .Class => try self.reportError(.{ .ModuleDoesNotExportThing = .{
+                                .moduleName = modpath,
+                                .thing = cname,
+                                .l = self.loc(ct),
+                            } }),
+                            .Synonym => unreachable, // TODO
+                        }
+                    }
+                } //
+                else if (self.check(.TIMES)) {
+                    if (dataOrClass) |doc| {
+                        switch (doc) {
+                            .Class => |c| {
+                                for (c.classFuns) |cfun| {
+                                    try self.scope.currentScope().vars.put(cfun.name.name, .{ .thing = .{ .ClassFun = cfun }, .fromWhere = .Imported });
+                                    break;
+                                }
+                            },
+                            .Data => |d| {
+                                for (d.stuff.cons) |*con| {
+                                    try self.scope.currentScope().cons.put(con.name, .{ .thing = con, .fromWhere = .Imported });
+                                    break;
+                                }
+                            },
+                            .Synonym => unreachable, // TODO
+                        }
+                    }
+                } //
+                else {
+                    return try self.errorExpect("imported stuff");
+                }
+
+                if (self.check(.RIGHT_PAREN)) break;
+                try self.devour(.COMMA);
+            }
+        }
+    } else {
+        return try self.errorExpect("import");
+    }
+}
 
 fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void {
     const uid = self.gen.vars.newUnique();
@@ -1617,6 +1362,305 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     });
 
     try self.scope.currentScope().vars.put(name, .{ .thing = .{ .Extern = extfun } });
+}
+
+// IMPORTS / EXPORTS
+// (moved 'em down, cuz I think I first should have access to more changed functions like body, expression, etc.)
+
+fn exportListToExports(self: *Self, definedExports: []Export) !Module.Exports {
+    if (definedExports.len == 0) {
+        return try self.scopeToExports();
+    }
+
+    var exports = Module.Exports.init(self.arena);
+    for (definedExports) |thing| {
+        switch (thing.exportedThing) {
+            .Wildcard => {
+                if (thing.externalModule.len == 0) {
+                    try exports.mergeWith(&try self.scopeToExports());
+                } else {
+                    const otherModule = try self.loadModuleFromPath(thing.externalModule, thing.qualifierLoc.?);
+                    try exports.mergeWith(&(otherModule orelse {
+                        unreachable; // TODO. maybe loadModuleFromPath should not return null and error out inside?
+                    }).exports);
+                }
+            },
+            .VariableOrFunction => |vtok| {
+                const vorf = try self.lookupVar(thing.externalModule, vtok);
+                try exports.vars.put(vtok.literal(self.lexer.source), vorf.vorf);
+            },
+            .Type => |dataType| {
+                // looks like "Type" - whatever it is, just export it.
+                // also, when we explicitly export no constructors, we don't care which type it is and stuff.
+                if (!dataType.constructors.explicitlyHasConstructors()) {
+                    const tyname = dataType.typename;
+                    const tynameStr = tyname.literal(self.lexer.source);
+                    const mWhatever = try self.findQualifiedDataOrClass(
+                        thing.externalModule,
+                        tynameStr,
+                        self.loc(dataType.typename).between(thing.qualifierLoc),
+                    );
+
+                    if (mWhatever) |whatever| {
+                        try exports.types.put(tynameStr, whatever);
+
+                        if (dataType.constructors == .AllCons) {
+                            switch (whatever) {
+                                .Data => |data| switch (data.stuff) {
+                                    .cons => |cons| {
+                                        for (cons) |*con| {
+                                            try exports.cons.put(con.name, con);
+                                        }
+                                    },
+                                    .recs => {},
+                                },
+                                .Class => |class| {
+                                    for (class.classFuns) |cfun| {
+                                        try exports.vars.put(cfun.name.name, .{ .ClassFun = cfun });
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+                }
+
+                // looks like a datatype with constructors. error out when it's not a constructor datatype.
+                else {
+                    const tyname = dataType.typename;
+                    const tynameStr = tyname.literal(self.lexer.source);
+                    const tynameLoc = thing.qualifierLoc.?.between(self.loc(dataType.typename));
+
+                    const mWhatever = try self.findQualifiedDataOrClass(
+                        thing.externalModule,
+                        tynameStr,
+                        tynameLoc,
+                    );
+
+                    if (mWhatever) |whatever| {
+                        try exports.types.put(tynameStr, whatever);
+
+                        switch (whatever) {
+                            .Data => |data| switch (data.stuff) {
+                                .cons => |dcons| {
+                                    const cons = dataType.constructors.Cons; // .AllCons should be caught in the first case.
+                                    for (cons) |con| { // exported cons
+                                        const cname = con.literal(self.lexer.source);
+                                        for (dcons) |*dcon| { // data cons
+                                            if (Common.streq(dcon.name, cname)) {
+                                                try exports.cons.put(cname, dcon);
+                                                break;
+                                            }
+                                        } else {
+                                            try self.reportError(.{ .DataDoesNotExportThing = .{
+                                                .thing = cname,
+                                                .loc = tynameLoc,
+                                            } });
+                                        }
+                                    }
+                                },
+                                .recs => {
+                                    try self.reportError(.{ .TypeIsNotAnEnum = .{
+                                        .d = data,
+                                        .loc = tynameLoc,
+                                    } });
+                                },
+                            },
+                            .Class => |class| {
+                                const cfuns = dataType.constructors.Cons;
+                                const dcfuns = class.classFuns;
+
+                                for (cfuns) |cfun| { // exported cons
+                                    const cname = cfun.literal(self.lexer.source);
+                                    for (dcfuns) |dcfun| { // data cons
+                                        if (Common.streq(dcfun.name.name, cname)) {
+                                            try exports.vars.put(cname, .{ .ClassFun = dcfun });
+                                            break;
+                                        }
+                                    } else {
+                                        try self.reportError(.{ .DataDoesNotExportThing = .{
+                                            .thing = cname,
+                                            .loc = tynameLoc,
+                                        } });
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    return exports;
+}
+
+// not related to one hot encoding.
+// true when it finished at indent.
+// TODO: maybe the code will be cleaner if I utilize parsing modes and just make it a single folded line?
+fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: Module.Path) !bool {
+    // try qualified type thing.
+    // due to the way we parse it, we first must check which type was parsed yo.
+    var moduleQualifier = std.ArrayList(Str).init(self.arena);
+    try moduleQualifier.appendSlice(outerPath);
+
+    var qualifierLoc: ?Loc = null;
+    var exportedType: ?Token = null;
+    if (self.consume(.TYPE)) |first| {
+        exportedType = first;
+        while (self.check(.DOT)) {
+            const curLoc = self.loc(exportedType.?);
+            try moduleQualifier.append(first.literal(self.lexer.source));
+            qualifierLoc = if (qualifierLoc) |l| l.between(curLoc) else curLoc;
+
+            if (self.consume(.TYPE)) |tytok| {
+                exportedType = tytok;
+            } //
+            else {
+                exportedType = null;
+                break;
+            }
+        }
+    }
+
+    if (exportedType) |ty| {
+        try definedExports.append(.{
+            .externalModule = moduleQualifier.items,
+            .qualifierLoc = qualifierLoc,
+            .exportedThing = try self.exportedThing(ty),
+        });
+    } else {
+        if (self.check(.LEFT_PAREN)) {
+            while (!self.check(.RIGHT_PAREN)) {
+                try definedExports.append(.{
+                    .externalModule = moduleQualifier.items,
+                    .qualifierLoc = qualifierLoc,
+                    .exportedThing = try self.exportedThing(null),
+                });
+
+                if (self.check(.RIGHT_PAREN)) break;
+                try self.devour(.COMMA);
+            }
+        } //
+        else if (self.check(.INDENT)) {
+            while (true) {
+                const endedInIndent = try self.oneHotExport(definedExports, moduleQualifier.items);
+                if (endedInIndent) {
+                    if (self.check(.DEDENT)) break;
+                    continue;
+                }
+
+                if (!self.check(.COMMA)) {
+                    try self.endStmt();
+                    if (self.check(.DEDENT)) break;
+                }
+            }
+
+            return true;
+        } //
+        else {
+            try definedExports.append(.{
+                .externalModule = moduleQualifier.items,
+                .qualifierLoc = qualifierLoc,
+                .exportedThing = try self.exportedThing(null),
+            });
+        }
+    }
+
+    return false;
+}
+
+fn exportedThing(self: *Self, firstType: ?Token) !Export.Thing {
+    const parseInParens = struct {
+        fn parseInParens(this: *Self) !Export.ConsDef {
+            if (this.check(.LEFT_PAREN)) {
+                if (this.check(.TIMES)) {
+                    try this.devour(.RIGHT_PAREN);
+                    return .AllCons;
+                } else {
+                    // can be class or data yo!
+                    var constructors = std.ArrayList(Token).init(this.arena);
+                    while (!this.check(.RIGHT_PAREN)) {
+                        try constructors.append(try this.expectOneOf(&.{ .TYPE, .IDENTIFIER }));
+
+                        if (this.check(.RIGHT_PAREN)) break;
+                        try this.devour(.COMMA);
+                    }
+
+                    return .{ .Cons = constructors.items };
+                }
+            }
+
+            // by default, no cons exported??? i gotta think about this.
+            return .{ .Cons = &.{} };
+        }
+    }.parseInParens;
+
+    // the firstType thing is here (even doe it's ugly), so the parsing behavior is localized
+    // since i might change it slighlty
+    if (firstType) |tytok| {
+        const constructors = try parseInParens(self);
+        return .{ .Type = .{ .typename = tytok, .constructors = constructors } };
+    } else {
+        if (self.check(.TIMES)) {
+            return .Wildcard;
+        } // wildcard
+        else if (self.consume(.IDENTIFIER)) |vt| {
+            return .{ .VariableOrFunction = vt };
+        } // var or fun
+        else if (self.consume(.TYPE)) |tytok| {
+            const constructors = try parseInParens(self);
+            return .{ .Type = .{
+                .typename = tytok,
+                .constructors = constructors,
+            } };
+        } //
+        else {
+            unreachable; // parse error. todo, because we need recover logic.
+        }
+    }
+}
+
+pub fn addExports(self: *Self, exports: *const Module.Exports) !void {
+    try addImportToScope(&self.scope.currentScope().vars, &exports.vars);
+    try addImportToScope(&self.scope.currentScope().cons, &exports.cons);
+    try addImportToScope(&self.scope.currentScope().types, &exports.types);
+    try self.addAllInstances(exports);
+}
+
+fn addImportToScope(dest: anytype, src: anytype) !void {
+    var it = src.iterator();
+    while (it.next()) |e| {
+        try dest.put(e.key_ptr.*, .{ .thing = e.value_ptr.*, .fromWhere = .Imported });
+    }
+}
+
+// NOTE: assumes Module.Exports now owns the thing.
+fn scopeToExports(self: *Self) !Module.Exports {
+    std.debug.assert(self.errors.items.len > 0 or self.scope.scopes.current == 1);
+
+    const scope = self.scope.currentScope();
+
+    return .{
+        .vars = try cloneImported(Module.VarOrFun, self.arena, scope.vars),
+        .types = try cloneImported(Module.DataOrClass, self.arena, scope.types),
+        .cons = try cloneImported(*AST.Con, self.arena, scope.cons),
+        .instances = scope.instances,
+    };
+}
+
+fn cloneImported(comptime T: type, al: std.mem.Allocator, src: std.StringHashMap(CurrentScope.Import(T))) !std.StringHashMap(T) {
+    var dest = std.StringHashMap(T).init(al);
+
+    var it = src.iterator();
+    while (it.next()) |e| {
+        const val = e.value_ptr.*;
+        if (val.fromWhere == .Imported) continue;
+        try dest.put(e.key_ptr.*, val.thing);
+    }
+
+    return dest;
 }
 
 // try parse annotations.
@@ -4427,7 +4471,8 @@ const Type = struct {
 };
 
 // resolver zone
-fn loadModuleFromPath(self: *Self, path: Module.Path, l: Loc) ParserError!?Module {
+// TODO: distinguish between non-existent module and it being current module.
+fn loadModuleFromPath(self: *Self, path: Module.Path, l: Loc) ParserError!?Module { // TODO: should return a const pointer, cuz Module is chunky.
     std.debug.assert(path.len > 0); // should not be called with empty path.
 
     if (self.importedModules.get(path)) |mmod| {
