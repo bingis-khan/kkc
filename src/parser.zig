@@ -680,6 +680,7 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             }
 
             const mmodule = try self.loadModuleFromPath(modpath.items, l);
+            // should re-calling `use` reexport instances (in case they were overriden?)
 
             if (self.check(.AS)) {
                 const synonym = try self.expect(.TYPE);
@@ -1211,7 +1212,8 @@ fn importThing(self: *Self, mmodule: ?Module, modpath: Module.Path) !void {
                 } });
             }
         }
-    } else if (self.consume(.TYPE)) |tt| {
+    } //
+    else if (self.consume(.TYPE)) |tt| {
         const typeName = tt.literal(self.lexer.source);
         const dataOrClass: ?Module.DataOrClass = bb: {
             if (mmodule) |mod| {
@@ -1304,7 +1306,15 @@ fn importThing(self: *Self, mmodule: ?Module, modpath: Module.Path) !void {
                 try self.devour(.COMMA);
             }
         }
-    } else {
+    } //
+    else if (self.check(.TIMES)) {
+        if (mmodule) |*module| {
+            try self.addExports(&module.exports);
+            // technically, adds instances twice (first, when the module is loaded, second here.)
+            // TODO: add errors explaining the futility of importing anything else from the module.
+        }
+    } //
+    else {
         return try self.errorExpect("import");
     }
 }
