@@ -1,33 +1,15 @@
 use Iter
-	Iter
-	IntoIter
-	into-iter
-	Iter
-	next
-	take-while
-	take
-	for-each
-	null
-	drop'
-	count
-	to
-	map
+	Iter, IntoIter, into-iter, Iter,
+	next, take-while, take, for-each, null, drop', count, to, map
 use Term
+use Char (is-digit)
 use Str
-	Str
-	chars
-use Str2
-	is-digit
-	parse-int
+	Str, chars, parse-int
 use Error
-	todo
-	or-fail
-	panic
-	assert
-use StaticSize
-	StaticSize
-use SmolStr
-	SmolStr
+	todo, or-fail, panic, assert
+use StaticSize (StaticSize)
+use SmolStr (SmolStr)
+
 
 # I'm taking over the module.
 # This scanner will be treated as a byte scanner FIRST with Char methods n shii.

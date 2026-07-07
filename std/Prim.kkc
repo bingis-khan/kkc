@@ -1,0 +1,302 @@
+# early ordering module, which makes sure that all the necessary stuff gets exported bruh.
+# and all modules have all the stuff they need.
+# basically, it should make the Error module importable by all other modules.
+# maybe also split em into separate modules? like PrimError? (starts with Prim, so it alphabetically is close in file viewers)
+
+# current problems:
+#  - I want the Str module (and similar basic ones) to be able to use the Error module, but the Error module requires Str.
+#  - I want to use functions with allocations o algo, which allocates.
+#  - I kinda want some stuff which should be possible with StrBuilder to be in Str... if we do that, should we make another Prim module?
+#    then make PrimStr1, PrimStr2, etc. (or slightly more descriptive names.)
+#    (we had to add a big inst Str functions to Prim before, but we might just split it now if it gets big.)
+#    also, we can then just export stuff.
+
+use Cnile
+use Mem
+use Iter (to, for-each)  # for now, iter does not need error handling... right?
+
+
+####### PrimChar
+
+# TODO: from-scalar. I need to properly learn to decode it AND I must remember to set num-bytes to the correct value.
+Scalar
+	value U32
+
+CharDestructured
+	Ref Char
+	Scalar Scalar
+
+
+fn destructure(c Char) -> CharDestructured
+	if Mem.get-ms-byte-of-pointer(c.ptr) == 0x67
+		return Scalar({ value: (c.ptr Mem.cast() as Size) Mem.size-u32() })
+	else
+		return Ref(c)
+
+# unfinished. only handles u8 stuff.
+MaxCharBuf = Array 4 U8
+fn unscalarize (scalar Scalar) -> MaxCharBuf
+	if scalar.value > 128
+		@panic('(unscalarize) non-ascii characters not supported for now')
+	b = Mem.u32-u8(scalar.value)
+	return [ b, 0, 0, 0 ]
+
+# not sure about the name. basically, deconstruct the char and
+# make it behave like a Ref char. (to make algorithms easier)
+fn regularize (c Char, possible-scalar-mem Ptr MaxCharBuf) -> Char
+	case c destructure()
+		Ref(cc)
+			return cc
+		Scalar(scalar)
+			possible-scalar-mem <&= scalar unscalarize()
+			return Char { ptr: Mem.cast-ptr(possible-scalar-mem), num-bytes: c.num-bytes }
+
+fn printf-char (c Char)
+	c = c regularize(&@undefined)
+	Cnile.printf2('%.*s', c.num-bytes Mem.size-i32(), c.ptr)
+
+
+fn next-char (p Ptr U8) -> Size
+	pb = p&
+	if pb < 0x80
+		return 1
+	elif pb >= 0xF0
+		return 4
+	elif pb >= 0xE0
+		return 3
+	elif pb >= 0xC0
+		return 2
+	else
+		@panic('(TODO) invalid byte (handle this better...)')
+
+fn scan-from-mem(p Ptr U8) -> Char
+	clen = p next-char()  # assumes p is correct (is not in the middle of a character.) (I guess we can do that too!)
+	if clen > 4
+		# how relevant is this???
+		@panic('UTF8 STRING TOO LONG (is this correct utf8 string?)')
+
+	return Char { ptr: p, num-bytes: clen }
+
+inst FromChar Char
+	from-charlike (ptr Ptr U8, num-bytes Size) -> _
+		ptr = ptr Mem.cast() as Ptr U8
+		return ptr scan-from-mem()
+
+fn char-from-u8 (b U8) -> Char
+	ptr = Mem.set-ms-byte-of-pointer(b Mem.u8-size() Mem.cast() as Ptr U8, 0x67)
+	return Char { ptr, num-bytes: 1 }
+
+
+####### PrimStr
+
+class Str
+	chars (self _) -> iter
+	print-str (self _) -> ()
+
+
+# Required instances.
+
+inst Str Char
+	print-str (self _) -> Unit
+		printf-char(self)
+
+	chars (self _):
+		Iter.single(self)
+
+StrConcatIter l r
+	left l
+	right r
+
+inst IntoIter StrConcatIter
+	into-iter (self): self
+
+inst Iter StrConcatIter
+	next (self)
+		case next(&self&.left)
+			Just(s)
+				return Just(s)
+			None
+				return next(&self&.right)
+
+inst IntoIter StrConcat
+	into-iter (StrConcat(left, right)): StrConcatIter { left: left chars(), right: right chars() }
+
+inst Str StrConcat
+	print-str (self _) -> Unit
+		case self
+			StrConcat(l, r)
+				print-str(l)
+				print-str(r)
+
+	chars (self): self into-iter()
+
+
+##### StrView #####
+
+StrViewIter
+	ds StrView
+	i Size
+
+inst IntoIter StrView
+	into-iter (self): StrViewIter { ds: self, i: 0 }
+
+inst IntoIter StrViewIter
+	into-iter (self): self
+
+inst Iter StrViewIter
+	next (self) -> Maybe Char
+		if self&.i >= self&.ds.contents.count
+			return None
+
+		char-ptr = Mem.cast(self&.ds.contents.ptr) Mem.offset-ptr(Mem.size-i64(self&.i)) as Ptr U8
+		char = scan-from-mem(char-ptr)
+
+		self <&.i= self&.i + char.num-bytes
+		return Just(char)
+
+
+inst Str StrView
+	print-str (self StrView) -> Unit
+		Cnile.printf2('%.*s', self.contents.count Mem.size-i32(), self.contents.ptr)
+
+	chars (self StrView): self into-iter()
+
+inst Str StrViewIter
+	print-str (self StrViewIter) -> Unit
+		@panic('(StrViewIter.print-str) todo')
+
+	chars (self _): self
+
+
+#### Term stuff. ####
+
+fn print (s)
+	s chars() for-each(printf-char)
+
+fn println (s)
+	print('\(s)\n')
+
+
+#### Error stuff ####
+
+fn todo() -> a
+	println('todo')
+	Cnile.abort()
+	return Mem.undefined()
+
+fn unreachable() -> a
+	println('unreachable')
+	Cnile.abort()
+	return Mem.undefined()
+
+# NOTE: When we add iterator style printing to this, performance tanks!!
+fn panic (errmsg) -> Unit
+	print-str('PANIC: \(errmsg)\n')
+	Cnile.abort()
+
+fn assert(cond, msg)
+	if not cond
+		print-str('ASSERTION FAILED: \(msg)\n')
+		Cnile.abort()
+
+
+#### PrimMath ####
+
+fn min(l, r)
+	if l < r
+		return l
+	else
+		return r
+
+fn max(l, r)
+	if l > r
+		return l
+	else
+		return r
+
+fn between(c, l, r)
+	from = min(l, r)
+	to = max(l, r)
+	return from <= c and c <= to
+
+fn pow (base, p):
+	0 to (p - 1) Iter.reduce(1, fn(item, x): x * base)
+
+
+#### PrimStr2 ####
+
+IntStrIter i
+	int i
+	len I32  # should this be U8?
+	negative Bool
+
+inst IntoIter IntStrIter
+	into-iter(self): self
+
+inst Iter IntStrIter
+	next (self Ptr _) -> Maybe Char
+		if self&.negative
+			self <&.negative= False
+			return Just('-')
+
+		if self&.len <= 0
+			return None
+
+		trim-down = 10 pow (self&.len - 1)
+		upper = self&.int / trim-down
+		upper-mask = (upper / 10) * 10
+		digit = Mem.cast(upper - upper-mask) as U8
+
+		self <&.len= self&.len - 1
+
+		digit-char = char-from-u8(digit + 48)
+		return Just(digit-char)
+
+
+# funny :)
+fn count-digits (self)
+	if self == 0
+		return 1
+
+	digits = 0
+	while self > 0
+		self <= self / 10
+		digits <= digits + 1
+
+	return digits
+
+fn int-iter (int)
+	if int < 0
+		return IntStrIter { int: -int, len: count-digits(-int), negative: True }
+	else
+		return IntStrIter { int, len: count-digits(int), negative: False }
+
+fn uint-iter (int):
+	IntStrIter { int, len: count-digits(int), negative: False }
+
+
+inst Str I32
+	print-str (self I32) -> Unit
+		Cnile.printf1('%d', self)
+
+	chars (self I32): int-iter(self)
+inst Str Size
+	print-str (self Size) -> Unit
+		Cnile.printf1('%lu', self)
+
+	chars (self Size): uint-iter(self)
+
+
+#### PrimArray ####
+
+# it has a lot of crappy requirements, maybe I should make a PrimStr module for the other stuff?
+fn array-get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
+	if i < 0 or i >= @cast(count)
+		panic('Access to array at index \(i). (max: \(count))')
+
+	p = Mem.cast-ptr(arr) as Ptr a
+	return Mem.offset-ptr(p, @cast(i))
+
+fn array-get (arr Ptr (Array count a), i Size) -> a:
+	arr array-get-ptr(i)&
+

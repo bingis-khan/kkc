@@ -18,9 +18,8 @@ use Iter
 	down-to
 	zip
 	all
-use Str
-	Str
-	print-str
+use StrInst as Str
+	Str(*)
 use Misc
 	is-just
 
@@ -295,18 +294,3 @@ fn last-ptr(s Slice a) -> Ptr a
 		panic('(Slice.last-ptr) called on empty slice.')
 
 	return s get-ptr(s.count - 1)
-
-
-
-#### spiritually Char module method.
-
-fn from-char (c Char, buf Ptr U8) -> Slice U8
-	case Char.destructure(c)
-		Char.Ref(c)
-			return Slice { ptr: c.ptr, count: c.num-bytes }
-		Char.Scalar(scalar)
-			if scalar.value > 127
-				@panic('(Slice.from-char) non-ascii characters not yet supported')
-			buf <&= scalar.value Mem.u32-u8()
-			return Slice { ptr: buf, count: 1 }
-

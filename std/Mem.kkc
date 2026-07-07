@@ -25,6 +25,8 @@ fn cast-ptr (p Ptr a) -> Ptr b: @cast(p)
 fn set-ptr(x Ptr a, e a)
 	x <&= e
 
+# special function to prevent the situation where we want &@undefined, but write @undefined
+fn uninit-buf() -> Array n a: @undefined
 
 use Cnile
 fn zeroed() -> a

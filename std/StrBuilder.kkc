@@ -1,4 +1,4 @@
-use Str
+use StrInst
 	Str
 	print-str
 	chars
@@ -12,8 +12,6 @@ use Alloc
 	Allocator
 use Slice
 	subslice
-use StrView
-	StrView
 use Mem
 use Slice
 	Slice
@@ -30,7 +28,7 @@ fn write-slice (builder Ptr (StrBuilder alloc), s Slice U8) <= Allocator alloc
 	List.add-all(&builder&.chars, s)
 
 fn write-char (builder Ptr (StrBuilder alloc), c Char) -> Unit <= Allocator alloc
-	builder write-slice(c Slice.from-char(&@undefined))
+	builder write-slice(c Char.as-u8-slice(&@undefined))
 
 fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator alloc
 	s chars() for-each(fn c: builder write-char(c))

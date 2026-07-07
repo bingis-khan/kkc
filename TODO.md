@@ -61,6 +61,7 @@
 	item = MenuItem { action: fn x: Unit  }
 	```
 	- the error was "mismatching param lens" and the thing is, action here has an EMPTY parameter list. I should add a special case for this to remind the user that this is indeed an empty param list and not a tuple -> tuple function.
+- [ ] prevent overwriting of base file, eg. i compile the file `script` and the compiler should make a special name to not overwrite it. (append `.exe`? `.out`?)
 
 
 

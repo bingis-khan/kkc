@@ -3216,7 +3216,7 @@ fn genPanic(self: *Self, s: anytype) !void {
     try l.finishStmt();
 
     var e = startLine(self);
-    try e.p(.{ "exit", "(", 1, ")" });
+    try e.p(.{ "abort", "(", ")" });
     try e.finishStmt();
 }
 

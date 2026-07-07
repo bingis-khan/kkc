@@ -12,8 +12,6 @@ use Iter
 	any
 	append
 	for-each
-use Str2
-	split
 use List
 	to-list
 use StrBuilder
@@ -23,6 +21,8 @@ use Alloc
 use Str
 	Str
 	chars
+	split
+use Array  # instances
 use Misc
 	with
 use StrView

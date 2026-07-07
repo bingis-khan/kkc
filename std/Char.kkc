@@ -1,22 +1,19 @@
+export
+	Scalar, CharDestructured(*), MaxCharBuf
+	destructure, unscalarize, regularize, printf-char, scan-from-mem
+	next-char
+	*
+
 # i'll explicitly import all used modules to quickly check for cycles.
 # this module should be imported by Str.
-use Mem
-use Cnile
-	FILE
+use Mem (uninit-buf)
+use Cnile (FILE)
+use Prim
+	destructure, unscalarize, regularize, printf-char, next-char, scan-from-mem, Scalar, CharDestructured(Ref, Scalar), MaxCharBuf
+	char-from-u8
+	between
+	assert
 
-
-fn next-char (p Ptr U8) -> Size
-	pb = p&
-	if pb < 0x80
-		return 1
-	elif pb >= 0xF0
-		return 4
-	elif pb >= 0xE0
-		return 3
-	elif pb >= 0xC0
-		return 2
-	else
-		@panic('(TODO) invalid byte (handle this better...)')
 
 # assumes we are somewhere in the middle of a character.
 fn sync-char (p Ptr U8) -> Size  # BACKWARDS movement!
@@ -30,36 +27,6 @@ fn sync-char (p Ptr U8) -> Size  # BACKWARDS movement!
 # moves the character back from the previous correct character.
 fn previous-char (p Ptr U8) -> Size  # BACKWARDS movement!
 	return p Mem.offset-ptr(-1) sync-char() + 1  # (+1, because imagine: lands on a correct char. then sync-char() returns 0. so we must add 1)
-
-
-fn scan-from-mem(p Ptr U8) -> Char
-	clen = p next-char()  # assumes p is correct (is not in the middle of a character.) (I guess we can do that too!)
-	if clen > 4
-		# how relevant is this???
-		@panic('UTF8 STRING TOO LONG (is this correct utf8 string?)')
-
-	return Char { ptr: p, num-bytes: clen }
-
-
-inst FromChar Char
-	from-charlike (ptr Ptr U8, num-bytes Size) -> _
-		ptr = ptr Mem.cast() as Ptr U8
-		return ptr scan-from-mem()
-
-
-# TODO: from-scalar. I need to properly learn to decode it AND I must remember to set num-bytes to the correct value.
-Scalar
-	value U32
-
-CharDestructured
-	Ref Char
-	Scalar Scalar
-
-fn destructure(c Char) -> CharDestructured
-	if Mem.get-ms-byte-of-pointer(c.ptr) == 0x67
-		return Scalar({ value: (c.ptr Mem.cast() as Size) Mem.size-u32() })
-	else
-		return Ref(c)
 
 # it will fail for grapheme clusters. use only when you know what chars you're going to get.
 fn try-scalarize (c Char) -> Maybe Scalar
@@ -75,24 +42,6 @@ fn char-u8(c Char) -> U8
 		Scalar(scalar)
 			return Mem.u32-u8(scalar.value)
 
-# unfinished. only handles u8 stuff.
-fn unscalarize (scalar Scalar) -> Array 4 U8
-	if scalar.value > 128
-		@panic('(unscalarize) non-ascii characters not supported for now')
-	b = Mem.u32-u8(scalar.value)
-	return [ b, 0, 0, 0 ]
-
-
-# not sure about the name. basically, deconstruct the char and
-# make it behave like a Ref char. (to make algorithms easier)
-fn regularize (c Char, possible-scalar-mem Ptr (Array 4 U8)) -> Char
-	case c destructure()
-		Ref(cc)
-			return cc
-		Scalar(scalar)
-			possible-scalar-mem <&= scalar unscalarize()
-			return Char { ptr: Mem.cast-ptr(possible-scalar-mem), num-bytes: c.num-bytes }
-
 
 inst Eq Scalar
 	eq (l _, r _): l.value == r.value
@@ -103,26 +52,16 @@ inst Eq Char
 			return False
 
 		# NOTE(05.06.26): this complex function slowed down Interpret types by 40ms for reminda GEEEEG
-		case (destructure(l), destructure(r))
-			(Ref(lc), Ref(rc))
-				# TODO(utf8): normalize??????
-				i = 0
-				while @cast(i) < lc.num-bytes
-					if @offset-ptr(lc.ptr, i)& /= @offset-ptr(rc.ptr, i)&
-						return False
-					i <= i + 1
-				return True
+		lc = l regularize(&uninit-buf())
+		rc = r regularize(&uninit-buf())
 
-			(Scalar(lc), Scalar(rc))
-				return lc == rc
-
-			(Scalar(lc), Ref(rc))
-				# TEMP!
-				return lc.value Mem.u32-u8() == rc.ptr&
-
-			(Ref(lc), Scalar(rc))
-				# TEMP!
-				return rc.value Mem.u32-u8() == lc.ptr&
+		# TODO(utf8): normalize??????
+		i = 0
+		while @cast(i) < lc.num-bytes
+			if @offset-ptr(lc.ptr, i)& /= @offset-ptr(rc.ptr, i)&
+				return False
+			i <= i + 1
+		return True
 
 
 inst Ord Char
@@ -139,6 +78,10 @@ fn nullchar() -> Char: '\0'
 
 ####
 
+fn as-u8-slice (c Char, buf Ptr MaxCharBuf) -> Slice U8
+	cc = c regularize(buf)
+	return Slice { ptr: cc.ptr, count: cc.num-bytes }
+
 fn to-c-wchar (c Char) -> Cnile.WChar
 	case c destructure()
 		Ref(c)
@@ -154,24 +97,9 @@ fn to-c-wchar (c Char) -> Cnile.WChar
 			return sc.value Mem.cast()
 
 
-fn printf-char (c Char)
-	case c destructure()
-		Ref(c)
-			Cnile.printf2('%.*s', c.num-bytes Mem.size-i32(), c.ptr)
-		Scalar(scalar)
-			if scalar.value > 127
-				@panic('(TODO) scalar too large BRUH')
-			Cnile.printf1('%c', scalar.value Mem.u32-u8())
-
 fn fprintf-char (file Ptr FILE, c Char) -> I32
-	case c destructure()
-		Ref(c)
-			return Cnile.fprintf2(file, '%.*s', c.num-bytes Mem.size-i32(), c.ptr)
-
-		Scalar(scalar)
-			if scalar.value > 127
-				@panic('(TODO) scalar too large BRUH')
-			return Cnile.fprintf1(file, '%c', scalar.value Mem.u32-u8())
+	c = c regularize(&@undefined)
+	return Cnile.fprintf2(file, '%.*s', c.num-bytes Mem.size-i32(), c.ptr)
 
 
 ####
@@ -186,12 +114,53 @@ fn fprintf-char (file Ptr FILE, c Char) -> I32
 # 		None
 # 			@panic('(Char.own) could not turn char into scalar.')
 
-fn from-u8 (b U8) -> Char
-	ptr = Mem.set-ms-byte-of-pointer(b Mem.u8-size() Mem.cast() as Ptr U8, 0x67)
-	return Char { ptr, num-bytes: 1 }
+fn from-u8 (b U8) -> Char: char-from-u8(b)
 
 # Should this even be here? It's related to the AsciiChar.
 
 fn ascii-u8(c Cnile.AsciiChar): @cast(c) as U8
 fn u8-ascii(b U8): @cast(b) as Cnile.AsciiChar
 fn ascii-char(c Cnile.AsciiChar): c ascii-u8() from-u8()
+
+
+#######
+
+# TEMP: consider utf8 characters as alpha
+fn is-alpha (c Char):
+	c.num-bytes > 1 or c between('a', 'z') or c between ('A', 'Z')
+
+fn is-whitespace (c Char):
+	c == ' ' or c == '\n' or c == '\t'
+fn is-not-whitespace (c): not is-whitespace(c)
+
+# TEMP: consider num-bytes in the comparison.
+fn is-digit (c Char):
+	c.num-bytes == 1 and c between('0', '9')
+
+fn is-hex (c Char):
+	c.num-bytes == 1 and (c is-digit() or c between('a', 'f') or c between('A', 'F'))
+fn is-binary (c Char):
+	c.num-bytes == 1 and (c == '0' or c == '1')
+fn is-octal (c Char):
+	c.num-bytes == 1 and c between('0', '7')
+
+fn is-alphanumeric(c Char):
+	c is-alpha() or c is-digit()
+
+# TEMP: only for ascii for now.
+fn is-upper (c Char): c.num-bytes == 1 and c between('A', 'Z')
+fn is-lower (c Char): not c is-upper()
+
+fn char-case-diff (): 'a' char-u8() - 'A' char-u8()
+fn to-lower (c Char)
+	if is-upper(c)
+		assert(c.num-bytes == 1, '(to-lower) utf8 not yet supported.')
+		return from-u8(c char-u8() + char-case-diff())
+	return c
+
+
+fn parse-digit (c)
+	if is-digit(c)
+		return Just(Mem.u8-i32(char-u8(c) - char-u8('0')))
+	else
+		return None

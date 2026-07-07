@@ -1,3 +1,5 @@
+export Prim.( print, println ), *
+
 use Str
 	chars
 	Str
@@ -8,10 +10,9 @@ use Convert
 	from-hex
 use Math
 	rshift
-# use Writer
-# 	Writer
 use Iter
 	for-each
+use Prim (print, println)
 
 
 # basic stuff
@@ -25,16 +26,6 @@ use Iter
 
 	# write-cformat1 (wr _, cs ConstStr, x a)
 		# Cnile.printf1(cs, x)
-
-fn print(s)
-	# Display.display(s)
-	# ProtoTerm.print-str(s)
-	# Str.write-str(CPrintWriter, s)
-	# Str.print-str(s)
-	s chars() for-each(Char.printf-char)
-	
-fn println (s)
-	print('\(s)\n')
 
 
 ## term stuff

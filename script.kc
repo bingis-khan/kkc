@@ -1,4 +1,5 @@
 use XDG (config-home, data-home)
+use Scan
 
 println(config-home())
 println(data-home())
@@ -13,3 +14,4 @@ case url
 
 	_
 		println(404)
+

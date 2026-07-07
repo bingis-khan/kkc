@@ -11,24 +11,26 @@ use Cnile
 use Slice
 	Slice
 	subslice
-use Str
-	Str
-	print-str
+use StrInst
+	Str(*), const-str-len
 use Alloc
 	Allocator
 use Error
 	or-fail
+use List
 
 
 ### Iter & Str in Str.kkc
 
 fn from-const-str (s ConstStr)
-	len = Str.const-str-len(s)
+	len = const-str-len(s)
 	return StrView { contents: Slice { ptr: s Mem.cast(), count: len } }
 
 fn from-str (s Str, al)
 	l =& List.mk(al)
-	l List.add-all(s Str.chars() map(Char.char-u8))
+	buf =& Mem.uninit-buf()
+	for c in s chars()
+		l List.add-all(c Char.as-u8-slice(buf))
 	l List.add(Char.nullchar() Char.char-u8())
 	return StrView { contents: l& List.to-slice() }
 
@@ -80,14 +82,14 @@ fn num-bytes (self StrView): self.contents.count
 
 
 fn nth-char (self StrView, i Size):
-	self Str.chars() drop(i) head() or-fail('(StrView.nth-char) StrView does not have enough chars (wanted \(i)-th char)')
+	self chars() drop(i) head() or-fail('(StrView.nth-char) StrView does not have enough chars (wanted \(i)-th char)')
 
 fn char-at-offset (self StrView, i Size):
-	StrView { contents: self.contents Slice.from(i) } Str.chars() head() or-fail('(StrView.char-at-offset) off too great for this StrView (\(i))')
+	StrView { contents: self.contents Slice.from(i) } chars() head() or-fail('(StrView.char-at-offset) off too great for this StrView (\(i))')
 
 
 fn take-while (self StrView, fun Char -> Bool) -> StrView
-	bi = self Str.chars() Iter.take-while(fun) map(fn c: c.num-bytes) sum()
+	bi = self chars() Iter.take-while(fun) map(fn c: c.num-bytes) sum()
 	return self byte-substr(0, bi)
 
 fn null (sv StrView): sv num-bytes() == 0
@@ -95,7 +97,7 @@ fn null (sv StrView): sv num-bytes() == 0
 
 fn drop-while (sv StrView, fun Char -> Bool) -> StrView
 	from = 0
-	for c in sv Str.chars()
+	for c in sv chars()
 		if not fun(c)
 			break
 		from <= from + c.num-bytes
@@ -140,6 +142,39 @@ inst Iter SplitIter
 
 		line = self&.og byte-substr(self&.last, i)
 		i <= i + 1  # skip past the newline
+
+		# modify the state
+		self <&.last= i
+
+		return Just(line)
+
+
+########
+
+LineIter
+	og StrView
+	last Size
+
+fn lines (s StrView): LineIter { og: s, last: 0 }
+
+
+inst IntoIter LineIter
+	into-iter (self LineIter): self
+
+inst Iter LineIter
+	next (self Ptr LineIter) -> Maybe StrView
+		# should consume the last trailing newline
+		if self&.last >= self&.og.contents.count
+			return None
+
+		# iterator is left after last encountered newline
+		i = self&.last
+		while i < self&.og.contents.count and self&.og.contents Slice.get(i) /= '\n' Char.char-u8()
+			i <= i + 1
+
+		line = self&.og byte-substr(self&.last, i)  # NOTE: we can do byte substr, since we're substr-ing to the nearest newline. this is faster, because we don't have to "re-walk"
+		if i < self&.og.contents.count # when i < slice.count, then we encountered a newline.
+			i <= i + 1  # skip past the newline
 
 		# modify the state
 		self <&.last= i

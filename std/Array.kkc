@@ -6,30 +6,25 @@ use Iter
 	to
 	zip
 	all
+use Prim (array-get, array-get-ptr)
 use Slice
 	Slice
-use Str
-	print-str
-	chars
 use Mem
 	i32-size
 use Error
 	or-fail
 	panic
 
-fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
-	if i < 0 or i >= @cast(count)
-		Error.panic('Access to array at index \(i). (max: \(count))')
 
-	p = Mem.cast-ptr(arr) as Ptr a
-	return Mem.offset-ptr(p, @cast(i))
+fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a: array-get-ptr(arr, i)
 
-fn get (arr Ptr (Array count a), i Size) -> a:
-	arr get-ptr(i)&
+fn get (arr Ptr (Array count a), i Size) -> a: array-get(arr, i)
 
 fn set (arr Ptr (Array count a), i Size, e a)
 	p = arr get-ptr(i)
 	p <&= e
+
+fn size (arr Ptr (Array n a)) -> Size: n Mem.i32-size()
 
 
 # i think it should be in Slice and called `from-array`?

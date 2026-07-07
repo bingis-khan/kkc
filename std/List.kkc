@@ -12,7 +12,7 @@ use Iter
 use Alloc
 	Allocator
 	allocate
-use Str
+use StrInst
 	Str
 	print-str
 use Mem

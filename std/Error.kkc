@@ -1,52 +1,23 @@
+export panic, todo, unreachable, panic', assert, *
+
 use Cnile
 use Mem
-use Str
-	Str
-	chars
 use Iter
 	for-each
+use StrInst (Str(*))
+use Prim
+	panic, todo, unreachable, assert, println
 
-# TEMP
-
-fn print(s)
-	# Display.display(s)
-	# ProtoTerm.print-str(s)
-	# Str.write-str(CPrintWriter, s)
-	# Str.print-str(s)
-	s chars() for-each(Char.printf-char)
-	
-fn println (s)
-	print('\(s)\n')
-
-fn todo() -> a
-	print('todo\n')
-	Cnile.abort()
-	return Mem.undefined()
 
 fn todo'(s Str) -> a
-	print('todo: \(s)\n')
+	println('todo: \(s)')
 	Cnile.abort()
 	return Mem.undefined()
-
-fn unreachable() -> a
-	print('unreachable\n')
-	Cnile.abort()
-	return Mem.undefined()
-
-# NOTE: When we add iterator style printing to this, performance tanks!!
-fn panic (errmsg) -> Unit
-	Str.print-str('PANIC: \(errmsg)\n')
-	Cnile.abort()
 
 fn panic' (errmsg) -> a
-	print('PANIC: \(errmsg)\n')
+	println('PANIC: \(errmsg)')
 	Cnile.abort()
 	return Mem.undefined()
-
-fn assert(cond, msg)
-	if not cond
-		Str.print-str('ASSERTION FAILED: \(msg)\n')
-		Cnile.abort()
 
 
 class Failable

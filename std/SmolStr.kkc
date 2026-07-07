@@ -41,7 +41,7 @@ fn from-chars (it it) -> SmolStr <= IntoIter it
 		if i > 7
 			panic('(SmolStr.from-chars) string too long')
 
-		s = c Slice.from-char(&@undefined)
+		s = c Char.as-u8-slice(&@undefined)
 		for ii in 0 to (Mem.size-i32(s.count) - 1)
 			ii = Mem.i32-size(ii)
 			buf Array.set(i + ii, s[ii])

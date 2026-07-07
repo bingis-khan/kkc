@@ -17,8 +17,6 @@ use Str
 	Str
 	print-str
 	chars
-use Str2
-	as-if-list
 use Error
 	panic
 	unreachable
@@ -170,8 +168,12 @@ fn remove (self Ptr (Hash al k v), k k) -> () <= Eq k, Hashable k
 
 
 inst Str Hash
-	print-str (self _): (&self) entries() as-if-list() print-str()
-	chars (self _): (&self) entries() as-if-list() chars()
+	print-str (self _): (&self) entries() Str.print-as-list()
+	# currently Str.list-chars is not working in this context...
+	# chars (self _)
+	# 	chars = (&self) entries() Str.list-chars()
+	# 	return chars
+	chars (self _): (todo() as ()) chars()
 
 inst Indexable Hash
 	elem-get (self, k): get(&self, k)

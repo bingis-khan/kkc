@@ -1285,13 +1285,11 @@ fn importThing(self: *Self, mmodule: ?Module, modpath: Module.Path) !void {
                             .Class => |c| {
                                 for (c.classFuns) |cfun| {
                                     try self.scope.currentScope().vars.put(cfun.name.name, .{ .thing = .{ .ClassFun = cfun }, .fromWhere = .Imported });
-                                    break;
                                 }
                             },
                             .Data => |d| {
                                 for (d.stuff.cons) |*con| {
                                     try self.scope.currentScope().cons.put(con.name, .{ .thing = con, .fromWhere = .Imported });
-                                    break;
                                 }
                             },
                             .Synonym => unreachable, // TODO
@@ -1389,10 +1387,12 @@ fn exportListToExports(self: *Self, definedExports: []Export) !Module.Exports {
                 if (thing.externalModule.len == 0) {
                     try exports.mergeWith(&try self.scopeToExports());
                 } else {
-                    const otherModule = try self.loadModuleFromPath(thing.externalModule, thing.qualifierLoc.?);
-                    try exports.mergeWith(&(otherModule orelse {
-                        unreachable; // TODO. maybe loadModuleFromPath should not return null and error out inside?
-                    }).exports);
+                    const motherModule = try self.loadModuleFromPath(thing.externalModule, thing.qualifierLoc.?);
+                    if (motherModule) |otherModule| {
+                        try exports.mergeWith(&otherModule.exports);
+                    } else {
+                        // loadModuleFromPath should throw an error, right?
+                    }
                 }
             },
             .VariableOrFunction => |vtok| {

@@ -1,9 +1,14 @@
 export
-	Str.Str(chars)
-	Str2.
-		lines, split, is-blank, is-digit, is-alpha, is-alphanumeric, is-hex
-		parse-int, as-if-list, is-whitespace, is-not-whitespace, begins-with
-		is-upper, is-lower, to-lower
+	StrView.( lines )
+	Char.
+		is-whitespace, is-not-whitespace
+
+	Str.(Str(chars), is-blank)
+
+	# Str2.
+	# 	lines, split, is-blank, is-digit, is-alpha, is-alphanumeric, is-hex
+	# 	parse-int, as-if-list, is-whitespace, is-not-whitespace, begins-with
+	# 	is-upper, is-lower, to-lower
 
 	Iter.
 		Range, from, to, down-to
@@ -34,7 +39,6 @@ export
 # `use` are needed to reexport instances in the correct order... is there even a correct order here? I don't have overlapping instances.
 use Char
 use Str
-use Str2
 use Iter
 use Array
 use Mem

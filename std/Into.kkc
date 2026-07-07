@@ -1,4 +1,4 @@
-
+use Str  # import instances
 
 inst UInt Size
 	into-uint (self _): self
