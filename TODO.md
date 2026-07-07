@@ -6,10 +6,10 @@
 		- [x] indented export list
 	- [x] `*` wildcard (and `Class(*)`)
 	- [ ] parse error recovery
-- [ ] import stuff
-	- [ ] wildcard
-	- [ ] on same line (comma separated list)
-	- [ ] `(`, `)`
+- [x] import stuff
+	- [x] wildcard
+	- [x] on same line (comma separated list)
+	- [x] `(`, `)`
 - [x] import synonyms
 - [ ] pointer deconstructions are a footgun
 	```
