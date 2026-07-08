@@ -99,3 +99,8 @@ inst Eq Array
 	eq (l Array len a, r Array len a) -> Bool <= Eq a:
 		l zip (r) all(fn ((l, r)): l == r)
 
+
+#####
+
+# should this be here?
+fn u8-to-const-str (arr Ptr (Array n U8)) -> ConstStr: @cast(arr)

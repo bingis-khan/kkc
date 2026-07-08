@@ -30,6 +30,9 @@ U64
 #[ctype 'int8_t', cstdinclude 'stdint.h', bytes '1']
 I8
 
+#[ctype 'int16_t', cstdinclude 'stdint.h', bytes '2']
+I16
+
 #[ctype 'int32_t', cstdinclude 'stdint.h', bytes '4']
 I32
 

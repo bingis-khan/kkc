@@ -71,6 +71,17 @@ CastPtr a
 fn castptr-ptr(cptr CastPtr a) -> Ptr a: @cast(cptr)
 fn ptr-castptr(ptr Ptr a) -> CastPtr a: @cast(ptr)
 
+# C nullable pointer yah.
+CPtr a
+	cptr Ptr a
+
+fn from-c-ptr (p CPtr a) -> Maybe (Ptr a)
+	if @cast(p.cptr) as Size == 0
+		return None
+	else
+		return Just(p.cptr)
+
+
 # NOTE: I'm thinking, since records are already C layout compatible,
 # my default would be to NOT set custom field names, cause it's annoying.
 # #[ctype 'struct winsize']
@@ -121,6 +132,46 @@ Dirent
 	d-reclen U16
 	d-type U8
 	d-name Array 256 AsciiChar
+
+
+SockAddr
+	sa-family U16
+	sa-data Array 14 U8
+	
+AddrInfo
+	ai-flags CInt
+	ai-family CInt
+	ai-socktype CInt
+	ai-protocol CInt
+	ai-addrlen Size
+	ai-addr Ptr SockAddr
+	ai-canonname Ptr AsciiChar
+	
+	ai-next CPtr ()  # TEMP: should be AddrInfo
+
+
+InAddr
+	s-addr U32
+
+SockAddrIn
+	sin-family I16
+	sin-port U16
+	sin-addr InAddr
+	sin-zero Array 8 U8
+
+
+In6Addr
+	s6-addr Array 16 U8
+
+SockAddrIn6
+	sin6-family U16
+	sin6-port U16
+	sin6-flowinfo U32
+	sin6-addr In6Addr
+	sin6-scope-id U32
+
+SockLenT = U32
+
 
 # Had to change from libc.so to libc.so.6 after switching from musl to glibc
 #[dylib 'libc.so.6']
@@ -272,6 +323,13 @@ external
 	#[cstdinclude 'dirent.h']
 	closedir (dir Ptr DIR) -> CInt
 
+	# network
+	#[cstdinclude 'arpa/inet.h', cfunname 'inet_pton']
+	inet-pton (af CInt, src ConstStr, dest Ptr Void) -> CInt
+
+	#[cstdinclude 'arpa/inet.h', cfunname 'inet_ntop']
+	inet-ntop (af CInt, src Ptr Void, dest Ptr AsciiChar, size SockLenT) -> ConstStr
+
 
 
 #[dylib 'libm.so.6']
@@ -333,5 +391,12 @@ fn s-ifdir() -> U32: 16384  # 0o040000 - directory file type
 
 # locale
 fn lc-ctype() -> CInt: 0
+
+# network
+fn af-inet() -> CInt: 2
+fn af-inet6() -> CInt: 10
+
+fn inet-addr-strlen() -> SockLenT: 16
+fn inet6-addr-strlen() -> SockLenT: 46
 
 # TODO: nullable CPtr and a function CPtr a -> Maybe (Ptr a)
