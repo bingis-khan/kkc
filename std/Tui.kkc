@@ -2,58 +2,22 @@ use Cnile
 	Timespec
 use Array  # Array Iter instance
 use Bits
-	u32-and
-	u32-ors
-	u32-or
-	u32-neg
+	u32-and, u32-ors, u32-or, u32-neg
 use Error
-	unreachable
-	panic'
-	todo
-	assert
-	or-fail
+	unreachable, panic', todo, assert, or-fail
 use Mem
-	cast
-	cast-ptr
-	undefined
-	i32-size
-	i32-u32
-	u32-size
-	u32-i32
-	i64-i32
-	size-i32
-	size-i64
-	size-u32
-use Misc
-	fst
-	snd
+	cast, cast-ptr, undefined,
+	i32-size, i32-u32, u32-size, u32-i32, i64-i32, size-i32, size-i64, size-u32
+use Misc (fst, snd)
 use Term
-	ColorPalette
-	Color8
-	Color16
-	RGB
-	Color
-use Alloc
-	Allocator
-use Slice
-	Slice
-use StrView
-	StrView
+	ColorPalette, Color8, Color16, RGB, Color
+use Alloc (Allocator)
+use Slice (Slice)
+use StrView (StrView)
 use Scan
 use Iter
-	next
-	to
-	for-each
-	cartesian
-	take
-	zip
-	from
-	count
-	map
-	sum
-use Str
-	Str
-	chars
+	next, to, for-each, cartesian, take, zip, from, count, map, sum
+use Str (Str(chars))
 use Time
 
 

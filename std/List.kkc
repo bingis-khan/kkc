@@ -3,20 +3,10 @@ use Slice
 use Error
 	panic
 use Iter
-	IntoIter
-	into-iter
-	zip
-	from
-	for-each
-	drop
-use Alloc
-	Allocator
-	allocate
-use StrInst
-	Str
-	print-str
-use Mem
-	i32-size
+	IntoIter(*), zip, from, for-each, drop
+use Alloc (Allocator(allocate))
+use StrInst (Str(print-str))
+use Mem (i32-size)
 
 
 Idx = Size

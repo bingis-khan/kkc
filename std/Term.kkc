@@ -1,17 +1,9 @@
 export Prim.( print, println ), *
 
-use Str
-	chars
-	Str
-	print-str
-use Mem
-	cast
-use Convert
-	from-hex
-use Math
-	rshift
-use Iter
-	for-each
+use Str (Str(*))
+use Mem (cast)
+use Math (rshift)
+use Iter (for-each)
 use Prim (print, println)
 
 

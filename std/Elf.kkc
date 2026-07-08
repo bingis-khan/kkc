@@ -7,10 +7,8 @@
 
 use Mem
     undefined
-use Slice
-    Slice
-use Alloc
-    Allocator
+use Slice (Slice)
+use Alloc (Allocator)
 use Array
 use Iter
     map

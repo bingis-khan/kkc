@@ -1,34 +1,17 @@
 # A "shell" module. I want to test how an interface for such a module would look like.
 use CnileInst
-use Slice
-	Slice
-use Mem
-	undefined
-	cast
-use Error
-	panic
-use Iter
-	map
-	any
-	append
-	for-each
-use List
-	to-list
+use Slice (Slice)
+use Mem (undefined, cast)
+use Error (panic)
+use Iter (map, any, append, for-each)
+use List (to-list)
 use StrBuilder
-use Alloc
-	Allocator
-	free
-use Str
-	Str
-	chars
-	split
+use Alloc (Allocator(*))
+use Str (Str(*), split)
 use Array  # instances
-use Misc
-	with
-use StrView
-	StrView
-use Bits
-	u32-and
+use Misc (with)
+use StrView (StrView)
+use Bits (u32-and)
 
 
 fn older-than (l, r)

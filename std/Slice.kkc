@@ -1,27 +1,12 @@
 export Slice, *
 
-use Mem
-	offset-ptr
-	TypeSize
-	size-i32
-	i32-size
-use Error
-	or-fail
-	panic
-	todo
+use Mem (offset-ptr, TypeSize, size-i32, i32-size)
+use Error (or-fail, panic, todo)
 use Iter
-	IntoIter
-	Iter
-	for-each
-	from
-	to
-	down-to
-	zip
-	all
+	IntoIter, Iter, for-each, from, to, down-to, zip, all
 use StrInst as Str
 	Str(*)
-use Misc
-	is-just
+use Misc (is-just)
 
 
 # slice definition in prelude.kkc

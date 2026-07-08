@@ -1,11 +1,5 @@
 use Iter
-	IntoIter
-	Iter
-	into-iter
-	next
-	to
-	zip
-	all
+	IntoIter(*), Iter(*), to, zip, all
 use Prim (array-get, array-get-ptr)
 use Slice
 	Slice

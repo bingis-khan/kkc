@@ -1,29 +1,13 @@
 use Into
-use Alloc
-	allocate
-	Allocator
-use Iter
-	map-maybe
-	for-each
-	cons
-use Math
-	mod
-use Misc
-	fmap-maybe
-use Hashable
-	Hashable
-	hash
-use Str
-	Str
-	print-str
-	chars
+use Alloc (Allocator(allocate))
+use Iter (map-maybe, for-each, cons)
+use Math (mod)
+use Misc (fmap-maybe)
+use Hashable (Hashable, hash)
+use Str (Str(*))
 use Error
-	panic
-	unreachable
-	or-fail
-	todo
-use Slice
-	Slice
+	panic, unreachable, or-fail, todo
+use Slice (Slice)
 
 
 Bucket k v

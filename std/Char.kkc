@@ -1,7 +1,7 @@
 export
 	Scalar, CharDestructured(*), MaxCharBuf
 	destructure, unscalarize, regularize, printf-char, scan-from-mem
-	next-char
+	next-char, char-from-u8
 	*
 
 # i'll explicitly import all used modules to quickly check for cycles.
@@ -9,10 +9,9 @@ export
 use Mem (uninit-buf)
 use Cnile (FILE)
 use Prim
-	destructure, unscalarize, regularize, printf-char, next-char, scan-from-mem, Scalar, CharDestructured(Ref, Scalar), MaxCharBuf
-	char-from-u8
-	between
-	assert
+	destructure, unscalarize, regularize, printf-char, next-char, scan-from-mem,
+	char-from-u8, between, assert
+	Scalar, CharDestructured(Ref, Scalar), MaxCharBuf
 
 
 # assumes we are somewhere in the middle of a character.

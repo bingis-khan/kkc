@@ -1,20 +1,12 @@
-use StrInst
-	Str
-	print-str
-	chars
+use StrInst (Str(*))
 use Iter
-	IntoIter
-	into-iter
-	for-each
-use List
-	List
-use Alloc
-	Allocator
+	IntoIter(*), for-each
+use List (List)
+use Alloc (Allocator)
 use Slice
 	subslice
 use Mem
-use Slice
-	Slice
+use Slice (Slice)
 use Error
 	panic
 

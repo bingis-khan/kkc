@@ -2,15 +2,12 @@ use Cnile
 use Mem
 use Alloc
 	allocate
-use Slice
-	Slice
+use Slice (Slice)
 use Str
 	chars
 use StrView
 use Error
-	or-fail
-	unreachable
-	panic
+	or-fail, unreachable, panic
 use Iter
 	next
 

@@ -1,24 +1,12 @@
 # WTF is this name geg
 
 use Iter
-	IntoIter
-	into-iter
-	Iter
-	next
-	head
-	drop
-	map
-	reduce
-	zip
-use Str
-	Str
-	print-str
-	chars
-use Error
-	or-fail
-use Hashable
-	Hashable
-	hash
+	IntoIter(*), Iter(*)
+	head, drop, map, reduce, zip
+use Str (Str(*))
+use Error (or-fail)
+use Hashable (Hashable(*))
+
 
 # COLUMN MAJOR
 

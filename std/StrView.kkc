@@ -1,22 +1,12 @@
 export StrView, *
 
-use Iter
-	IntoIter
-	into-iter
-	map
-	sum
-	drop
-	head
 use Cnile
-use Slice
-	Slice
-	subslice
-use StrInst
+use Iter (IntoIter(*), map, sum, drop, head)
+use Slice (Slice, subslice)
+use StrInst as Str
 	Str(*), const-str-len
-use Alloc
-	Allocator
-use Error
-	or-fail
+use Alloc (Allocator)
+use Error (or-fail)
 use List
 
 
