@@ -1,6 +1,8 @@
 use Cnile
 	CInt
 	Void
+use LiminalCake
+	Vector
 
 # TODO: the annotation is temporary. I should probably use the `external` keyword.
 #[cstruct, ctype 'Color']
@@ -13,6 +15,14 @@ Color
 	b U8
 	#[cfield 'a']
 	a U8
+
+# should we use our Vector type? or keep it OG? odin actually uses its own vector type for this (since it's byte compatible anyway!)
+#[cstruct, ctype 'Vector2']
+Vector2
+	#[cfield 'x']
+	x F32
+	#[cfield 'y']
+	y F32
 
 # the X11 option is temporary bruh!
 #[dylib 'libraylib.so', cstdinclude 'raylib.h', coption '-lraylib' '-lm' '-lX11']
@@ -40,6 +50,9 @@ external
 	
 	#[cfunname 'DrawText']
 	draw-text (s ConstStr, x CInt, y CInt, n CInt, color Color) -> Void
+
+	#[cfunname 'DrawCircleV']
+	draw-circle-v (center Vector2, radius F32, color Color) -> Void
 	
 	
 	#[cfunname 'GetScreenWidth']
@@ -49,5 +62,16 @@ external
 	get-screen-height () -> CInt
 
 
+	#[cfunname 'IsKeyDown']
+	is-key-down (key CInt) -> Bool
+
+
+# colors
 fn raywhite(): Color { r: 245, g: 245, b: 245, a: 255 }
 fn lightgray(): Color { r: 200, g: 200, b: 200, a: 255 }
+
+# keys
+fn key-right() -> CInt: 262
+fn key-left() -> CInt: 263
+fn key-down() -> CInt: 264
+fn key-up() -> CInt: 265

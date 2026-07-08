@@ -1,18 +1,2 @@
-use XDG (config-home, data-home)
-use Scan
-use StrBuilder
 
-println(config-home())
-println(data-home())
-
-url = ['watch', 'miau', 'asd'] as Slice StrView
-case url
-	[]
-		println('default')
-
-	['watch', vid-id, ...]
-		println('watching vid \'\(vid-id)\'')
-
-	_
-		println(404)
-
+println(@size-f32(420 as Size))

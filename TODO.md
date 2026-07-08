@@ -35,6 +35,7 @@
 - [ ] **unions** + typeclass-bound anonymous unions?
 - [ ] deconstruction on assignment
 - [ ] hidden tvars
+- [ ] colored errors + prettier :3 + should I keep errors in stderr or should they be stdout?
 - [ ] trailing commas in the syntax
 - [ ] better occurs check (iirc we init an FTV struct which is pretty slow, make a dedicated function for this)
 - [ ] crappy code - separate tvars into tvars and tnums

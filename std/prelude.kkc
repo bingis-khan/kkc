@@ -39,10 +39,10 @@ I32
 #[ctype 'int64_t', cstdinclude 'stdint.h', bytes '8']
 I64
 
-#[ctype 'float']
+#[ctype 'float', bytes '4']
 F32
 
-#[ctype 'double']
+#[ctype 'double', bytes '8']
 F64
 
 #[ctype 'size_t', cstdinclude 'stddef.h']
@@ -172,8 +172,12 @@ ListSpread spread
 
 class ListDecon
 	# Elem <- dependent type
-	# correct type would be (_, Slice elem, Maybe (Maybe (Ptr _), Slice elem)), but the current one is easier to call from the iterpreter.
+
+	# simulates list deconstruction. the implementing classes can have two behaviors:
+	#  1. Range - does not actually store anything, so write to the ptr like lp <&&= ...
+	#  2. Slice - actually has inner state and we might want to take references to it. In this case hijack the pointer by lp <&= slice.ptr.
 	deconstruct (self _, lp Ptr (Ptr elem), lc Size, spread ListSpread spread, rp Ptr (Ptr elem), rc Size) -> Bool
+	# correct type would be (_, Slice elem, Maybe (Maybe (Ptr _), Slice elem)), but the current one is easier to call from the iterpreter.
 
 
 # Iter and IntoIter is directly used by `for .. in` loop.
@@ -234,6 +238,9 @@ inst FromIntegral U64
 
 inst FromIntegral Size
 	from-integral (x): x
+
+inst FromIntegral F32
+	from-integral (x): @size-f32(x)
 
 inst FromIntegral F64
 	from-integral (x): @size-f64(x)
@@ -323,6 +330,9 @@ inst Ord U32
 
 inst Ord U8
 	cmp (l, r): @u8-cmp(l, r)
+
+inst Ord F32
+	cmp (l, r): @f32-cmp(l, r)
 
 inst Ord F64
 	cmp (l, r): @f64-cmp(l, r)
@@ -429,7 +439,22 @@ inst Division U64
 	op-div (l, r): @u64-div(l, r)
 
 
-## Float
+## F32
+
+inst Addition F32
+	op-add (l, r): @f32-add(l, r)
+
+inst Subtraction F32
+	op-sub (l, r): @f32-sub(l, r)
+
+inst Multiplication F32
+	op-mul (l, r): @f32-mul(l, r)
+
+inst Division F32
+	op-div (l, r): @f32-div(l, r)
+
+
+## F64
 
 inst Addition F64
 	op-add (l, r): @f64-add(l, r)

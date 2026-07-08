@@ -16,7 +16,9 @@ pub const Type: type = addNumericEnums(enum {
     errno,
     @"register-signal",
 
+    @"size-f32",
     @"size-f64",
+    @"f32-f64",
     @"f64-i64-floor",
     @"i32-i64",
 
@@ -37,7 +39,9 @@ const List = [_]Self{
     .{ .ty = .memeq, .args = 2 },
     .{ .ty = .errno, .args = 0 },
     .{ .ty = .@"register-signal", .args = 2 },
+    .{ .ty = .@"size-f32", .args = 1 },
     .{ .ty = .@"size-f64", .args = 1 },
+    .{ .ty = .@"f32-f64", .args = 1 },
     .{ .ty = .@"f64-i64-floor", .args = 1 },
     .{ .ty = .@"i32-i64", .args = 1 },
     .{ .ty = .@"u32-bit-and", .args = 2 },
@@ -65,7 +69,7 @@ pub fn findByName(name: Str) ?Self {
     return finder.get(name);
 }
 
-const NumberTypes = [_][]const u8{ "u8", "i32", "u32", "i64", "u64", "f64", "size" };
+const NumberTypes = [_][]const u8{ "u8", "i32", "u32", "i64", "u64", "f32", "f64", "size" };
 const NumberOps = [_][]const u8{ "add", "sub", "mul", "div", "cmp" };
 
 // https://kihlander.net/post/extending-an-enum-in-zig/

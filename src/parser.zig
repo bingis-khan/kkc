@@ -2998,8 +2998,16 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                     break :b unit;
                 },
 
+                .@"size-f32" => b: {
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.Size), &.{ .l = l });
+                    break :b try self.definedType(.F32);
+                },
                 .@"size-f64" => b: {
                     try self.typeContext.unify(args.items[0].t, try self.definedType(.Size), &.{ .l = l });
+                    break :b try self.definedType(.F64);
+                },
+                .@"f32-f64" => b: {
+                    try self.typeContext.unify(args.items[0].t, try self.definedType(.F32), &.{ .l = l });
                     break :b try self.definedType(.F64);
                 },
                 .@"f64-i64-floor" => b: {
@@ -3049,6 +3057,10 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .@"size-sub",
                 .@"size-mul",
                 .@"size-div",
+                .@"f32-add",
+                .@"f32-sub",
+                .@"f32-mul",
+                .@"f32-div",
                 .@"f64-add",
                 .@"f64-sub",
                 .@"f64-mul",
@@ -3060,6 +3072,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .@"i32-add", .@"i32-sub", .@"i32-mul", .@"i32-div" => try self.definedType(.I32),
                         .@"u32-add", .@"u32-sub", .@"u32-mul", .@"u32-div" => try self.definedType(.U32),
                         .@"u8-add", .@"u8-sub", .@"u8-mul", .@"u8-div" => try self.definedType(.U8),
+                        .@"f32-add", .@"f32-sub", .@"f32-mul", .@"f32-div" => try self.definedType(.F32),
                         .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => try self.definedType(.F64),
                         .@"size-add", .@"size-sub", .@"size-mul", .@"size-div" => try self.definedType(.Size),
 
@@ -3075,6 +3088,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 .@"i32-cmp",
                 .@"u32-cmp",
                 .@"u8-cmp",
+                .@"f32-cmp",
                 .@"f64-cmp",
                 .@"size-cmp",
                 => b: {
@@ -3082,6 +3096,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .@"i64-cmp" => self.definedType(.I64),
                         .@"i32-cmp" => self.definedType(.I32),
                         .@"u32-cmp" => self.definedType(.U32),
+                        .@"f32-cmp" => self.definedType(.F32),
                         .@"f64-cmp" => self.definedType(.F64),
                         .@"size-cmp" => self.definedType(.Size),
                         .@"u8-cmp" => self.definedType(.U8),

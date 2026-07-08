@@ -1330,27 +1330,27 @@ const Stmt = struct {
             },
             .Intrinsic => |intr| {
                 switch (intr.intr.ty) {
-                    .@"u32-add", .@"u8-add", .@"i64-add", .@"u64-add", .@"i32-add", .@"size-add", .@"f64-add" => {
+                    .@"u32-add", .@"u8-add", .@"i64-add", .@"u64-add", .@"i32-add", .@"size-add", .@"f32-add", .@"f64-add" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("+");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-sub", .@"u8-sub", .@"i64-sub", .@"u64-sub", .@"i32-sub", .@"size-sub", .@"f64-sub" => {
+                    .@"u32-sub", .@"u8-sub", .@"i64-sub", .@"u64-sub", .@"i32-sub", .@"size-sub", .@"f32-sub", .@"f64-sub" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("-");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-mul", .@"u8-mul", .@"i64-mul", .@"u64-mul", .@"i32-mul", .@"size-mul", .@"f64-mul" => {
+                    .@"u32-mul", .@"u8-mul", .@"i64-mul", .@"u64-mul", .@"i32-mul", .@"size-mul", .@"f32-mul", .@"f64-mul" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("*");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-div", .@"u8-div", .@"i64-div", .@"u64-div", .@"i32-div", .@"size-div", .@"f64-div" => {
+                    .@"u32-div", .@"u8-div", .@"i64-div", .@"u64-div", .@"i32-div", .@"size-div", .@"f32-div", .@"f64-div" => {
                         try stmt.genExpr(intr.args[0]);
                         try stmt.p("/");
                         try stmt.genExpr(intr.args[1]);
                     },
-                    .@"u32-cmp", .@"u8-cmp", .@"i64-cmp", .@"u64-cmp", .@"i32-cmp", .@"size-cmp", .@"f64-cmp" => {
+                    .@"u32-cmp", .@"u8-cmp", .@"i64-cmp", .@"u64-cmp", .@"i32-cmp", .@"size-cmp", .@"f32-cmp", .@"f64-cmp" => {
                         // CRINGE
                         const it = intr.intr.ty;
                         const cmp = switch (it) {
@@ -1591,7 +1591,15 @@ const Stmt = struct {
                         try stmt.p("~");
                         try stmt.genExpr(intr.args[0]);
                     },
+                    .@"size-f32" => {
+                        try stmt.p("(float)");
+                        try stmt.genExpr(intr.args[0]);
+                    },
                     .@"size-f64" => {
+                        try stmt.p("(double)");
+                        try stmt.genExpr(intr.args[0]);
+                    },
+                    .@"f32-f64" => {
                         try stmt.p("(double)");
                         try stmt.genExpr(intr.args[0]);
                     },

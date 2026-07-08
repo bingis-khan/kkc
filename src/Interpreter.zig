@@ -612,13 +612,23 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                     return Value.enoom(0); // unit
                 },
 
+                .@"size-f32" => {
+                    const i = (try self.expr(intr.args[0])).get().size;
+                    return Value.fromF32(@floatFromInt(i));
+                },
+
                 .@"size-f64" => {
                     const i = (try self.expr(intr.args[0])).get().size;
-                    return Value.float(@floatFromInt(i));
+                    return Value.fromF64(@floatFromInt(i));
+                },
+
+                .@"f32-f64" => {
+                    const f = (try self.expr(intr.args[0])).get().f32;
+                    return Value.fromF64(@floatCast(f));
                 },
 
                 .@"f64-i64-floor" => {
-                    const i = (try self.expr(intr.args[0])).get().float;
+                    const i = (try self.expr(intr.args[0])).get().f64;
                     return Value.int(@as(i64, @intFromFloat(i)));
                 },
 
@@ -716,11 +726,24 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                         else => unreachable,
                     } }, Size.of(usize));
                 },
-                .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => {
-                    const l = (try self.expr(intr.args[0])).get().float;
-                    const r = (try self.expr(intr.args[1])).get().float;
 
-                    return Value.float(switch (intr.intr.ty) {
+                .@"f32-add", .@"f32-sub", .@"f32-mul", .@"f32-div" => {
+                    const l = (try self.expr(intr.args[0])).get().f32;
+                    const r = (try self.expr(intr.args[1])).get().f32;
+
+                    return Value.fromF32(switch (intr.intr.ty) {
+                        .@"f32-add" => l + r,
+                        .@"f32-sub" => l - r,
+                        .@"f32-mul" => l * r,
+                        .@"f32-div" => l / r,
+                        else => unreachable,
+                    });
+                },
+                .@"f64-add", .@"f64-sub", .@"f64-mul", .@"f64-div" => {
+                    const l = (try self.expr(intr.args[0])).get().f64;
+                    const r = (try self.expr(intr.args[1])).get().f64;
+
+                    return Value.fromF64(switch (intr.intr.ty) {
                         .@"f64-add" => l + r,
                         .@"f64-sub" => l - r,
                         .@"f64-mul" => l * r,
@@ -795,9 +818,21 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                         return Value.enoom(2);
                     }
                 },
+                .@"f32-cmp" => {
+                    const l = (try self.expr(intr.args[0])).get().f32;
+                    const r = (try self.expr(intr.args[1])).get().f32;
+
+                    if (l < r) {
+                        return Value.enoom(0);
+                    } else if (l == r) {
+                        return Value.enoom(1);
+                    } else {
+                        return Value.enoom(2);
+                    }
+                },
                 .@"f64-cmp" => {
-                    const l = (try self.expr(intr.args[0])).get().float;
-                    const r = (try self.expr(intr.args[1])).get().float;
+                    const l = (try self.expr(intr.args[0])).get().f64;
+                    const r = (try self.expr(intr.args[1])).get().f64;
 
                     if (l < r) {
                         return Value.enoom(0);
@@ -821,7 +856,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
             return Value.int(sz);
         },
         .Float => |x| {
-            return Value.float(x);
+            return Value.fromF64(x);
         },
         .BinOp => |op| {
             // first, short circuiting ops.
@@ -1780,8 +1815,12 @@ const Value = struct {
         return int(i);
     }
 
-    fn float(f: f64) Value {
-        return Value.initOwned(.{ .float = f }, Size.ofType(f64));
+    fn fromF64(f: f64) Value {
+        return Value.initOwned(.{ .f64 = f }, Size.ofType(f64));
+    }
+
+    fn fromF32(f: f32) Value {
+        return Value.initOwned(.{ .f32 = f }, Size.ofType(f32));
     }
 
     fn bul(b: bool) Value {
@@ -1806,7 +1845,8 @@ const SmolValue = extern union {
     u64: u64,
     u8: u8,
     size: usize,
-    float: f64,
+    f32: f32,
+    f64: f64,
     char: u8,
     extptr: *anyopaque,
     ptr: RawValueRef,
@@ -2003,6 +2043,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) !*ffi.Type {
                 return ffi.types.double;
             }
 
+            if (c.type.eq(self.prelude.defined(.F32))) {
+                return ffi.types.float;
+            }
+
             if (c.type.eq(self.prelude.defined(.ConstStr))) {
                 return ffi.types.pointer;
             }
@@ -2071,7 +2115,7 @@ fn sizeOfFFI(self: *Self, t: ast.Type) !*ffi.Type {
                 }
 
                 if (common.streq(c.type.name, "Bool")) {
-                    return ffi.types.sint;
+                    return ffi.types.uint8;
                 }
 
                 if (common.streq(c.type.name, "ExecVpArgv")) {

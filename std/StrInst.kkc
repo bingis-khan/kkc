@@ -511,6 +511,49 @@ inst Iter SplitEachWhitespaceIter
 				return Just(taken)
 
 
+# F64 yooo
+
+FloatStrIter
+	buf Array 32 Cnile.AsciiChar  # seems to be max possible?
+	i I32
+
+inst IntoIter F64
+	into-iter (f _)
+		buf =& @undefined as Array 32 Cnile.AsciiChar
+		Cnile.snprintf1(buf Mem.cast-ptr(), 32, '%f', f)
+		return FloatStrIter { buf: buf&, i: 0 }
+
+inst IntoIter F32
+	into-iter (f _)
+		buf =& @undefined as Array 32 Cnile.AsciiChar
+		Cnile.snprintf1(buf Mem.cast-ptr(), 32, '%f', @f32-f64(f))
+		return FloatStrIter { buf: buf&, i: 0 }
+
+inst IntoIter FloatStrIter
+	into-iter (self): self
+
+inst Iter FloatStrIter
+	next (self) -> Maybe Char
+		buf = &self&.buf
+		c = buf Array.get(self&.i Mem.i32-size())
+		if c == '\0'
+			return None
+		self <&.i= self&.i + 1
+		return c Char.ascii-char() Just()
+
+inst Str F64
+	print-str (self)
+		Cnile.printf1('%f', self)
+
+	chars (self): self into-iter()
+
+inst Str F32
+	print-str (self)
+		Cnile.printf1('%f', @f32-f64(self))
+
+	chars (self): self into-iter()
+
+
 
 ###### Other Instances #####
 
