@@ -4578,7 +4578,7 @@ fn lookupVar(self: *Self, modpath: Module.Path, varTok: Token) !struct {
             }
         } else {
             // i dunno, probably some other error. Ignore ig?
-            unreachable; // TEMP. I JUST NEED TO SEE WHEN THAT HAPPENS.
+            // unreachable; // TEMP. I JUST NEED TO SEE WHEN THAT HAPPENS.
             // RE: it happens when I try to import the module I'm currently in. (this can be handled before tho, to give the appropriate error)
         }
     }

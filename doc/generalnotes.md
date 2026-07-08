@@ -20,3 +20,9 @@ writeup.md is for more typechecking logic and stuff.
 - added polymorphic number matching for case expressions. uses `FromIntegral`, `Eq` and optionally `Negation` if the number is negative.
     - also changed the default number type from I64 to Size, because it can't be negative by default.
     - makes me think about side effects - should I make any guarantees about functions being re-called, or can I just make it unspecified?
+
+- just reordered stuff in the modules. Created `Prim.kkc` which contains basically everything in teh correct order. and later modules reexport it. this should create a nice interface for the user (all Str functions under `Str`), but it's super annoying.
+    - currently split Str into StrInst and Str. basic modules use StrInst and Str can use StrBuilder, allocate, etc.
+    - but it's empty - I realized the StrView module should have the Str allocating function.
+    - so, I might merge Str and StrInst again.
+    - im also thinking of Char depending on Array module. Array should be pretty basic, no? but it currently is one of the "outer" basic modules - it depends on a lot of other stuff, ONLY due to `or-fail`. I've moved Failable to Prim and now Char can depend on Array... but it does not have to use it yet, since all functions that might use it in the future (unscalarize) are also in Prim...

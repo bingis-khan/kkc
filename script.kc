@@ -1,5 +1,6 @@
 use XDG (config-home, data-home)
 use Scan
+use StrBuilder
 
 println(config-home())
 println(data-home())

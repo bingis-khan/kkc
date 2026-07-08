@@ -1,4 +1,4 @@
-export panic, todo, unreachable, panic', assert, *
+export panic, todo, unreachable, panic', assert, Failable(*), *
 
 use Cnile
 use Mem
@@ -7,6 +7,7 @@ use Iter
 use StrInst (Str(*))
 use Prim
 	panic, todo, unreachable, assert, println
+	Failable(*)
 
 
 fn todo'(s Str) -> a
@@ -20,28 +21,7 @@ fn panic' (errmsg) -> a
 	return Mem.undefined()
 
 
-class Failable
-	or-fail (x _, errmsg s) -> item
-
-	# bad name for a class geg
-	or-else (x _, alt item) -> item
-
-inst Failable Maybe
-	or-fail (x, errmsg)
-		case x
-			None
-				panic(errmsg)
-				return Mem.undefined()
-			Just(xx)
-				return xx
-
-	or-else (self, alt)
-		case self
-			None
-				return alt
-			Just(xx)
-				return xx
-
+### Failable
 
 inst Failable Either
 	or-fail (x, errmsg)

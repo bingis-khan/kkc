@@ -1,9 +1,10 @@
 export
 	StrView.( lines )
 	Char.
-		is-whitespace, is-not-whitespace
+		is-whitespace, is-not-whitespace, is-alphanumeric, is-alpha
+		is-upper, is-lower, is-hex, is-octal, is-digit, is-binary
 
-	Str.(Str(chars), is-blank)
+	Str.(Str(chars), is-blank, parse-int, split)
 
 	# Str2.
 	# 	lines, split, is-blank, is-digit, is-alpha, is-alphanumeric, is-hex

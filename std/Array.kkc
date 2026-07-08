@@ -1,18 +1,22 @@
 use Iter
 	IntoIter(*), Iter(*), to, zip, all
-use Prim (array-get, array-get-ptr)
-use Slice
-	Slice
+use Prim (panic, or-fail)
 use Mem
 	i32-size
-use Error
-	or-fail
-	panic
+use Misc
+	is-just
 
 
-fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a: array-get-ptr(arr, i)
+fn get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
+	if i < 0 or i >= @cast(count)
+		panic('Access to array at index \(i). (max: \(count))')
 
-fn get (arr Ptr (Array count a), i Size) -> a: array-get(arr, i)
+	p = Mem.cast-ptr(arr) as Ptr a
+	return Mem.offset-ptr(p, @cast(i))
+
+
+fn get (arr Ptr (Array count a), i Size) -> a:
+	arr get-ptr(i)&
 
 fn set (arr Ptr (Array count a), i Size, e a)
 	p = arr get-ptr(i)
@@ -50,7 +54,7 @@ fn from-iter (it it) -> Array count a <= IntoIter it
 	for i in 0 to (count - 1)
 		el = next(it) or-fail('(Array.from-iter) expect iter of length \(count), but no elements after \(i)')
 		arr set(i Mem.i32-size(), el)
-	if Misc.is-just(next(it))
+	if is-just(next(it))
 		panic('(Array.from-iter) iter too long. expect only \(count) elements')
 	return arr&
 
@@ -65,7 +69,7 @@ fn fill-iter (it it, default a) -> Array count a <= IntoIter it
 				return arr&
 			Just(x)
 				arr set(i Mem.i32-size(), x)
-	if Misc.is-just(next(it))
+	if is-just(next(it))
 		panic('(Array.from-iter) iter too long. expect only \(count) elements')
 	return arr&
 

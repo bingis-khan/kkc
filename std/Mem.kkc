@@ -88,6 +88,12 @@ fn u8-i32(x U8) -> I32: cast-on-zeroed(x)
 fn u8-u32(x U8) -> U32: cast-on-zeroed(x)
 fn size-f64(x Size) -> F64: @size-f64(x)
 
+# not sure if it should be here?
+fn int-f64 (x)
+	if x >= 0
+		return size-f64(into-uint(x))
+	else
+		return size-f64(into-uint(-x))
 
 # used for pointer tagging.
 # rewrite this function to be clearer?

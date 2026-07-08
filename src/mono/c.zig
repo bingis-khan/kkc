@@ -1962,7 +1962,7 @@ const Stmt = struct {
                     },
                 }
                 if (fungen.type == .Recursive) {
-                    try stmt.j(.{"env"});
+                    try stmt.j(.{"*env"}); // TEMP(recursive)!? recursive functions should just pass the pointer around!
                 } else {
                     try stmt.j(.{
                         if (locality == .Local) "" else "env->",

@@ -1,4 +1,4 @@
-export Str(*), *
+export Str(*), StrConcatIter(*), count-digits, int-iter, uint-iter, *
 
 use Cnile
 use Iter

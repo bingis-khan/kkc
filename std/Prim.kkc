@@ -177,7 +177,7 @@ fn println (s)
 	print('\(s)\n')
 
 
-#### Error stuff ####
+#### PrimError ####
 
 fn todo() -> a
 	println('todo')
@@ -198,6 +198,29 @@ fn assert(cond, msg)
 	if not cond
 		print-str('ASSERTION FAILED: \(msg)\n')
 		Cnile.abort()
+
+
+class Failable
+	or-fail (x _, errmsg s) -> item
+
+	# bad name for a class geg
+	or-else (x _, alt item) -> item
+
+inst Failable Maybe
+	or-fail (x, errmsg)
+		case x
+			None
+				panic(errmsg)
+				return Mem.undefined()
+			Just(xx)
+				return xx
+
+	or-else (self, alt)
+		case self
+			None
+				return alt
+			Just(xx)
+				return xx
 
 
 #### PrimMath ####
@@ -285,18 +308,3 @@ inst Str Size
 		Cnile.printf1('%lu', self)
 
 	chars (self Size): uint-iter(self)
-
-
-#### PrimArray ####
-
-# it has a lot of crappy requirements, maybe I should make a PrimStr module for the other stuff?
-fn array-get-ptr (arr Ptr (Array count a), i Size) -> Ptr a
-	if i < 0 or i >= @cast(count)
-		panic('Access to array at index \(i). (max: \(count))')
-
-	p = Mem.cast-ptr(arr) as Ptr a
-	return Mem.offset-ptr(p, @cast(i))
-
-fn array-get (arr Ptr (Array count a), i Size) -> a:
-	arr array-get-ptr(i)&
-

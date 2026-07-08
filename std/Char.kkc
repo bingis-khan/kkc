@@ -13,7 +13,6 @@ use Prim
 	char-from-u8, between, assert
 	Scalar, CharDestructured(Ref, Scalar), MaxCharBuf
 
-
 # assumes we are somewhere in the middle of a character.
 fn sync-char (p Ptr U8) -> Size  # BACKWARDS movement!
 	i = 0
