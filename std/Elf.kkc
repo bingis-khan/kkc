@@ -136,9 +136,6 @@ fn mk(al Allocator) -> Elf Allocator
     return { bytes: bytes&, finished: False }
 
 fn finalize(elf Ptr (Elf Allocator))
-    if elf&.finished
-        return
-
     bytes = &elf&.bytes
 
     initial-off = (Mem.get-typesize() as Mem.TypeSize Elf64Ehdr).size
@@ -147,7 +144,6 @@ fn finalize(elf Ptr (Elf Allocator))
     bytes ByteBuf.patch(initial-off + filesz-off(), filesz as U64)
 
     bytes ByteBuf.patch(initial-off + memsz-off(), filesz as U64)
-    elf <&.finished= True
 
 fn write-to-file (elf Ptr (Elf Allocator), filename)
     elf finalize()
