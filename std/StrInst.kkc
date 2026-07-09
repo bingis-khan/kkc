@@ -248,6 +248,12 @@ inst Str I64
 
 	chars (self I64): int-iter(self)
 
+inst Str U64
+	print-str (self _) -> Unit
+		Cnile.printf1('%lu', self)
+
+	chars (self _): uint-iter(self)
+
 
 ### StrSepBy
 

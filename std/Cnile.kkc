@@ -68,18 +68,27 @@ CPollfd
 CastPtr a
 	this-field-is-only-for-sizing-cast-the-whole-thing Ptr Void
 
+# TODO: change Ptr to CPtr OR change to Maybe (Ptr a)
 fn castptr-ptr(cptr CastPtr a) -> Ptr a: @cast(cptr)
 fn ptr-castptr(ptr Ptr a) -> CastPtr a: @cast(ptr)
 
 # C nullable pointer yah.
+#[ctype 'void*']
 CPtr a
 	cptr Ptr a
 
 fn from-c-ptr (p CPtr a) -> Maybe (Ptr a)
-	if @cast(p.cptr) as Size == 0
+	if @cast(p) as Size == 0
 		return None
 	else
-		return Just(p.cptr)
+		return Just(@cast(p))
+
+fn into-c-ptr (p Maybe (Ptr a)) -> CPtr a
+	case p
+		None
+			return @cast(0 as Size)
+		Just(ptr)
+			return @cast(ptr)
 
 
 # NOTE: I'm thinking, since records are already C layout compatible,
@@ -233,7 +242,7 @@ external
 	remove (s ConstStr) -> CInt
 
 	#[cstdinclude 'time.h']
-	time (p Ptr Void) -> CInt
+	time (p CPtr Void) -> CInt
 
 	#[cstdinclude 'time.h', cfunname 'clock_gettime']
 	clock-gettime (clock-id ClockId, timespec Ptr Timespec) -> Void

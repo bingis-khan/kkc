@@ -7,6 +7,20 @@ fn u32-and(l U32, r U32): @u32-bit-and(l, r)
 fn u32-neg(l U32): @u32-bit-neg(l)
 fn u32-xor(l U32, r U32): @u32-bit-and(@u32-bit-or(l, r), @u32-bit-neg(@u32-bit-and(l, r)))
 
+# TEMP
+# split into two U32 values.
+fn u64-xor(l U64, r U64)
+	lu = l Math.rshift(32) Mem.u64-u32()
+	ru = r Math.rshift(32) Mem.u64-u32()
+
+	ll = l Mem.u64-u32()
+	rl = r Mem.u64-u32()
+
+	uxor = lu u32-xor(ru)
+	lxor = ll u32-xor(rl)
+	final = uxor Mem.u32-u64() Math.lshift(32) + lxor Mem.u32-u64()
+	return final
+
 fn set-bit(x U32, i I32):
 	x u32-or((2 Math.pow(i)) Mem.i32-u32())
 

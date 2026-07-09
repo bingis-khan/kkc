@@ -670,9 +670,10 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                     const r = (try self.expr(intr.args[1])).get().u64;
 
                     return Value.int(switch (intr.intr.ty) {
-                        .@"u64-add" => l + r,
-                        .@"u64-sub" => l - r,
-                        .@"u64-mul" => l * r,
+                        // NOTE(09.07.26): wraparound arithmetic added for prng. how my language should handle it remains an open question.
+                        .@"u64-add" => l +% r,
+                        .@"u64-sub" => l -% r,
+                        .@"u64-mul" => l *% r,
                         .@"u64-div" => @divTrunc(l, r),
                         else => unreachable,
                     });
@@ -695,9 +696,10 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                     const r = (try self.expr(intr.args[1])).get().u32;
 
                     return Value.int(switch (intr.intr.ty) {
-                        .@"u32-add" => l + r,
-                        .@"u32-sub" => l - r,
-                        .@"u32-mul" => l * r,
+                        // NOTE(09.07.26): wraparound arithmetic added for prng. how my language should handle it remains an open question.
+                        .@"u32-add" => l +% r,
+                        .@"u32-sub" => l -% r,
+                        .@"u32-mul" => l *% r,
                         .@"u32-div" => @divTrunc(l, r),
                         else => unreachable,
                     });
@@ -2082,6 +2084,10 @@ fn sizeOfFFI(self: *Self, t: ast.Type) !*ffi.Type {
 
             // TEMP TEMP TEMP
             {
+                if (common.streq(c.type.name, "CPtr")) {
+                    return ffi.types.pointer;
+                }
+
                 if (common.streq(c.type.name, "U8")) {
                     return ffi.types.uint8;
                 }

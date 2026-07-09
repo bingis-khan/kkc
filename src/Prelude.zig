@@ -4,7 +4,7 @@ const Scope = ast.Scope;
 const common = @import("common.zig");
 const Str = common.Str;
 
-predefinedTypes: [NumPredefinedTypes]*ast.Data,
+predefinedTypes: [NumPredefinedTypes]*const ast.Data,
 predefinedClasses: [NumPredefinedClasses]*ast.Class,
 intTypeTemp: ast.Type,
 
@@ -42,7 +42,7 @@ pub const PremadeType = enum {
 pub const NumPredefinedTypes = NumEnums(PremadeType);
 
 // later should be defined in prelude?
-pub fn defined(self: *const Self, premade: PremadeType) *ast.Data {
+pub fn defined(self: *const Self, premade: PremadeType) *const ast.Data {
     return self.predefinedTypes[@intFromEnum(premade)];
 }
 

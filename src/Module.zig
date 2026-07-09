@@ -152,15 +152,29 @@ pub fn lookupData(self: *const Self, dataName: Str) ?DataOrClass {
 pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
 
     // types
-    var enums: [Prelude.NumPredefinedTypes]*ast.Data = .{undefined} ** Prelude.NumPredefinedTypes;
+    var enums: [Prelude.NumPredefinedTypes]*const ast.Data = .{undefined} ** Prelude.NumPredefinedTypes;
     var copy = Prelude.PremadeTypeName;
     var it = copy.iterator();
     while (it.next()) |kv| {
         if (self.lookupData(kv.value.*)) |dc| {
+            const dataId: usize = @intCast(@intFromEnum(kv.key));
             switch (dc) {
-                .Data => |d| enums[@intCast(@intFromEnum(kv.key))] = d,
+                .Data => |d| enums[dataId] = d,
                 .Class => return error.PreludeError,
-                .Synonym => return error.PreludeError, // this is so low level, I don't want to handle synonyms.
+
+                // handle only basic type synonyms.
+                .Synonym => |syn| {
+                    if (!syn.scheme.isEmpty()) return error.PreludeError; // complex synonym - ded
+                    switch (typeContext.getType(syn.t)) {
+                        .Con => |con| {
+                            if (!con.application.isEmpty() or con.outerApplication.len > 0) return error.PreludeError; // yah
+
+                            // okay, good enough.
+                            enums[dataId] = con.type;
+                        },
+                        else => return error.PreludeError, // wtf u doin - BAM, error, fuck you
+                    }
+                },
             }
         } else {
             std.debug.print("CANNOT FIND {s}\n", .{kv.value.*});

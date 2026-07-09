@@ -2178,6 +2178,10 @@ pub const Match = struct {
         }
     }
 
+    pub fn isEmpty(self: *const @This()) bool {
+        return self.tvars.len == 0 and self.envVars.len == 0 and self.assocs.len == 0;
+    }
+
     pub const Empty = empty(Scheme.Empty);
     pub fn empty(scheme: Scheme) @This() {
         // sanity check. right now only used for placeholders in case of errors.

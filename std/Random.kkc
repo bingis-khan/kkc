@@ -1,10 +1,87 @@
-# seed for stateful random number gen.
-Cnile.srand(Cnile.time(Mem.null-c-ptr()) Mem.cast())
+use Bits
+	u64-xor, u32-or, u32-and
+use Math
+	lshift, rshift
+use StrInst (Str(*))
+use Error
+	panic
 
-fn next-i32() -> I32: Cnile.rand()
-fn next-u32() -> U32: Cnile.rand() Mem.cast()
+
+# PCG32 implementation translated from the "minimal C example" from the PCG website.
+# TODO(09.07.26): read more of the article, seems nicely written.
+#
+# Str instance provided, so I can log the state and optionally restore it in a roguelike dungeon generator for example.
+# TODO: think about the Random typeclass - which primitive methods would it have?
+
+PCG32
+	state U64
+	inc U64
 
 
-# in the future, make a typeclass for random number gen.
-# and then there should be a function like `next()`,
-# which automatically generates!
+fn next(rng Ptr PCG32) -> U32
+	old-state = rng&.state
+	rng <&.state= old-state * 6364136223846793005 + rng&.inc  # WRAPPING! should I add wrapping arith?
+	xorshifted = old-state rshift(18) u64-xor(old-state) rshift(27) Mem.u64-u32()
+	rot = old-state rshift(59) Mem.u64-u32()
+	return xorshifted rshift(rot Mem.u32-i32()) u32-or(xorshifted lshift((-Mem.u32-i32(rot)) Mem.i32-u32() u32-and(31) Mem.u32-i32()))
+
+
+fn seed(init-state U64, init-seq U64) -> PCG32
+	rng =& PCG32 { state: 0, inc: init-seq lshift(1) + 1 }  # should be OR, but I don't yet have intrinsics for those.
+	rng next()
+	rng <&.state= rng&.state + init-state
+	rng next()
+	return rng&
+
+
+fn bounded(rng Ptr PCG32, bound U32) -> U32
+	threshold = (0 - bound) Math.mod(bound)
+	
+	while True
+		r = rng next()
+		if r >= threshold
+			return r Math.mod(bound)
+
+
+# le default way to sneed.
+fn mk()
+	# stolen from the demo program.
+	# apparently, i should seed it from /dev/random, but I don't feel like it :)
+	t = Cnile.time(Cnile.into-c-ptr(None)) Mem.i32-u64()
+	p = @cast(Cnile.printf0) as U64
+	s = @cast(&t) as U64
+	return seed(t u64-xor(p), s)
+
+
+# Here start my own functions and an attempt at an API.
+
+# print whole thing so that we may be able to recreate the generated stuff (eg. a dungeon)
+inst Str PCG32
+	chars (self _): 'PCG32 { state: \(self.state), inc: \(self.inc) }' chars()
+	print-str (self _): 'PCG32 { state: \(self.state), inc: \(self.inc) }' print-str()
+
+
+fn next-u32 (rng) -> U32: rng next()
+fn next-u8 (rng) -> U8: rng next() u32-and(0xff) Mem.u32-u8()
+fn next-u64 (rng) -> U64
+	# this is TEMP. I should just use a version which natively generates 64 bit numbers.
+	upper = rng next()
+	lower = rng next()
+	return upper Mem.u32-u64() Math.lshift(32) + lower Mem.u32-u64()
+
+# default 32 bits, whatever.
+fn urange(rng, from U32, to U32) -> U32
+	if from >= to
+		panic('(Random.urange) invalid bounds: [\(from);\(to))')
+	
+	bound = to - from
+	return rng bounded(bound) + from
+
+fn range(rng, from I32, to I32) -> I32
+	if from >= to
+		panic('(Random.range) invalid bounds: [\(from);\(to))')
+	
+	# sloppy. what happens when to - from is greater than 2^31 - 1?
+	bound = Mem.i32-u32(to - from)
+	return rng bounded(bound) Mem.u32-i32() + from
+

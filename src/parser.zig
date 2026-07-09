@@ -3096,6 +3096,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                         .@"i64-cmp" => self.definedType(.I64),
                         .@"i32-cmp" => self.definedType(.I32),
                         .@"u32-cmp" => self.definedType(.U32),
+                        .@"u64-cmp" => self.definedType(.U64),
                         .@"f32-cmp" => self.definedType(.F32),
                         .@"f64-cmp" => self.definedType(.F64),
                         .@"size-cmp" => self.definedType(.Size),
@@ -5268,7 +5269,7 @@ const DataInst = struct {
     tyArgs: []AST.TypeOrNum,
     match: *AST.Match,
 };
-fn instantiateData(self: *Self, data: *AST.Data, l: ?Loc) !DataInst {
+fn instantiateData(self: *Self, data: *const AST.Data, l: ?Loc) !DataInst {
     const match = try self.instantiateScheme(data.scheme, null, l);
 
     const outerTVars = try self.arena.alloc(AST.TypeOrNum, data.outerTVars.len);
@@ -6079,7 +6080,7 @@ fn definedType(self: *Self, predefinedType: Prelude.PremadeType) !AST.Type {
 
 fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
     dataInst: DataInst,
-    data: *AST.Data,
+    data: *const AST.Data,
 } {
     return if (self.prelude) |prelude| {
         const data = prelude.defined(predefinedType);

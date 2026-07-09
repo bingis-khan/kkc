@@ -26,6 +26,11 @@ U32
 #[ctype 'uint64_t', cstdinclude 'stdint.h', bytes '8']
 U64
 
+# ????
+
+#[ctype 'size_t', cstdinclude 'stddef.h', bytes '8']
+Size
+
 
 #[ctype 'int8_t', cstdinclude 'stdint.h', bytes '1']
 I8
@@ -45,8 +50,6 @@ F32
 #[ctype 'double', bytes '8']
 F64
 
-#[ctype 'size_t', cstdinclude 'stddef.h']
-Size
 
 # Is this too much voodoo? I'm basically only using it for Ints
 # class Int <= Eq, Ord, Addition, Subtraction, Multiplication, Division
@@ -274,6 +277,10 @@ inst Indexable Ptr
 
 # Eq
 
+inst Eq Ordering
+	eq (l, r): @memeq(l, r)
+
+
 inst Eq Unit
 	eq (l, r): True
 
@@ -298,8 +305,8 @@ inst Eq Size
 inst Eq Bool
 	eq (l, r): @memeq(l, r)
 
-inst Eq Ordering
-	eq (l, r): @memeq(l, r)
+inst Eq U64
+	eq (l, r): @u64-cmp(l, r) == EQ  # tryin sumtin noo
 
 
 inst Eq Maybe
@@ -340,6 +347,8 @@ inst Ord F64
 inst Ord Size
 	cmp (l, r): @size-cmp(l, r)
 
+inst Ord U64
+	cmp (l, r): @u64-cmp(l, r)
 
 # ops
 
