@@ -26,3 +26,23 @@ writeup.md is for more typechecking logic and stuff.
     - but it's empty - I realized the StrView module should have the Str allocating function.
     - so, I might merge Str and StrInst again.
     - im also thinking of Char depending on Array module. Array should be pretty basic, no? but it currently is one of the "outer" basic modules - it depends on a lot of other stuff, ONLY due to `or-fail`. I've moved Failable to Prim and now Char can depend on Array... but it does not have to use it yet, since all functions that might use it in the future (unscalarize) are also in Prim...
+
+- (copied from the comment - i made the string literals in case statements behave like string literals in the language in general):
+    ```
+    this instance was added due to string matching in case statements.
+    i just realized, that maybe we should do the same thing as with literals?
+    for now, no. see this:
+    case c
+      'a': ...
+      'b': ...
+      '': ...  # <- empty string cannot be a char. yet, all the cases of this type added a FromChar instance, yet the last one forces FromString.
+    the downside of this? FromString Char should not exist.
+      it's possible to construct an invalid char, which will panic runtime (exactly the situation FromChar *sort-of* prevents (ASCII chars have the same problem wrt normal Chars, but whatever.)).
+    I'll leave it for now, but maybe we should match the behavior of the rest of the compiler.
+    # inst FromString Char
+    # 	from-string (ptr, count): from-charlike(ptr, count)
+    ```
+
+    - as you can see, i later did match the behavior in the end.
+    - if we make string literals totally polymorphic (always StrView, compare with some streq() or strview-eq() function), then it won't matter.
+
