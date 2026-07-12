@@ -339,6 +339,10 @@ external
 	#[cstdinclude 'arpa/inet.h', cfunname 'inet_ntop']
 	inet-ntop (af CInt, src Ptr Void, dest Ptr AsciiChar, size SockLenT) -> ConstStr
 
+	# stdin
+	#[cstdinclude 'stdio.h']
+	getchar () -> CInt
+
 
 
 #[dylib 'libm.so.6']

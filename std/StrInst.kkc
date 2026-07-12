@@ -461,6 +461,27 @@ fn begins-with (s Str, beg Str) -> Bool
 			_
 				return True
 
+fn ends-with (s Str, end Str) -> Bool
+	scs =& s chars()
+	while True
+		cscs =& (scs& Misc.own())
+		endcs =& end chars()
+		while True
+			case (cscs next(), endcs next())
+				((Just(lc), Just(rc)))
+					if lc /= rc
+						break
+
+				((None, Just(_)))
+					return False
+
+				((None, None))
+					return True
+				_
+					break
+
+		next(scs)
+
 
 #### split by multiple at a time.
 

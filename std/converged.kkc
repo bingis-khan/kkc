@@ -17,6 +17,7 @@ export
 		map, filter, drop, take, take-while, drop-while, break', zip, append, sep-by
 		for-each, for-each-break, reduce, count, all, any, head, last, null
 		sum, product, flatten, cycle, permutations, cartesian, combinations, unordered-pairs, drop', drop-while', take-while'
+		one-of
 
 		cons, nil
 

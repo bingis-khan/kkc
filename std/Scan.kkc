@@ -9,6 +9,8 @@ use Error
 	todo, or-fail, panic, assert
 use StaticSize (StaticSize)
 use SmolStr (SmolStr)
+use Misc
+	is-just
 
 
 # I'm taking over the module.
@@ -70,16 +72,19 @@ fn try-char (sc Ptr (Scanner s), char Char) -> Bool <= Iter s, IntoIter s
 
 	return False
 
-fn char-satisfies (sc Ptr (Scanner s), condition Char -> Bool) -> Bool <= Iter s, IntoIter s
+fn char-satisfies' (sc Ptr (Scanner s), condition Char -> Bool) -> Maybe Char <= Iter s, IntoIter s
 	case sc&.s Iter.head()
 		Just(c)
 			if condition(c)
 				sc drop'(1)
-				return True
+				return Just(c)
 			else
-				return False
+				return None
 		None
-			return False
+			return None
+
+fn char-satisfies (sc Ptr (Scanner s), condition Char -> Bool) -> Bool <= Iter s, IntoIter s:
+	sc char-satisfies'(condition) is-just()
 
 fn matches-str (sc Ptr (Scanner s), s Str) -> Bool <= Iter s, IntoIter s
 	skip = 0

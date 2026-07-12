@@ -16,6 +16,7 @@ fn from-const-str (s ConstStr)
 	len = const-str-len(s)
 	return StrView { contents: Slice { ptr: s Mem.cast(), count: len } }
 
+# (this one also adds a nullchar!)
 fn from-str (s Str, al)
 	l =& List.mk(al)
 	buf =& Mem.uninit-buf()

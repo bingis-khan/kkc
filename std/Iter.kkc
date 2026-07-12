@@ -541,6 +541,8 @@ fn null(it)
 		_
 			return False
 
+fn one-of(x, it): it any(fn e: e == x)
+
 
 
 inst ListDecon Range

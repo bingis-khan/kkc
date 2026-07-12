@@ -3440,7 +3440,17 @@ fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc:
 
     caseexpr.e.CaseExpr.cases = cases.items;
 
-    self.mode = .{ .Simple = prev };
+    self.mode = .{
+        .Simple = switch (prev) {
+            .Normal => .Normal,
+            .CountIndent => |i| .{
+                .CountIndent = .{
+                    .indent = i.indent,
+                    .hadMultiline = true,
+                },
+            },
+        },
+    };
 }
 
 fn qualified(self: *Self, first: Token) !*AST.Expr {

@@ -79,8 +79,10 @@ fn scan-from-mem(p Ptr U8) -> Char
 
 inst FromChar Char
 	from-charlike (ptr Ptr U8, num-bytes Size) -> _
-		ptr = ptr Mem.cast() as Ptr U8
-		return ptr scan-from-mem()
+		le-char = ptr scan-from-mem()
+		if le-char.num-bytes /= num-bytes
+			@panic('invalid char given. number of scanned bytes should match the given num-bytes.')
+		return le-char
 
 fn char-from-u8 (b U8) -> Char
 	ptr = Mem.set-ms-byte-of-pointer(b Mem.u8-size() Mem.cast() as Ptr U8, 0x67)

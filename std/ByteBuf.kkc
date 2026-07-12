@@ -24,6 +24,8 @@ ByteBuf al
 fn mk(al Allocator) -> ByteBuf Allocator: { buf: List.mk(al) }
 fn free(bb Ptr (ByteBuf Allocator)): List.free(&bb&.buf)
 
+fn count-written-bytes (bb Ptr (ByteBuf al)): List.size(&bb&.buf)
+
 # this should be in Mem or something (but it requires Slice, so must be somewhere else.)
 fn as-mem(x Ptr a) -> Slice U8:
 	Slice { ptr: x Mem.cast-ptr(), count: x Mem.ptr-size-of() }
@@ -43,6 +45,12 @@ fn patch(bb Ptr (ByteBuf al), idx List.Idx, x a) <= Allocator al
 
 fn write-bytes(bb Ptr (ByteBuf al), xs it) <= Allocator al, IntoIter it
 	List.add-all(&bb&.buf, xs)
+
+fn write-slice(bb Ptr (ByteBuf al), xs Slice U8) <= Allocator al
+	bb write-bytes(xs)
+
+fn write-array(bb Ptr (ByteBuf al), xs Array n U8) <= Allocator al
+	bb write-bytes(xs)
 
 inst IntoIter ByteBuf
 	into-iter (self _): self.buf into-iter()

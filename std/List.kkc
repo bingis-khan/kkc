@@ -64,6 +64,9 @@ fn free (list Ptr (List alloc a)) -> Unit <= Allocator alloc
 	return
 
 
+fn size (l Ptr (List al a)): l&.count
+fn count (l Ptr (List al a)): l&.count
+
 
 starting-size = 8 as Size
 growth-factor = 2 as Size
@@ -170,10 +173,19 @@ fn first (list)
 	else
 		return list get(0) Just()
 
+fn last(list)
+	if list&.count == 0
+		return None
+	else
+		return list get(list size() - 1) Just()
+
 fn pop (list)
 	if list&.count == 0
 		panic('List.pop() called on empty list.')
-	return remove(list, list&.count - 1)
+
+	last-elem = list last()
+	remove(list, list&.count - 1)
+	return last-elem
 
 fn top (list)
 	if list&.count == 0
@@ -203,9 +215,6 @@ fn to-slice(l List al a) -> Slice a
 fn addresses (l): l
 	to-slice()
 	Slice.addresses()
-
-fn size (l Ptr (List al a)): l&.count
-fn count (l Ptr (List al a)): l&.count
 
 
 fn from-iter (iter it, al alloc) -> List alloc a <= Allocator alloc, IntoIter it

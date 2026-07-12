@@ -1,2 +1,4 @@
 
 println(@size-f32(420 as Size))
+
+println('dupa.kkc' Str.ends-with('.kkc'))
