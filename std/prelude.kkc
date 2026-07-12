@@ -271,18 +271,6 @@ inst FromString ConstStr
 inst FromString StrView
 	from-string (ptr, count): StrView { contents: Slice { ptr, count } }
 
-# this instance was added due to string matching in case statements.
-# i just realized, that maybe we should do the same thing as with literals?
-# for now, no. see this:
-# case c
-#   'a': ...
-#   'b': ...
-#   '': ...  # <- empty string cannot be a char. yet, all the cases of this type added a FromChar instance, yet the last one forces FromString.
-# the downside of this? FromString Char should not exist.
-#   it's possible to construct an invalid char, which will panic runtime (exactly the situation FromChar *sort-of* prevents (ASCII chars have the same problem wrt normal Chars, but whatever.)).
-# I'll leave it for now, but maybe we should match the behavior of the rest of the compiler.
-inst FromString Char
-	from-string (ptr, count): Char { ptr, num-bytes: count }
 
 
 # for all lists and stuff. instead of offsetting a pointer, it calls the inner function.

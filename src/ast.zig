@@ -238,7 +238,7 @@ pub const Function = struct {
 
     pub const Use = union(enum) {
         Fun: struct { fun: *Function, m: *const Match, t: Type },
-        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst, t: Type },
+        ClassFun: struct { cfun: *const ClassFun, ref: InstFunInst, t: Type },
 
         fn print(self: @This(), c: Ctx) void {
             switch (self) {
@@ -501,7 +501,7 @@ pub const Level = usize;
 pub const EnvVar = struct {
     v: union(enum) {
         Fun: *Function,
-        ClassFun: struct { cfun: *ClassFun, ref: InstFunInst }, // used when a class function depends on a TVar from outer scope - then we MUST consider it a class function.
+        ClassFun: struct { cfun: *const ClassFun, ref: InstFunInst }, // used when a class function depends on a TVar from outer scope - then we MUST consider it a class function.
         Var: DeconVar,
         TNum: TNum,
     },
@@ -921,7 +921,7 @@ pub const Expr = struct {
         BinOp: struct { l: Rec, op: BinOp, r: Rec },
         UnOp: struct { e: Rec, op: UnOp },
         Call: struct { callee: Rec, args: []Rec },
-        Var: struct { v: VarType, match: *Match, locality: Locality }, // NOTE: Match is owned here!
+        Var: struct { v: VarType, match: *const Match, locality: Locality }, // NOTE: Match is owned here!
         Con: *Con,
         Intrinsic: struct { intr: Intrinsic, args: []Rec },
         Int: struct { int: usize, ref: InstFunInst }, // obv temporary. (now I remember why temporary. instead of ref here, we'll do it like Chars and Strings, where we just generate more AST )
@@ -1028,7 +1028,7 @@ pub const Expr = struct {
     pub const VarType = union(enum) {
         Fun: *Function,
         ClassFun: struct {
-            cfun: *ClassFun,
+            cfun: *const ClassFun,
             ref: InstFunInst,
         }, // SMELL: this one I have to allocate, because I'm returning the whole struct from a function, so the address will change.
         Var: DeconVar,
@@ -1931,7 +1931,7 @@ pub const Association = struct {
     // when it's a value, it's an actual association with an associated function call.
     concrete: ?struct {
         to: Type,
-        classFun: *ClassFun,
+        classFun: *const ClassFun,
         ref: InstFunInst,
 
         env: ?EnvFun, // when ~instantiating the scheme~ this is special :3 (fukkk i dont know how to explain it.)

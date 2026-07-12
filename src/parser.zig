@@ -1928,41 +1928,29 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
     } // -number
     else if (self.consume(.STRING)) |strtok| b: {
         const l = self.loc(strtok);
+        const litWithQuotes = strtok.literal(self.lexer.source);
+        const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
 
-        const svt = try self.typeContext.fresh();
-        const fromStringClass = try self.definedClass(.FromString);
-        const fromStringFun = fromStringClass.classFuns[0];
-        const fromStringInst = try self.instantiateClassFunction(fromStringFun, l);
-        const strPtrTy = try self.ptrTo(try self.definedType(.U8));
-        const fsFunTy = try self.makeType(.{ .Fun = .{
-            .args = [_]AST.Type{
-                strPtrTy,
-                try self.definedType(.Size),
-            },
-            .ret = svt,
-        } });
-        try self.typeContext.unify(fromStringInst.t, fsFunTy, &.{ .l = l });
+        const cst = try self.constStrType(lit, l);
 
         const eqClass = try self.definedClass(.Eq);
         const eqfun = eqClass.classFuns[0];
         const eqInst = try self.instantiateClassFunction(eqfun, l);
 
         const eqfunTy = try self.makeType(.{ .Fun = .{
-            .args = [_]AST.Type{ svt, svt },
+            .args = [_]AST.Type{ cst.selfTy, cst.selfTy },
             .ret = try self.typeContext.fresh(),
         } });
         try self.typeContext.unify(eqInst.t, eqfunTy, &.{ .l = l });
 
-        const litWithQuotes = strtok.literal(self.lexer.source);
-        const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
         break :b .{
-            .t = svt,
+            .t = cst.selfTy,
             .l = l,
             .d = .{
                 .Str = .{
                     .str = lit,
                     .instEq = eqInst.ref,
-                    .instFromString = fromStringInst.ref,
+                    .instFromString = cst.ref,
                 },
             },
         };
@@ -3899,6 +3887,62 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
 }
 
 fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
+    // NOTE(12.07.26): the return type currently does not distinguish whether a Char or a String was detected. keep in mind, that the representation might change, and then this whole thing must be split.
+    const cst = try self.constStrType(s, l);
+
+    const ptrArg = try self.allocExpr(.{
+        .e = .{
+            .Str = s,
+        },
+        .t = cst.ogStrTy,
+        .l = l,
+    });
+
+    const sizeArg = try self.allocExpr(.{
+        .e = .{
+            .ConstSize = s.len,
+        },
+        .t = try self.definedType(.Size),
+        .l = l,
+    });
+
+    const args = try self.arena.alloc(*AST.Expr, 2);
+    args[0] = ptrArg;
+    args[1] = sizeArg;
+
+    const callee = try self.allocExpr(.{
+        .e = .{
+            .Var = .{
+                .v = .{ .ClassFun = .{
+                    .cfun = cst.cfun,
+                    .ref = cst.ref,
+                } },
+                .match = cst.m,
+                .locality = locality(self.env, cst.cfun.class.level),
+            },
+        },
+        .t = cst.funTy,
+        .l = l,
+    });
+
+    return try self.allocExpr(.{
+        .e = .{ .Call = .{
+            .callee = callee,
+            .args = args,
+        } },
+        .t = cst.selfTy,
+        .l = l,
+    });
+}
+
+fn constStrType(self: *Self, s: Str, l: Loc) !struct {
+    ref: AST.InstFunInst,
+    cfun: *const AST.ClassFun,
+    m: *const AST.Match,
+    ogStrTy: AST.Type,
+    funTy: AST.Type,
+    selfTy: AST.Type,
+} {
     // NOTE(05.06.26): should FromChar operate on a 1-byte character or a utf8 grapheme cluster?
     // currently we use the shitty unicode definition of a single character.
     // is this correct doe?
@@ -3921,51 +3965,15 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
         } });
         try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
 
-        const ptrArg = try self.allocExpr(.{
-            .e = .{
-                .Str = s,
-            },
-            .t = ptrTy,
-            .l = l,
-        });
-
-        const sizeArg = try self.allocExpr(.{
-            .e = .{
-                .ConstSize = s.len,
-            },
-            .t = try self.definedType(.Size),
-            .l = l,
-        });
-
-        const args = try self.arena.alloc(*AST.Expr, 2);
-        args[0] = ptrArg;
-        args[1] = sizeArg;
-
-        const callee = try self.allocExpr(.{
-            .e = .{
-                .Var = .{
-                    .v = .{ .ClassFun = .{
-                        .cfun = cfun,
-                        .ref = ifn.ref,
-                    } },
-                    .match = ifn.m,
-                    .locality = locality(self.env, cfun.class.level),
-                },
-            },
-            .t = funTy,
-            .l = l,
-        });
-
-        return try self.allocExpr(.{
-            .e = .{ .Call = .{
-                .callee = callee,
-                .args = args,
-            } },
-            .t = retTy,
-            .l = l,
-        });
+        return .{
+            .ref = ifn.ref,
+            .cfun = cfun,
+            .m = ifn.m,
+            .ogStrTy = ptrTy,
+            .funTy = funTy,
+            .selfTy = retTy,
+        };
     } else {
-        // NOTE: Copypasta, but not really. I may change one class and not the other, so I should NOT refactor this.
         const retTy = try self.typeContext.fresh();
         const class = try self.definedClass(.FromString);
         const cfun = class.classFuns[0];
@@ -3980,49 +3988,14 @@ fn constStr(self: *Self, s: Str, l: Loc) !*AST.Expr {
         } });
         try self.typeContext.unify(ifn.t, funTy, &.{ .l = l });
 
-        const ptrArg = try self.allocExpr(.{
-            .e = .{
-                .Str = s,
-            },
-            .t = ptrTy,
-            .l = l,
-        });
-
-        const sizeArg = try self.allocExpr(.{
-            .e = .{
-                .ConstSize = s.len,
-            },
-            .t = try self.definedType(.Size),
-            .l = l,
-        });
-
-        const args = try self.arena.alloc(*AST.Expr, 2);
-        args[0] = ptrArg;
-        args[1] = sizeArg;
-
-        const callee = try self.allocExpr(.{
-            .e = .{
-                .Var = .{
-                    .v = .{ .ClassFun = .{
-                        .cfun = cfun,
-                        .ref = ifn.ref,
-                    } },
-                    .match = ifn.m,
-                    .locality = locality(self.env, cfun.class.level),
-                },
-            },
-            .t = funTy,
-            .l = l,
-        });
-
-        return try self.allocExpr(.{
-            .e = .{ .Call = .{
-                .callee = callee,
-                .args = args,
-            } },
-            .t = retTy,
-            .l = l,
-        });
+        return .{
+            .ref = ifn.ref,
+            .cfun = cfun,
+            .m = ifn.m,
+            .ogStrTy = ptrTy,
+            .funTy = funTy,
+            .selfTy = retTy,
+        };
     }
 }
 
@@ -4931,7 +4904,7 @@ fn addToEnvIfPossible(self: *Self, menv: ?AST.EnvFun, inst: AST.EnvVar, temp__so
     }
 }
 
-fn instantiateClassFunction(self: *Self, cfun: *AST.ClassFun, l: Loc) !struct {
+fn instantiateClassFunction(self: *Self, cfun: *const AST.ClassFun, l: Loc) !struct {
     ref: AST.InstFunInst,
     t: AST.Type,
     m: *AST.Match,
@@ -5906,7 +5879,7 @@ pub const Association = struct {
     // when it's null, it's just a `constraint` and not based on a class function call.
     // when it's a value, it's an actual association with an associated function call.
     concrete: ?struct {
-        classFun: *AST.ClassFun,
+        classFun: *const AST.ClassFun,
         ref: *?AST.Match.AssocRef,
         to: AST.Type,
 

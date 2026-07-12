@@ -4,3 +4,14 @@ println(@size-f32(420 as Size))
 println('dupa.kkc' Str.ends-with('.kkc'))
 
 'aabacbacc'.contents Slice.find-last-occurence-of-slice('bc'.contents) println()
+
+case 'd' as StrView
+	'a'
+		println('a')
+	'd'
+		println('d')
+	''
+		println('empty')
+
+	_
+		println('none')

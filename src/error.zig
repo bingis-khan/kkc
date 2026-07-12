@@ -158,7 +158,7 @@ pub const Error = union(enum) {
 
     MissingInstanceFunction: struct {
         data: *const ast.Data,
-        classFun: *ast.ClassFun,
+        classFun: *const ast.ClassFun,
         loc: Loc,
     },
 

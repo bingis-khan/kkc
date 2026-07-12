@@ -84,6 +84,20 @@ inst FromChar Char
 			@panic('invalid char given. number of scanned bytes should match the given num-bytes.')
 		return le-char
 
+# this instance was added due to string matching in case statements.
+# i just realized, that maybe we should do the same thing as with literals?
+# for now, no. see this:
+# case c
+#   'a': ...
+#   'b': ...
+#   '': ...  # <- empty string cannot be a char. yet, all the cases of this type added a FromChar instance, yet the last one forces FromString.
+# the downside of this? FromString Char should not exist.
+#   it's possible to construct an invalid char, which will panic runtime (exactly the situation FromChar *sort-of* prevents (ASCII chars have the same problem wrt normal Chars, but whatever.)).
+# I'll leave it for now, but maybe we should match the behavior of the rest of the compiler.
+# inst FromString Char
+# 	from-string (ptr, count): from-charlike(ptr, count)
+
+
 fn char-from-u8 (b U8) -> Char
 	ptr = Mem.set-ms-byte-of-pointer(b Mem.u8-size() Mem.cast() as Ptr U8, 0x67)
 	return Char { ptr, num-bytes: 1 }
