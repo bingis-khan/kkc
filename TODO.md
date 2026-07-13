@@ -33,7 +33,8 @@
 - [ ] recursion (including nested recursion, which would make mutual recursion possible)
 - [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] **unions** + typeclass-bound anonymous unions?
-- [ ] deconstruction on assignment
+- [x] deconstruction on assignment
+	- [ ] deconstruction without a `let` keyword.
 - [ ] hidden tvars
 - [ ] colored errors + prettier :3 + should I keep errors in stderr or should they be stdout?
 - [ ] trailing commas in the syntax
