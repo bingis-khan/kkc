@@ -46,3 +46,5 @@ writeup.md is for more typechecking logic and stuff.
     - as you can see, i later did match the behavior in the end.
     - if we make string literals totally polymorphic (always StrView, compare with some streq() or strview-eq() function), then it won't matter.
 
+- added deconstruction with the `let .... = <expr>`. I know it's lazy. I don't want to keep it in the language, but the parsing code, even though it's not ambiguous, is pretty complitcated to write, which I don't feel like doing now (compared to the benefits).
+    - also, deconstruction code is broke af rn (try to end a case with a single var) (it was broken before btw, for example match on a single integer). my next non-typechecking endeavor will be to standardize deconstruction value semantics (check if what I'm getting is an lvalue or not.)

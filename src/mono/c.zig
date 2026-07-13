@@ -605,9 +605,9 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
                 try genPanic(self, "pattern not matched at assignment.");
                 try endBodyAndFinish(self);
             } else {
-                try deconAssignments(self, decon.d, decon.refvar);
                 // dont finish the 'if' statement, deconstruction always succeeds.
             }
+            try deconAssignments(self, decon.d, decon.refvar);
         },
         .VarMut => |vm| {
             var s = startLine(self);

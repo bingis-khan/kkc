@@ -1,5 +1,13 @@
 
 
-x = None
-let Just(m) = x as Maybe I32
-println(m)
+# x = None
+# let Just(m) = x as Maybe I32
+# let k = 420
+# println(k)
+
+x = 420
+case 1337
+	420
+		println('miau')
+	z
+		println(z)
