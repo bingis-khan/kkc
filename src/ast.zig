@@ -617,6 +617,7 @@ fn printBody(stmts: []*Stmt, oldC: Ctx) void {
 
 pub const Stmt = union(enum) {
     VarDec: struct { varDef: Var, varValue: *Expr },
+    Decon: struct { d: *const Decon, refvar: Var, e: *Expr },
     VarMut: struct { varRef: DeconVar, locality: Locality, accessors: []Accessor, varValue: *Expr },
     If: struct {
         cond: *Expr,
@@ -674,6 +675,9 @@ pub const Stmt = union(enum) {
                 c.s(" = ");
                 vd.varValue.print(c);
                 c.s("\n");
+            },
+            .Decon => |decon| {
+                c.print(.{ "let", decon.d, "=", decon.e });
             },
             .VarMut => |vm| {
                 c.print(.{ vm.varRef, " <" });

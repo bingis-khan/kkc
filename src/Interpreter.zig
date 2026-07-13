@@ -121,6 +121,20 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             const v = try self.expr(vd.varValue);
             try self.putVar(vd.varDef, v);
         },
+        .Decon => |decon| {
+            const val = try self.expr(decon.e);
+            const vref = try common.allocOne(self.scope.scopeLocalAllocator, val);
+            if (!try self.tryDeconstruct(decon.d, vref.getRefToMemory())) {
+                const l = decon.d.l;
+                var hadNewline = false;
+                const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                (errr.Error.ErrCtx{
+                    .module = l.module,
+                    .c = ctx,
+                }).atLocation(l, .{ .label = .{"miau"} });
+                return error.CaseNotMatched;
+            }
+        },
         .VarMut => |vm| {
             const exprVal = try (try self.expr(vm.varValue)).copyTo(self.alCurStack.?);
             const sz = exprVal.size;
@@ -346,7 +360,7 @@ fn addEnvSnapshot(self: *Self, fun: *ast.Function) !void {
 
 // NOTE: we are getting deep into structs. we must not convert that Value.Type pointer into *Value, because it might not have that header.
 // TODO(07.06.26): use sizer API
-fn tryDeconstruct(self: *Self, decon: *ast.Decon, v: RawValueRef) !bool {
+fn tryDeconstruct(self: *Self, decon: *const ast.Decon, v: RawValueRef) !bool {
     switch (decon.d) {
         .None => return true,
         .Var => |vn| {

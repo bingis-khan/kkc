@@ -264,7 +264,7 @@ pub fn loadModule(
         if (self.stdExports) |*exports| {
             try parser.addExports(exports);
         } else {
-            std.debug.assert(self.opts.noDefaultImports);
+            std.debug.assert(self.opts.noDefaultImports or self.opts.noImplicitPrelude);
         }
     }
 

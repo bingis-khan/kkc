@@ -153,6 +153,8 @@ pub fn main() !void {
     } else {
         if (!opts.dontRun) {
             const interpretStartTime = try std.time.Instant.now();
+
+            // how would I handle a partially declared Prelude? or should I even do it? it may be useful?
             const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa, al);
             const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
 
@@ -190,10 +192,12 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
     const root = std.fs.path.dirname(opts.filename) orelse "";
     var modules = try Modules.init(aa, errors, typeContext, root, stdRoot, opts);
 
-    const prelude = try modules.loadPrelude();
-    typeContext.prelude = prelude;
-    if (!opts.noDefaultImports) {
-        _ = try modules.loadConverged();
+    if (!opts.noImplicitPrelude) {
+        const prelude = try modules.loadPrelude();
+        typeContext.prelude = prelude;
+        if (!opts.noDefaultImports) {
+            _ = try modules.loadConverged();
+        }
     }
 
     return modules;

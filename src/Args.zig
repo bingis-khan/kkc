@@ -54,12 +54,13 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
             };
 
             switch (option) {
+                .@"no-prelude" => opts.noImplicitPrelude = true,
+                .noimplicit => opts.noImplicitPrelude = true,
                 .tokens => opts.printTokens = true,
                 .ast => opts.printAST = true,
                 .exports => opts.printExports = true,
                 .@"!tokens" => opts.printRootTokens = true,
                 .@"!ast" => opts.printRootAST = true,
-                .noimplicit => opts.noImplicitPrelude = true,
                 .@"no-default-imports" => opts.noDefaultImports = true,
                 .dontRun => opts.dontRun = true,
                 .@"dont-compile" => opts.dontCompile = true,
@@ -120,6 +121,7 @@ const ProgramOption = enum {
     @"dont-compile",
     @"hide-errors",
     backend,
+    @"no-prelude",
 };
 
 const ShortOption = enum {

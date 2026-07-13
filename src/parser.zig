@@ -847,6 +847,14 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
                 break :b .{ .Expr = e };
             }
         } // var or mut
+        else if (self.check(.LET)) {
+            const refvar = self.deconRefVar();
+            const d = try self.deconstruction(refvar);
+            try self.devour(.EQUALS);
+            const expr = try self.expression();
+            try self.typeContext.unify(d.t, expr.t, &.{ .l = d.l, .r = expr.l });
+            break :b .{ .Decon = .{ .d = d, .refvar = refvar, .e = expr } };
+        } // deconstruction (TEMP let, i'll have to rethink deconstruction and maybe make it polymorphic enough for this?)
         else if (self.check(.UNDERSCORE)) {
             try self.devour(.EQUALS);
             const e = try self.expression();
@@ -1865,6 +1873,7 @@ fn addConstraintsToAssocs(self: *Self, assocs: *std.ArrayList(AST.Association), 
     }
 }
 
+// TODO: what was RefVar for? I forgot
 fn deconRefVar(self: *Self) AST.Var {
     return .{ .name = "dref", .uid = self.gen.vars.newUnique() };
 }

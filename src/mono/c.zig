@@ -590,6 +590,25 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
 
             try s.finishStmt();
         },
+        .Decon => |decon| {
+            var se = startLine(self);
+            try se.varExpr(decon.refvar, decon.e);
+            try se.finish();
+
+            var s = startLine(self);
+
+            try s.p(.{ "if", "(!(" });
+            const hadCondition = try s.deconCondition(decon.d, decon.refvar);
+            if (hadCondition) {
+                try s.p(.{"))"});
+                try s.beginBody();
+                try genPanic(self, "pattern not matched at assignment.");
+                try endBodyAndFinish(self);
+            } else {
+                try deconAssignments(self, decon.d, decon.refvar);
+                // dont finish the 'if' statement, deconstruction always succeeds.
+            }
+        },
         .VarMut => |vm| {
             var s = startLine(self);
             for (vm.accessors) |acc| {

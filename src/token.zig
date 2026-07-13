@@ -70,6 +70,7 @@ pub const TokenType = enum {
     OR,
     AND,
     NOT,
+    LET,
 
     REF, // &, both ref and deref
     DOT, // .member
