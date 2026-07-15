@@ -73,7 +73,7 @@ pub fn Mono(Back: type) type {
         };
         const Self = @This();
 
-        pub fn mono(modules: []ast, roots: []ast.Function.Use, prelude: *const Prelude, typeContext: *TypeContext, backend: *Backend, al: std.mem.Allocator) !void {
+        pub fn mono(modules: []ast, roots: []ast.Function.Use, prelude: *const Prelude, typeContext: *TypeContext, backend: *Backend, al: std.mem.Allocator, verbose: bool) !void {
             const cgStartTime = try std.time.Instant.now();
 
             var hadNewline = false;
@@ -86,7 +86,8 @@ pub fn Mono(Back: type) type {
             _ = monoStuff;
             var firstUseScope = InstUses.init(al, typeContext, null);
             const cgTime = std.time.Instant.since(try std.time.Instant.now(), cgStartTime) / std.time.ns_per_ms;
-            std.debug.print("=== mono call graph: {}ms ===\n", .{cgTime});
+            if (verbose)
+                std.debug.print("=== mono call graph: {}ms ===\n", .{cgTime});
 
             const monoStartTime = try std.time.Instant.now();
             var self = Self{
@@ -102,7 +103,8 @@ pub fn Mono(Back: type) type {
             }
 
             const monoTime = std.time.Instant.since(try std.time.Instant.now(), monoStartTime) / std.time.ns_per_ms;
-            std.debug.print("=== mono compilation: {}ms ===\n", .{monoTime});
+            if (verbose)
+                std.debug.print("=== mono compilation: {}ms ===\n", .{monoTime});
         }
 
         pub fn monoScope(self: *Self, stmts: []*ast.Stmt) !void {

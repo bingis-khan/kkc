@@ -11,10 +11,19 @@ const TypeContext = @import("TypeContext.zig");
 const Modules = @import("Modules.zig");
 const Module = @import("Module.zig");
 const ast = @import("ast.zig");
+const MonoC = @import("mono/c.zig");
 
 const BaseDir = "test/tests/";
 
 pub fn main() !void {
+    // try runTests(InterpreterRunner);
+
+    const dir = std.testing.tmpDir(.{}).dir;
+    const cthing = CRunner{ .dir = dir };
+    try runTests(cthing);
+}
+
+fn runTests(Runner: anytype) !void {
     // SETUP
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -35,8 +44,7 @@ pub fn main() !void {
 
     const aa = arena.allocator();
 
-    const opts = Args{ .filename = "miauuuuuuuuuu" };
-    const ogModules = try kkc_main.preloadModules(&opts, aa);
+    var state = try Runner.init(aa);
 
     var tests = std.ArrayList(Str).init(al);
     defer {
@@ -83,8 +91,7 @@ pub fn main() !void {
     var todo: u32 = 0;
     var skipped: u32 = 0;
     for (tests.items) |filename| {
-        var modules = try ogModules.cloneWithAllocator(aa);
-        const result = runTest(filename, &modules);
+        const result = runTest(filename, aa, &state);
 
         if (!testOptions.failingOnly or !result.status.passed()) {
             std.debug.print("[{s}] ({s}) {s}\n", .{ switch (result.status) {
@@ -105,7 +112,7 @@ pub fn main() !void {
 
         if (result.errors) |errors| {
             var fakeNewline: bool = undefined;
-            const fakeHackCtx = AST.Ctx.init(&fakeNewline, &result.typeContext.?);
+            const fakeHackCtx = AST.Ctx.init(&fakeNewline, result.typeContext.?);
             fakeNewline = false; // SIKE (but obv. temporary)
             for (errors.items) |err| {
                 err.err.print(fakeHackCtx, err.module);
@@ -134,6 +141,101 @@ pub fn main() !void {
     std.debug.print("Passed {}/{} (todo {}) (skipped {})\n", .{ passed, total - skipped - todo, todo, skipped });
 }
 
+const InterpreterRunner = struct {
+    const State = struct {
+        modules: Modules,
+        al: std.mem.Allocator,
+
+        test_modules: ?Modules = null,
+
+        fn beforeTest(self: *@This()) !void {
+            self.test_modules = try self.modules.cloneWithAllocator(self.al);
+        }
+
+        fn compile(self: *@This(), filename: Str) !CompilationState {
+            const module = try kkc_main.compileFile(&self.test_modules.?, filename);
+            return .{
+                .errors = self.test_modules.?.errors,
+                .typeContext = self.test_modules.?.typeContext,
+                .mainModule = module,
+            };
+        }
+
+        fn run(self: *@This()) !i64 {
+            return try Interpreter.run(self.test_modules.?.getAST(), self.test_modules.?.prelude.?, self.test_modules.?.typeContext, &.{}, self.al, self.al);
+        }
+    };
+
+    fn init(al: std.mem.Allocator) !State {
+        const opts = Args{ .filename = "miauuuuuuuuuu" };
+        const ogModules = try kkc_main.preloadModules(&opts, al);
+        return .{ .modules = ogModules, .al = al };
+    }
+};
+
+const CRunner = struct {
+    const State = struct {
+        al: std.mem.Allocator,
+        dir: Str,
+
+        test_modules: ?Modules = null,
+        cCompilerOutput: ?std.ArrayList(u8) = null,
+        exeName: ?[:0]const u8 = null,
+
+        fn beforeTest(self: *@This()) !void {
+            // NOTE: well, i got what i deserved. the global state in the ast is fucking me up. i gotta remove it and do it properly.
+            const opts = Args{ .filename = "miauuuuuuuuuu" };
+            const ogModules = try kkc_main.preloadModules(&opts, self.al);
+            self.test_modules = ogModules;
+            self.cCompilerOutput = std.ArrayList(u8).init(self.al);
+        }
+
+        fn compile(self: *@This(), filename: Str) !CompilationState {
+            const modules = &self.test_modules.?;
+            const module = try kkc_main.compileFile(modules, filename);
+
+            var cbackend = MonoC.init(self.al, modules.typeContext);
+            // TODO: this can crash. I should also run it in a different process. But how would we transfer data?
+            try MonoC.Mono.mono(modules.getAST(), modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, self.al, false);
+
+            const outname = std.fs.path.stem(filename);
+            const ccomp = try kkc_main.compileC(self.al, &cbackend, outname, self.dir, self.cCompilerOutput.?.writer());
+            self.exeName = ccomp.exeFilename;
+
+            // todo: compile the C file too. somehow put extra errors here.
+            return .{
+                .errors = self.test_modules.?.errors,
+                .typeContext = self.test_modules.?.typeContext,
+                .mainModule = module,
+            };
+        }
+
+        fn run(self: *@This()) !i64 {
+            const ret = try kkc_main.runExe(self.al, self.exeName.?, &.{self.exeName.?});
+            return switch (ret) {
+                .Exited => |exitcode| exitcode,
+                else => -1,
+            };
+        }
+    };
+
+    dir: std.fs.Dir,
+
+    fn init(self: *const @This(), al: std.mem.Allocator) !State {
+        const dirpath = try self.dir.realpathAlloc(al, ".");
+        return .{
+            .al = al,
+            .dir = dirpath,
+        };
+    }
+};
+
+const CompilationState = struct {
+    errors: *const Errors,
+    typeContext: *const TypeContext,
+    mainModule: Module,
+};
+
 const TestResult = struct {
     filename: Str,
     testname: Str,
@@ -156,8 +258,8 @@ const TestResult = struct {
         }
     },
 
-    errors: ?Errors,
-    typeContext: ?TypeContext,
+    errors: ?*const Errors,
+    typeContext: ?*const TypeContext,
 
     output: ?struct {
         expected: Str,
@@ -176,8 +278,8 @@ const TestResult = struct {
 
     const SubtestError = struct { subtest: Subtest, err: Str };
 };
-fn runTest(filename: Str, modules: *Modules) TestResult {
-    return runTest_(filename, modules) catch |err| .{
+fn runTest(filename: Str, al: std.mem.Allocator, runner: anytype) TestResult {
+    return runTest_(filename, al, runner) catch |err| .{
         .filename = filename,
         .testname = "???",
         .status = .{ .CompilerError = err },
@@ -191,10 +293,10 @@ fn runTest(filename: Str, modules: *Modules) TestResult {
 
 const CompilerError = error{InterpreterPanic} || ErrSet(kkc_main.preloadModules) || ErrSet(kkc_main.compileFile) || ErrSet(runAndReadStdout) || ErrSet(readHeader);
 
-fn runTest_(filename: Str, modules: *Modules) !TestResult {
+fn runTest_(filename: Str, aa: std.mem.Allocator, runner: anytype) !TestResult {
+    try runner.beforeTest();
 
     // stuff
-    const aa: std.mem.Allocator = modules.al;
     const relFilename = try std.mem.concat(aa, u8, &.{ BaseDir, filename });
     const header = try readHeader(relFilename, aa);
     if (header.disabled) |disability| {
@@ -214,22 +316,22 @@ fn runTest_(filename: Str, modules: *Modules) !TestResult {
     }
 
     const compilationStartTime = try std.time.Instant.now();
-    const module = try kkc_main.compileFile(modules, relFilename);
+    const compilationState = try runner.compile(relFilename);
     const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
 
     var result = TestResult{
         .filename = filename,
         .testname = header.testTitle,
         .status = .Passed,
-        .errors = modules.errors.*,
-        .typeContext = modules.typeContext.*,
+        .errors = compilationState.errors,
+        .typeContext = compilationState.typeContext,
         .compileMS = compilationTime,
         .runMS = null,
         .subtestErrors = &.{},
     };
 
-    if (modules.errors.items.len == 0) {
-        const run = try runAndReadStdout(aa, modules);
+    if (compilationState.errors.items.len == 0) {
+        const run = try runAndReadStdout(aa, runner);
 
         if (!run.failed) {
             if (!common.streq(run.stdout, header.expectedOutput)) {
@@ -252,7 +354,7 @@ fn runTest_(filename: Str, modules: *Modules) !TestResult {
 
             var subtestErrors = std.ArrayList(TestResult.SubtestError).init(aa);
             for (header.subtests) |*subtest| {
-                if (try subtest.verify(&module, aa)) |err| {
+                if (try subtest.verify(&compilationState.mainModule, aa)) |err| {
                     try subtestErrors.append(.{ .subtest = subtest.*, .err = err });
                     if (result.status == .Passed)
                         result.status = .SubtestFailed;
@@ -279,7 +381,7 @@ const Run = struct {
     returnValue: u8,
     interpretTimeMS: u64,
 };
-fn runAndReadStdout(aa: std.mem.Allocator, modules: *const Modules) !Run {
+fn runAndReadStdout(aa: std.mem.Allocator, runner: anytype) anyerror!Run {
     const interpretStartTime = try std.time.Instant.now();
     const fd = try std.posix.pipe(); // .{ read, write }
     const pid = try std.posix.fork();
@@ -290,7 +392,7 @@ fn runAndReadStdout(aa: std.mem.Allocator, modules: *const Modules) !Run {
         try std.posix.dup2(fd[1], std.io.getStdOut().handle);
         std.posix.close(fd[1]);
 
-        const ret = try Interpreter.run(modules.getAST(), modules.prelude.?, modules.typeContext, &.{}, aa, aa);
+        const ret = try runner.run();
         std.process.exit(@intCast(ret));
     }
 

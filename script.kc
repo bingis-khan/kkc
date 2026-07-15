@@ -1,13 +1,12 @@
 
 
-# x = None
-# let Just(m) = x as Maybe I32
-# let k = 420
-# println(k)
+x = Just(1337)
+let Just(m) = x as Maybe I32
+println(m)
 
-x = 420
-case 1337
-	420
-		println('miau')
-	z
-		println(z)
+# x = 420
+# case 1337
+# 	420
+# 		println('miau')
+# 	z
+# 		println(z)

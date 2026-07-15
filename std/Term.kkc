@@ -61,6 +61,15 @@ fn get-dimensions() -> (U32, U32)
 	return (Mem.u16-u32(ws&.ws-col), Mem.u16-u32(ws&.ws-row))
 
 
+## Alt Screen
+
+fn enable-alternative-screen-buffer ()
+	print('\x1b[?1049h')
+
+fn disable-alternative-screen-buffer ()
+	print('\x1b[?1049l')
+
+
 ## Colors
 
 fn set-default-fg()

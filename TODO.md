@@ -30,6 +30,7 @@
 - [x] string matching in deconstruction. (currently only StrView)
 	- [ ] polymorphic string matching? (what would be the correct way to handle this? should it be polymorphic? maybe an additional function in Str with default implementation like `strview-eq()`?)
 - [x] polymorphic number matching (use a combination of FromIntegral + Eq)
+- [ ] multi-backend tests, nicer (im thinking of something like the B language tests.)
 - [ ] recursion (including nested recursion, which would make mutual recursion possible)
 - [ ] recursive datatypes (incl Ptr which breaks depth checking).
 - [ ] **unions** + typeclass-bound anonymous unions?
@@ -45,6 +46,7 @@
 - [ ] apostrophe in string interpolation breaks it (actually tokenize string interpolation? allow actual expressions? or just track parens?)
 - [ ] module search should start at program path, not cwd.
 - [ ] grapheme cluster parsing with surrogates (currently we only do single codepoints)
+- [ ] colored errors (RED stuff) plus basic syntax highlighting in errors?
 - [ ] I want this to work: (19.06.26: should it work tho? it's really stupid. it's cool with already written code tho)
 		```
 		fn sort'(slice Slice a, funcmp (a, a) -> Ordering)

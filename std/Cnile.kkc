@@ -364,6 +364,15 @@ fn seek-end(): 2
 fn stdout-fileno(): 1
 fn stdin-fileno(): 0
 
+# signals
+fn sigint(): 2
+fn sigill(): 4
+fn sigabrt(): 6
+fn sigfpe(): 8
+fn sigsegv(): 11
+fn sigterm(): 15
+fn sigwinch(): 28
+
 # termios lflags
 fn echo(): 8
 fn icanon(): 2

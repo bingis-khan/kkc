@@ -68,76 +68,25 @@ pub fn main() !void {
                 // mono it
                 // var backend = Bytecode.Backend.init(aa, modules.typeContext);
                 var cbackend = C.init(aa, modules.typeContext);
-                try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, aa);
+                try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, aa, true);
 
-                const cWritingCompilingStartTime = try std.time.Instant.now();
-                const rawStdout = std.io.getStdOut().writer();
-                var stdoutbuf = std.io.bufferedWriter(rawStdout);
+                const outname = opts.exeName orelse std.fs.path.stem(opts.filename);
+
+                var stdoutbuf = std.io.bufferedWriter(std.io.getStdOut().writer());
                 const stdout = stdoutbuf.writer();
+                const ccomp = try compileC(aa, &cbackend, outname, null, stdout);
+                try stdoutbuf.flush();
 
                 if (opts.printAST or opts.printRootAST) {
                     try cbackend.writeTo(stdout);
-                    try stdoutbuf.flush();
                 }
 
-                const filename = std.fs.path.stem(opts.filename);
-                const outname = opts.exeName orelse filename;
-                const c_filename = try std.mem.concat(aa, u8, &.{ outname, ".c" });
+                try stdoutbuf.flush();
 
-                const file = try std.fs.cwd().createFile(c_filename, .{});
-                defer file.close();
+                std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{ccomp.time});
 
-                const writer = file.writer();
-                try cbackend.writeTo(writer);
-
-                if (!opts.dontCompile) {
-                    var copts = std.ArrayList([]const u8).init(aa);
-                    try copts.appendSlice(&.{ "cc", c_filename, "-o", outname });
-
-                    var prog_c_opts = cbackend.coptions.iterator();
-                    while (prog_c_opts.next()) |copt| {
-                        try copts.append(copt.*);
-                    }
-
-                    const res = try std.process.Child.run(.{ .allocator = aa, .argv = copts.items });
-                    try stdout.writeAll(res.stdout);
-                    try stdout.writeAll(res.stderr);
-                    try stdoutbuf.flush();
-
-                    switch (res.term) {
-                        .Exited => |code| {
-                            if (code != 0) {
-                                return;
-                            }
-                        },
-                        else => return,
-                    }
-                }
-
-                const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
-                std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{cWritingCompilingTime});
-
-                if (!opts.dontCompile and !opts.dontRun) {
-                    try stdoutbuf.flush();
-
-                    const exe_name = try std.mem.concat(aa, u8, &.{ "./", outname });
-
-                    // prepare prog with args.
-                    var proc_params = std.ArrayList([]const u8).init(aa);
-                    try proc_params.append(exe_name);
-                    for (opts.programArgs[1..]) |ztArg| {
-                        var arg: []const u8 = undefined;
-                        arg.ptr = ztArg;
-                        arg.len = std.mem.len(ztArg);
-                        try proc_params.append(arg);
-                    }
-                    var child = std.process.Child.init(proc_params.items, aa);
-                    child.stdin_behavior = .Inherit;
-                    child.stdout_behavior = .Inherit;
-                    child.stderr_behavior = .Inherit;
-
-                    try child.spawn();
-                    const term = try child.wait();
+                if (ccomp.succeeded and !opts.dontCompile and !opts.dontRun) {
+                    const term = try runExe(aa, ccomp.exeFilename, opts.programArgs);
 
                     switch (term) {
                         .Exited => |code| {
@@ -201,6 +150,86 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
     }
 
     return modules;
+}
+
+pub fn compileC(aa: std.mem.Allocator, cbackend: *const C, outName: Str, mdir: ?Str, out: anytype) !struct {
+    time: u64,
+    exeFilename: [:0]const u8,
+    succeeded: bool,
+} {
+    const cWritingCompilingStartTime = try std.time.Instant.now();
+
+    var c_filename = try std.mem.concat(aa, u8, &.{ outName, ".c" });
+    if (mdir) |dir| {
+        c_filename = try std.mem.concat(aa, u8, &.{ dir, "/", c_filename });
+    }
+
+    var outname = outName;
+    if (mdir) |dir| {
+        outname = try std.mem.concat(aa, u8, &.{ dir, "/", outname });
+    }
+
+    const file = try std.fs.cwd().createFile(c_filename, .{});
+    defer file.close();
+
+    const writer = file.writer();
+    try cbackend.writeTo(writer);
+
+    var copts = std.ArrayList([]const u8).init(aa);
+    try copts.appendSlice(&.{ "cc", c_filename, "-o", outname });
+
+    var prog_c_opts = cbackend.coptions.iterator();
+    while (prog_c_opts.next()) |copt| {
+        try copts.append(copt.*);
+    }
+
+    const res = try std.process.Child.run(.{ .allocator = aa, .argv = copts.items });
+    try out.writeAll(res.stdout);
+    try out.writeAll(res.stderr);
+
+    const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
+    const exeFilename = try aa.dupeZ(u8, outname);
+    switch (res.term) {
+        .Exited => |code| {
+            if (code == 0) {
+                return .{
+                    .time = cWritingCompilingTime,
+                    .exeFilename = exeFilename,
+                    .succeeded = true,
+                };
+            }
+        },
+        else => {},
+    }
+
+    return .{
+        .time = cWritingCompilingTime,
+        .exeFilename = exeFilename,
+        .succeeded = false,
+    };
+}
+
+pub fn runExe(aa: std.mem.Allocator, outName: Str, args: []const [*:0]const u8) !std.process.Child.Term {
+    const exe_name = if (outName[0] != '/') try std.mem.concat(aa, u8, &.{ "./", outName }) else outName;
+
+    // prepare prog with args.
+    var proc_params = std.ArrayList([]const u8).init(aa);
+    try proc_params.append(exe_name);
+    for (args[1..]) |ztArg| {
+        var arg: []const u8 = undefined;
+        arg.ptr = ztArg;
+        arg.len = std.mem.len(ztArg);
+        try proc_params.append(arg);
+    }
+    var child = std.process.Child.init(proc_params.items, aa);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+
+    try child.spawn();
+    const term = try child.wait();
+
+    return term;
 }
 
 pub fn compileFile(modules: *Modules, filename: Str) !Module {
