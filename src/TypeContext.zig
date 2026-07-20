@@ -52,6 +52,7 @@ pub const Union = struct {
     }
 
     // allocates a new union, but keeps the ID. used when mapping unions.
+    // (for recursive??? or whaaaa)
     fn mappedUnion(self: *Self, og: *const Union) !@This() {
         return .{ .envs = try std.ArrayList(Env).initCapacity(self.arena, og.envs.items.len), .uid = og.uid };
     }
@@ -537,27 +538,44 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
 }
 
 pub fn unifyUnion(self: *Self, lenvref: UnionRef, renvref: UnionRef, locs: Locs, full: Full) !void {
+    if (lenvref.id == renvref.id) return;
+    const lunion = self.getUnion(lenvref);
+    const runion = self.getUnion(renvref);
+    if (lunion.base.id == runion.base.id) return;
+
+    if (self.unionOccursCheck(lunion.base, runion.base)) {
+        try self.errors.append(.{
+            .module = locs.?.l.module,
+            .err = .{
+                .UnionOccursCheck = .{
+                    .l = lenvref,
+                    .lpos = locs.?.l,
+                    .r = renvref,
+                    .rpos = locs.?.r,
+                },
+            },
+        });
+        return;
+    }
     _ = full; // use later
-    _ = locs; // use in occurscheck errors
     // NOTE(11.05.26): ????
     // SLOW AND BAD! Structurally check if environments are the same (but it's BAD, because we are not deduplicating them!!)
     // Later (after we implement classes) we will probably have an id associated with it.
     // Then I can decide if I want structural equality.
-    if (lenvref.id == renvref.id) return;
-    const llenv = self.getUnion(lenvref).env;
+    const llenv = lunion.env;
+    const rrenv = runion.env;
+
     if (llenv.envs.items.len == 0) {
         self.setEnvRef(lenvref, renvref);
         return;
     }
 
-    const rrenv = self.getUnion(renvref).env;
     if (rrenv.envs.items.len == 0) {
         // self.envContext.items[renvref.id] = self.envContext.items[lenvref.id];
         self.setEnvRef(renvref, lenvref);
         return;
     }
 
-    // TODO: occurs check for unions
     if (llenv.envs.items.len > rrenv.envs.items.len) {
         try llenv.envs.appendSlice(rrenv.envs.items);
         self.setEnvRef(renvref, lenvref);
@@ -779,7 +797,7 @@ fn setType(self: *Self, tref: TyRef, tdest: TyRef, locs: Locs, reversed: bool) !
                     else => {},
                 }
 
-                if (self.occursCheck(tyvar, tdest)) {
+                if (self.tyvarOccursCheck(tyvar, tdest)) {
                     if (!reversed) {
                         try self.errOccursCheck(
                             tdest,
@@ -847,36 +865,132 @@ fn setType(self: *Self, tref: TyRef, tdest: TyRef, locs: Locs, reversed: bool) !
     }
 }
 
-fn occursCheck(self: *const Self, tyv: ast.TyVar, ty: TyRef) bool {
-    const t = self.getType(ty);
-    switch (t) {
-        .TyVar => |ttyv| {
-            return tyv.uid == ttyv.uid;
-        },
-        .Con => |con| {
-            return self.occursCheckMatch(tyv, con.application);
-        },
-        .Fun => |fun| {
-            const eu = self.getUnion(fun.env).env;
+fn tyvarOccursCheck(self: *const Self, tyv: ast.TyVar, ty: TyRef) bool {
+    const tt = TypeTraverser(struct {
+        lookedFor: ast.TyVar,
+        pub fn onTyVar(this: *const @This(), thisTyv: ast.TyVar) bool {
+            return ast.TyVar.comparator().eql(.{}, this.lookedFor, thisTyv);
+        }
+        pub fn onUnion(this: *const @This(), ur: ast.UnionRef) bool {
+            _ = this;
+            _ = ur;
+            return false;
+        }
+    }){
+        .ctx = .{ .lookedFor = tyv },
+        .tc = self,
+    };
+    return tt.inType(ty);
+}
+
+fn unionOccursCheck(self: *const Self, lunion: ast.UnionRef, runion: ast.UnionRef) bool {
+    // it doesn't work for
+    // x = fn: 1
+    // if True
+    // 	x <= fn: x() + 1
+    // i guess we have to scan the parameters?
+    const UnionCheck = TypeTraverser(struct {
+        otherUnion: ast.UnionRef,
+        pub fn onTyVar(this: *const @This(), thisTyv: ast.TyVar) bool {
+            _ = this;
+            _ = thisTyv;
+            return false;
+        }
+        pub fn onUnion(this: *const @This(), ur: ast.UnionRef) bool {
+            return this.otherUnion.id == ur.id;
+        }
+    });
+
+    const lunionFinder = UnionCheck{ .tc = self, .ctx = .{ .otherUnion = lunion } };
+    if (lunionFinder.inUnion(runion)) return true;
+
+    const runionFinder = UnionCheck{ .tc = self, .ctx = .{ .otherUnion = runion } };
+    if (runionFinder.inUnion(lunion)) return true;
+
+    return false;
+}
+
+pub fn TypeTraverser(Funs: type) type {
+    return struct {
+        ctx: Funs,
+        tc: *const Self,
+        pub fn inType(self: *const @This(), ty: TyRef) bool {
+            const t = self.tc.getType(ty);
+            switch (t) {
+                .TyVar => |ttyv| {
+                    return Funs.onTyVar(&self.ctx, ttyv);
+                },
+                .Con => |con| {
+                    return self.inMatch(con.application);
+                },
+                .Fun => |fun| {
+                    if (Funs.onUnion(&self.ctx, fun.env)) return true;
+                    if (self.inUnion(fun.env)) return true;
+
+                    for (fun.args) |aty| {
+                        if (self.inType(aty)) return true;
+                    }
+
+                    if (self.inType(fun.ret)) return true;
+                    return false;
+                },
+                .TVar => return false,
+                .Anon => |anon| {
+                    for (anon) |an| {
+                        if (self.inType(an.t)) return true;
+                    }
+                    return false;
+                },
+            }
+        }
+
+        pub fn inUnion(self: *const @This(), yunion: ast.UnionRef) bool {
+            const eu = self.tc.getUnion(yunion).env;
             for (eu.envs.items) |env| {
-                if (self.occursCheckMatch(tyv, env.match)) return true;
+                if (self.inMatch(env.match)) return true;
+
+                for (env.env.insts.items) |envvar| {
+                    switch (envvar.v) {
+                        .Var => if (self.inType(envvar.t)) return true,
+                        else => {},
+                    }
+                }
             }
 
-            for (fun.args) |aty| {
-                if (self.occursCheck(tyv, aty)) return true;
+            return false;
+        }
+
+        pub fn inMatch(self: *const @This(), match: *const ast.Match) bool {
+            for (match.tvars) |tynum| {
+                switch (tynum) {
+                    .Type => |ty| if (self.inType(ty)) return true,
+                    .Num => continue,
+                }
             }
 
-            if (self.occursCheck(tyv, fun.ret)) return true;
-            return false;
-        },
-        .TVar => return false,
-        .Anon => |anon| {
-            for (anon) |an| {
-                if (self.occursCheck(tyv, an.t)) return true;
+            for (match.envVars) |yunion| {
+                if (self.inUnion(yunion)) return true;
             }
+
+            for (match.assocs) |assoc| {
+                if (self.inAssoc(assoc)) return true;
+            }
+
             return false;
-        },
-    }
+        }
+
+        pub fn inAssoc(self: *const @This(), massoc: *const ?ast.Match.AssocRef) bool {
+            if (massoc.*) |assoc| {
+                switch (assoc) {
+                    .Id => return false,
+                    .InstFun => |ifn| return self.inMatch(ifn.m),
+                }
+                //
+            } else {
+                return false;
+            }
+        }
+    };
 }
 
 fn occursCheckMatchLink(self: *const Self, tyv: ast.TyVar, match: *const MatchLink) bool {
@@ -884,17 +998,6 @@ fn occursCheckMatchLink(self: *const Self, tyv: ast.TyVar, match: *const MatchLi
     while (m) |ml| {
         if (self.occursCheckMatch(tyv, ml.match)) return true;
         m = ml.next;
-    }
-
-    return false;
-}
-
-fn occursCheckMatch(self: *const Self, tyv: ast.TyVar, match: *const ast.Match) bool {
-    for (match.tvars) |tynum| {
-        switch (tynum) {
-            .Type => |ty| if (self.occursCheck(tyv, ty)) return true,
-            .Num => continue,
-        }
     }
 
     return false;

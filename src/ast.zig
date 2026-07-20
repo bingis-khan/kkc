@@ -1344,14 +1344,6 @@ pub const TyRef = struct {
 
         return true;
     }
-
-    // fn mapTVar(self: @This(), tyc: *const TypeContext) @This() {
-    //     return switch (tyc.getType(self)) {
-    //         .TVar => |tv| {
-    //         },
-    //         else => self,
-    //     };
-    // }
 };
 pub const UnionRef = struct {
     id: usize,
@@ -1402,18 +1394,19 @@ pub const UnionRef = struct {
     pub fn print(eid: @This(), c: Ctx) void {
         const eu = c.typeContext.getUnion(eid);
 
-        c.print(eu.base.id);
+        c.print(.{ eu.base.id, "_", eu.env.uid });
+
         c.print("{");
-        c.print(eu.env.uid);
+        for (eu.env.envs.items, 0..) |env, i| {
+            if (i > 0) {
+                c.print(", ");
+            }
 
-        // for (eu.env.envs.items, 0..) |env, i| {
-        //     if (i > 0) {
-        //         c.print(", ");
-        //     }
-
-        //     c.print(.{ "(", env.env.id, ")", "(", env.match, ")" });
-        //     // env.env.print(c);
-        // }
+            if (env.fun) |fun| {
+                c.print(.{ "(", fun.name, ")" });
+            }
+            c.print(.{ "(", env.match, ")" });
+        }
         c.print("}");
     }
 
@@ -2095,7 +2088,11 @@ pub const Match = struct {
                         .Id => |iid| c.print(iid),
                     }
                 } else {
-                    c.print("[X]");
+                    if (self.scheme.associations[i].concrete == null) {
+                        c.print("[O]");
+                    } else {
+                        c.print("[X]");
+                    }
                 }
             }
             // c.sepBy(self.assocs, " ");

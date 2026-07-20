@@ -75,6 +75,13 @@ pub const Error = union(enum) {
         tyvpos: ?Loc,
     },
 
+    UnionOccursCheck: struct {
+        l: ast.UnionRef,
+        lpos: ?Loc,
+        r: ast.UnionRef,
+        rpos: ?Loc,
+    },
+
     MismatchingTypes: struct {
         lfull: ast.Type,
         lt: ast.Type,
@@ -304,6 +311,29 @@ pub const Error = union(enum) {
                         oc.tyv,
                         " in ",
                         oc.t,
+                    } });
+                }
+            },
+            .UnionOccursCheck => |oc| {
+                if (oc.lpos == null and oc.rpos == null) {
+                    unreachable; // ACTUALLY UNREACHABLE
+                } else if (oc.lpos != null and oc.rpos != null) {
+                    err.atLocation(oc.lpos.?, .{ .label = .{
+                        "occurs check of ",
+                        oc.l,
+                    } });
+                    err.atLocation(oc.rpos.?, .{ .label = .{
+                        " in ",
+                        oc.r,
+                    } });
+                } else {
+                    // either left or right pos
+                    err.atLocation(oc.rpos orelse oc.lpos.?, .{ .label = .{
+                        "occurs check of ",
+                        oc.l,
+                        " in ",
+                        oc.r,
+                        " (or the other way around actually :3 i gotta fix this but i might change how the error is reported first, like, wtf are unions to the user)",
                     } });
                 }
             },

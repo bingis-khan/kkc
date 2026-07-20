@@ -1,12 +1,31 @@
+class CA	
+	fun (self _) -> ()
+
+inst CA Bool
+	fun (self _)
+		pass
+
+fn uni(l a, r a)
+	pass
+
+aa = 1
+fn fuu(xx a)
+	_ = aa
+	pass
+
+fn a(al CA)
+	x = fun
+	x <= fuu
+	x(al)
+	pass
+
+# al = True
+# a(al)
+# a(al)
+
+x = Just(1)
+x <= Just(x)
+
+# return x() Mem.i32-i8()
 
 
-x = Just(1337)
-let Just(m) = x as Maybe I32
-println(m)
-
-# x = 420
-# case 1337
-# 	420
-# 		println('miau')
-# 	z
-# 		println(z)

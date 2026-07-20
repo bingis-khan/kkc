@@ -117,3 +117,31 @@ Like env expansion.
 
 We should probably keep track of union level, so that we can make a "subslice" of environments which "matter" in the environment.
 If not, the mono thing will contain all env instantiations including the outer env's stuff.
+
+---
+
+maybe I should think about it in terms of general value union? like normal types too: (Int | String) can be "used" provided they have the same typeclass.
+anyway
+these concepts can't be exactly the same, otherwise we can't unify function's parameters and return value.
+
+how would I know that a union is closed? that it does not interact with type scheme?
+
+```
+fn dodis(al) [allocate u1]
+	_ = al allocate(420)
+
+# currently
+al = Alloc.idc()
+dodis(al) [allocate u2]
+dodis(al) [allocate u3]
+
+# what should happen:
+al = Alloc.idc()
+aa = Arena.mk()
+dodis(al) [allocate u2]
+dodis(al) [allocate u2]
+dodis(aa) [allocate u3]
+dodis(aa) [allocate u3]
+
+```
+

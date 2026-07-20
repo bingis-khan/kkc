@@ -16,7 +16,7 @@ const MonoC = @import("mono/c.zig");
 const BaseDir = "test/tests/";
 
 pub fn main() !void {
-    // try runTests(InterpreterRunner);
+    try runTests(InterpreterRunner);
 
     const dir = std.testing.tmpDir(.{}).dir;
     const cthing = CRunner{ .dir = dir };
