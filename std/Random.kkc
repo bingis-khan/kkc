@@ -3,6 +3,8 @@ use Bits
 use Math
 	lshift, rshift
 use StrInst (Str(*))
+use Iter
+	down-to
 use Error
 	panic
 
@@ -85,3 +87,9 @@ fn range(rng, from I32, to I32) -> I32
 	bound = Mem.i32-u32(to - from)
 	return rng bounded(bound) Mem.u32-i32() + from
 
+fn shuffle(slice Slice a, rng Ptr PCG32) -> Slice a
+	len = slice.count Mem.size-i32()
+	for i in (len) down-to (1)
+		x = rng bounded(i Mem.i32-u32())
+		slice Slice.swap(x Mem.u32-size(), (i - 1) Mem.i32-size())
+	return slice
