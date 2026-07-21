@@ -884,11 +884,6 @@ fn tyvarOccursCheck(self: *const Self, tyv: ast.TyVar, ty: TyRef) bool {
 }
 
 fn unionOccursCheck(self: *const Self, lunion: ast.UnionRef, runion: ast.UnionRef) bool {
-    // it doesn't work for
-    // x = fn: 1
-    // if True
-    // 	x <= fn: x() + 1
-    // i guess we have to scan the parameters?
     const UnionCheck = TypeTraverser(struct {
         otherUnion: ast.UnionRef,
         pub fn onTyVar(this: *const @This(), thisTyv: ast.TyVar) bool {
@@ -896,6 +891,8 @@ fn unionOccursCheck(self: *const Self, lunion: ast.UnionRef, runion: ast.UnionRe
             _ = thisTyv;
             return false;
         }
+
+        // i had an error cuz I wasn't doing the union.base thing. Unions now have an ID. shouldn't I use it?
         pub fn onUnion(this: *const @This(), ur: ast.UnionRef) bool {
             return this.otherUnion.id == ur.id;
         }
@@ -924,7 +921,6 @@ pub fn TypeTraverser(Funs: type) type {
                     return self.inMatch(con.application);
                 },
                 .Fun => |fun| {
-                    if (Funs.onUnion(&self.ctx, fun.env)) return true;
                     if (self.inUnion(fun.env)) return true;
 
                     for (fun.args) |aty| {
@@ -945,7 +941,10 @@ pub fn TypeTraverser(Funs: type) type {
         }
 
         pub fn inUnion(self: *const @This(), yunion: ast.UnionRef) bool {
-            const eu = self.tc.getUnion(yunion).env;
+            const bunion = self.tc.getUnion(yunion);
+            if (Funs.onUnion(&self.ctx, bunion.base)) return true;
+
+            const eu = bunion.env;
             for (eu.envs.items) |env| {
                 if (self.inMatch(env.match)) return true;
 

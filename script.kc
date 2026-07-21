@@ -23,8 +23,11 @@ fn a(al CA)
 # a(al)
 # a(al)
 
-x = Just(1)
-x <= Just(x)
+x = (fn())
+	Just(1)
+while False
+	x <= (fn())
+		_ = x()
 
 # return x() Mem.i32-i8()
 

@@ -301,7 +301,7 @@ pub const Error = union(enum) {
                         oc.tyv,
                     } });
                     err.atLocation(oc.tpos.?, .{ .label = .{
-                        " in ",
+                        "in ",
                         oc.t,
                     } });
                 } else {
@@ -323,7 +323,7 @@ pub const Error = union(enum) {
                         oc.l,
                     } });
                     err.atLocation(oc.rpos.?, .{ .label = .{
-                        " in ",
+                        "in ",
                         oc.r,
                     } });
                 } else {
