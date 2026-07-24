@@ -1,34 +1,6 @@
-class CA	
-	fun (self _) -> ()
+Tree
+	Cons (Ptr Tree2)
+	Nil
 
-inst CA Bool
-	fun (self _)
-		pass
-
-fn uni(l a, r a)
-	pass
-
-aa = 1
-fn fuu(xx a)
-	_ = aa
-	pass
-
-fn a(al CA)
-	x = fun
-	x <= fuu
-	x(al)
-	pass
-
-# al = True
-# a(al)
-# a(al)
-
-x = (fn())
-	Just(1)
-while False
-	x <= (fn())
-		_ = x()
-
-# return x() Mem.i32-i8()
-
-
+Tree2
+	One Tree

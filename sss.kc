@@ -1,0 +1,17 @@
+Seq
+	End
+	Next (Ptr Seq)
+
+sss = End
+sss' = Next(&sss)
+sss'' = Next(&sss')
+
+fn len(s Ptr Seq)
+	case s&
+		End
+			return 0
+
+		Next(n)
+			return 1 + len(n)
+
+println(len(&sss'))

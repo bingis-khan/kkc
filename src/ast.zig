@@ -1676,11 +1676,10 @@ pub const TypeApplication = struct {
             if (!Match.Comparator.eql(.{ .typeContext = ctx.typeContext }, a.application, b.application)) return false;
 
             for (a.outerApplication, b.outerApplication) |l, r| {
-                _ = r;
-                switch (l) {
-                    .Num => unreachable,
-                    .Type => unreachable,
-                }
+                if (!switch (l) {
+                    .Num => |lnum| lnum.eq(r.Num, ctx.typeContext),
+                    .Type => |lty| lty.tyEq(r.Type, ctx.typeContext),
+                }) return false;
             }
 
             return true;
