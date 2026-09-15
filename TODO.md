@@ -32,7 +32,9 @@
 - [x] polymorphic number matching (use a combination of FromIntegral + Eq)
 - [ ] multi-backend tests, nicer (im thinking of something like the B language tests.)
 - [ ] recursion (including nested recursion, which would make mutual recursion possible)
-- [ ] recursive datatypes (incl Ptr which breaks depth checking).
+- [x] recursive datatypes
+	- [ ] check for cycles and make Ptr break em
+	- [ ] finish all cases for declaration generation in the C backend
 - [ ] **unions** + typeclass-bound anonymous unions?
 - [x] deconstruction on assignment
 	- [ ] deconstruction without a `let` keyword.
