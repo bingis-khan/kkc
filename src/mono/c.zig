@@ -91,9 +91,19 @@ const UnionInstType = struct {
         MoreEnvs,
     },
 };
+const TypeGen = struct {
+    id: Unique,
+    finished: bool = false,
+    declared: bool = false,
+
+    fn finish(self: *@This()) void {
+        self.finished = true;
+        self.declared = true;
+    }
+};
 const UnionsGenerated = std.HashMap(UnionApp, ?UnionInstType, UnionApp.Comparator, std.hash_map.default_max_load_percentage);
 const EnvsGenerated = std.HashMap(EnvApp, ?Unique, EnvApp.Comparator, std.hash_map.default_max_load_percentage);
-const TypesGenerated = std.HashMap(ast.TypeApplication, Unique, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
+const TypesGenerated = std.HashMap(ast.TypeApplication, TypeGen, ast.TypeApplication.Comparator, std.hash_map.default_max_load_percentage);
 const AnonsGenerated = std.HashMap([]Field, Unique, struct {
     typeContext: *const TypeContext,
 
@@ -2840,10 +2850,13 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                 const nuId = b: {
                     const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
                     if (gpr.found_existing) {
-                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                        if (!gpr.value_ptr.finished and !gpr.value_ptr.declared) {
+                            unreachable; // todo
+                        }
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.id } };
                     }
                     const nuId = self.backend.temp().id;
-                    gpr.value_ptr.* = nuId;
+                    gpr.value_ptr.* = .{ .id = nuId, .finished = false };
                     break :b nuId;
                 };
 
@@ -2868,6 +2881,8 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                     try self.backend.parts.append(self.backend.cur);
                 }
 
+                const gp = self.backend.typesGenerated.getPtr(tyApp).?;
+                gp.finish();
                 return .{ .Application = .{ .data = data, .id = nuId } };
             },
         }
@@ -2881,10 +2896,13 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                     // TEMP: COPYPASTA
                     const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
                     if (gpr.found_existing) {
-                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                        if (!gpr.value_ptr.finished and !gpr.value_ptr.declared) {
+                            unreachable; // todo
+                        }
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.id } };
                     }
                     const nuId = self.backend.temp().id;
-                    gpr.value_ptr.* = nuId;
+                    gpr.value_ptr.* = .{ .id = nuId, .finished = false };
 
                     const oldTyMap = self.tymap;
                     const outerTVMatch = ast.Match.fromOuterTVars(data.outerTVars, tyApp.outerApplication);
@@ -2915,6 +2933,8 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         try self.backend.parts.append(self.backend.cur);
                     }
 
+                    const gp = self.backend.typesGenerated.getPtr(tyApp).?;
+                    gp.finish();
                     return .{ .Application = .{ .data = data, .id = nuId } };
                 },
                 .RecordLike => {
@@ -2923,11 +2943,14 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                     // TEMP: COPYPASTA
                     const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
                     if (gpr.found_existing) {
-                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                        if (!gpr.value_ptr.finished and !gpr.value_ptr.declared) {
+                            unreachable; // todo
+                        }
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.id } };
                     }
 
                     const nuId = self.backend.temp().id;
-                    gpr.value_ptr.* = nuId;
+                    gpr.value_ptr.* = .{ .id = nuId, .finished = false };
 
                     const oldTyMap = self.tymap;
                     const outerTVMatch = ast.Match.fromOuterTVars(data.outerTVars, tyApp.outerApplication);
@@ -2956,16 +2979,21 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         try self.backend.parts.append(self.backend.cur);
                     }
 
+                    const gp = self.backend.typesGenerated.getPtr(tyApp).?;
+                    gp.finish();
                     return .{ .Application = .{ .data = data, .id = nuId } };
                 },
                 .ADT => {
                     // TEMP: COPYPASTA
                     const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
                     if (gpr.found_existing) {
-                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                        if (!gpr.value_ptr.finished and !gpr.value_ptr.declared) {
+                            unreachable; // todo
+                        }
+                        return .{ .Application = .{ .data = data, .id = gpr.value_ptr.id } };
                     }
                     const nuId = self.backend.temp().id;
-                    gpr.value_ptr.* = nuId;
+                    gpr.value_ptr.* = .{ .id = nuId, .finished = false };
 
                     const oldTyMap = self.tymap;
                     const outerTVScheme = ast.Scheme{
@@ -3070,6 +3098,8 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         }
                     }
 
+                    const gp = self.backend.typesGenerated.getPtr(tyApp).?;
+                    gp.finish();
                     return .{ .Application = .{ .data = data, .id = nuId } };
                 },
             }
@@ -3077,11 +3107,24 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
         .recs => |fields| {
             const gpr = try self.backend.typesGenerated.getOrPut(.{ .type = data, .application = tyApp.application, .outerApplication = tyApp.outerApplication });
             if (gpr.found_existing) {
-                return .{ .Application = .{ .data = data, .id = gpr.value_ptr.* } };
+                if (!gpr.value_ptr.finished and !gpr.value_ptr.declared) {
+                    const oldCW = self.backend.cur;
+                    self.backend.cur = CW.init(self.backend.al);
+                    defer self.backend.cur = oldCW;
+
+                    var e = startLine(self);
+                    try e.p(.{"struct"});
+                    try e.j(.{ sanitize(data.name), "_", gpr.value_ptr.id });
+                    try e.finishStmt();
+
+                    try self.backend.parts.append(self.backend.cur);
+                    gpr.value_ptr.declared = true;
+                }
+                return .{ .Application = .{ .data = data, .id = gpr.value_ptr.id } };
             }
 
             const nuId = self.backend.temp().id;
-            gpr.value_ptr.* = nuId;
+            gpr.value_ptr.* = .{ .id = nuId, .finished = false };
 
             const oldTyMap = self.tymap;
             const outerTVScheme = ast.Scheme{
@@ -3129,6 +3172,8 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             try endBodyAndFinishStmt(self);
             try self.backend.parts.append(self.backend.cur);
 
+            const gp = self.backend.typesGenerated.getPtr(tyApp).?;
+            gp.finish();
             return .{ .Application = .{ .data = data, .id = nuId } };
         },
     }
