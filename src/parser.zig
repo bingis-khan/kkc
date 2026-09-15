@@ -163,8 +163,9 @@ pub fn parse(self: *Self) !Module {
         }
     }
 
+    var knots: ?Knots = null;
     while (self.consume(.EOF) == null) {
-        const dec = self.statement() catch |e| {
+        const dec = self.statement(&knots) catch |e| {
             std.debug.print("Err {s}.\n", .{self.name});
             // TEMP
             var fakeNewline: bool = undefined;
@@ -579,8 +580,9 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
 
     self.beginScope();
     var stmts = std.ArrayList(*AST.Stmt).init(self.arena);
+    var knots: ?Knots = null;
     while (!self.check(.DEDENT)) {
-        const stmt = try self.statement();
+        const stmt = try self.statement(&knots);
         if (stmt) |s| {
             try stmts.append(s);
         }
@@ -590,8 +592,8 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
     return .{ .stmts = stmts, .returnStatus = self.returned };
 }
 
-fn statement(self: *Self) ParserError!?*AST.Stmt {
-    return self.statement_() catch |e| switch (e) {
+fn statement(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
+    return self.statement_(knots) catch |e| switch (e) {
         error.ParseError => {
             self.skip();
             // maybe extract it to a new function.
@@ -617,13 +619,58 @@ fn statement(self: *Self) ParserError!?*AST.Stmt {
     };
 }
 
-fn statement_(self: *Self) ParserError!?*AST.Stmt {
+fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
     if (self.returned == .Returned) {
         try self.reportError(.{ .UnreachableCode = .{} });
         self.returned = .Errored;
     }
 
     const annotations = try self.parseAnnotation();
+
+    // knotshit
+    if (self.peek().type == .TYPE) {
+        // first type def
+        if (knots.* == null) {
+            knots.* = Knots.init(self.arena);
+        }
+    } else {
+        if (knots.*) |knotz| {
+            defer knots.* = null;
+
+            for (knotz.items) |knot| {
+                const qloc = knot.ty.look.loc;
+
+                if (try self.findQualifiedDataOrClass(knot.ty.look.modpath, knot.ty.look.name, knot.ty.look.loc)) |dataOrClass| {
+                    var t: ?AST.Type = null;
+                    var tyArgs: ?[]AST.TypeOrNum = null;
+                    switch (dataOrClass) {
+                        .Data => |data| {
+                            const dt = try self.instantiateData(data, qloc);
+                            t = dt.t;
+                            tyArgs = dt.tyArgs;
+                        },
+
+                        .Synonym => |syn| {
+                            const match = try self.instantiateScheme(syn.scheme, null, qloc);
+                            t = try self.typeContext.mapType(match, syn.t);
+                            tyArgs = match.tvars;
+                        },
+
+                        .Class => {
+                            // this is not possible - we may not have added a new class by that time.
+                            unreachable;
+                        },
+                    }
+
+                    try self.typeContext.unify(t.?, knot.ty.t, &.{ .l = knot.ty.look.loc });
+                    try self.unifyDeclaration(tyArgs.?, knot.tyArgs, t.?, knot.ty.look.loc);
+                } else {
+                    const pty = try self.newPlaceholderType(knot.ty.look.name, knot.ty.look.loc);
+                    try self.typeContext.unify(pty.t, knot.ty.t, &.{ .l = knot.ty.look.loc });
+                }
+            }
+        }
+    }
 
     const stmtVal: ?AST.Stmt = b: {
         if (self.check(.PASS)) {
@@ -861,64 +908,9 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
             try self.endStmt();
             break :b .{ .Expr = e };
         } // assignment to nothing
-        else if (self.peek().type == .TYPE) {
-            var knots = Knots.init(self.arena);
-            defer knots.deinit();
-
-            while (self.consume(.TYPE)) |typename| {
-                if (try self.typeDefinition(typename, &knots, annotations)) |nonTypeStmt| {
-                    break :b nonTypeStmt;
-                }
-            }
-
-            for (knots.items) |knot| {
-                const qloc = knot.ty.look.loc;
-                if (try self.findQualifiedDataOrClass(knot.ty.look.modpath, knot.ty.look.name, knot.ty.look.loc)) |dataOrClass| {
-                    var t: ?AST.Type = null;
-                    var tyArgs: ?[]AST.TypeOrNum = null;
-
-                    switch (dataOrClass) {
-                        .Data => |data| {
-                            const dt = try self.instantiateData(data, qloc);
-                            t = dt.t;
-                            tyArgs = dt.tyArgs;
-                        },
-
-                        .Synonym => |syn| {
-                            const match = try self.instantiateScheme(syn.scheme, null, qloc);
-                            t = try self.typeContext.mapType(match, syn.t);
-                            tyArgs = match.tvars;
-                        },
-
-                        .Class => |class| {
-                            // const tv: AST.TVar = .{
-                            //     .uid = self.gen.tvars.newUnique(),
-                            //     .name = "miau:3",
-                            //     .binding = this.binding(),
-                            //     .inferred = false,
-                            //     .fields = &.{},
-                            //     .fieldsTotal = false,
-                            // };
-                            // try data.assocs.append(.{
-                            //     .depends = tv,
-                            //     .uid = self.gen.assocs.newUnique(),
-                            //     .class = class,
-                            //     .default = class.default,
-                            //     .concrete = null,
-                            // });
-
-                            // t = try self.typeContext.newType(.{ .TVar = tv });
-                            // tyArgs = &.{};
-                            _ = class;
-                            unreachable;
-                        },
-                    }
-
-                    try self.typeContext.unify(t.?, knot.ty.t, &.{ .l = knot.ty.look.loc });
-                    try self.unifyDeclaration(tyArgs.?, knot.tyArgs, t.?, knot.ty.look.loc);
-                } else {
-                    unreachable; // error
-                }
+        else if (self.consume(.TYPE)) |typename| {
+            if (try self.typeDefinition(typename, &knots.*.?, annotations)) |nonTypeStmt| {
+                break :b nonTypeStmt;
             }
 
             break :b null;
@@ -1212,6 +1204,8 @@ fn statement_(self: *Self) ParserError!?*AST.Stmt {
     return null;
 }
 
+// parses a type definition.
+// 15.09.26: maybe just inline it?
 fn typeDefinition(self: *Self, typename: Token, knots: *Knots, annotations: []AST.Annotation) !?AST.Stmt { // temp return value... there's a case where we return it but it's broken so i don't want to touch it yet.
     if (self.peek().type == .DOT) { // DON'T CONSUME!
         const pm = self.foldFromHere();
@@ -4634,6 +4628,7 @@ fn unifyDeclaration(self: *Self, tyArgs: []AST.TypeOrNum, encounteredTyArgs: []A
         .rfull = null,
     });
 }
+
 // resolver zone
 // TODO: distinguish between non-existent module and it being current module.
 fn loadModuleFromPath(self: *Self, path: Module.Path, l: Loc) ParserError!?Module { // TODO: should return a const pointer, cuz Module is chunky.
