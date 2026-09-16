@@ -167,6 +167,11 @@ The core is finished, so now I'm polishing up all the rough edges:
 	- No caching in the interpreter.
 	- No freeing memory in the interpreter (should replace with []u8 stack machine)
 
+
+## Vendor
+
+For now I'll vendor libffi cuz I made some changes to the library.
+
 ---
 
 - [todo list](./TODO.md)

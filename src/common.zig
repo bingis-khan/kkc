@@ -68,7 +68,7 @@ pub fn allocOne(al: std.mem.Allocator, e: anytype) !*@TypeOf(e) {
 pub fn singleElemSlice(T: type, x: *const T) []const T {
     var s: []T = undefined;
     s.len = 1;
-    s.ptr = @constCast(@ptrCast(x));
+    s.ptr = @ptrCast(@constCast(x));
     return s;
 }
 
@@ -90,7 +90,7 @@ pub fn bytecopy(dest: *anyopaque, src: *const anyopaque, count: usize) void {
 pub fn cloneArrayListWithAllocator(arraylist: anytype, al: std.mem.Allocator) !@TypeOf(arraylist) {
     const ArrayListType = @TypeOf(arraylist);
     var nuArrayList = try ArrayListType.initCapacity(al, arraylist.capacity);
-    try nuArrayList.appendSlice(arraylist.items);
+    try nuArrayList.appendSlice(al, arraylist.items);
     return nuArrayList;
 }
 
@@ -123,7 +123,7 @@ pub fn SliceIter(slice: anytype) struct {
     i: usize,
     slice: @TypeOf(slice),
 
-    const Elem = @typeInfo(@TypeOf(slice.ptr)).Pointer.child;
+    const Elem = @typeInfo(@TypeOf(slice.ptr)).pointer.child;
 
     pub fn next(self: *@This()) ?Elem {
         if (self.i >= self.slice.len) return null;

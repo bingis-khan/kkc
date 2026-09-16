@@ -17,9 +17,13 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "kkc",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{},
+        }),
     });
 
     const libffi = b.dependency("libffi", .{
@@ -38,7 +42,6 @@ pub fn build(b: *std.Build) void {
     // needed if I want libc shit to work.
     // If the library is not initialized, external libc functions wont work.
     // I need to find a better way - I want static executables.
-    exe.linkLibC();
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -58,9 +61,7 @@ pub fn build(b: *std.Build) void {
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`
@@ -70,9 +71,13 @@ pub fn build(b: *std.Build) void {
 
     const test_exe = b.addExecutable(.{
         .name = "kkc-test",
-        .root_source_file = b.path("src/test.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{},
+        }),
     });
 
     test_exe.root_module.addImport("ffi", libffi.module("ffi"));
@@ -86,9 +91,7 @@ pub fn build(b: *std.Build) void {
     const run_test = b.addRunArtifact(test_exe);
     run_test.has_side_effects = true;
 
-    if (b.args) |args| {
-        run_test.addArgs(args);
-    }
+    run_test.addPassthruArgs();
 
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request

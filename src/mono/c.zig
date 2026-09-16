@@ -135,7 +135,7 @@ pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
         .envsGenerated = EnvsGenerated.initContext(al, .{ .typeContext = tc }),
         .typesGenerated = TypesGenerated.initContext(al, .{ .typeContext = tc }),
         .anonsGenerated = AnonsGenerated.initContext(al, .{ .typeContext = tc }),
-        .parts = std.ArrayList(CW).init(al),
+        .parts = .empty, // al
         .tempgen = UniqueGen.init(),
         .aux = .{
             .listDecons = ListDeconsGenerated.initContext(al, .{ .typeContext = tc }),
@@ -146,7 +146,7 @@ pub fn init(al: std.mem.Allocator, tc: *const TypeContext) @This() {
     return c;
 }
 
-pub fn writeTo(self: *const @This(), writer: anytype) anyerror!void {
+pub fn writeTo(self: *const @This(), writer: *std.Io.Writer) anyerror!void {
     var importIt = self.imports.iterator();
     while (importIt.next()) |importName| {
         var importDefinesIt = importName.value_ptr.iterator();
@@ -168,6 +168,7 @@ pub fn writeTo(self: *const @This(), writer: anytype) anyerror!void {
     try writer.print("\t_global_argc = argc; _global_argv = argv;\n", .{});
     try self.cur.writeTo(writer);
     try writer.print("}}\n", .{});
+    try writer.flush();
 }
 
 fn genFunction(self: *Self, fun: *ast.Function, hasEnv: bool) GenError!void { // TODO: params
@@ -213,20 +214,20 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         self.backend.cur = CW.init(self.backend.al);
         defer self.backend.cur = oldCW;
 
-        var typarams = std.ArrayList(Parameter).init(self.backend.al);
+        var typarams = std.ArrayList(Parameter).empty; // self.backend.al
 
         if (hasEnv) {
-            try typarams.append(.{ .v = if (isFunEnvEmpty) .PlaceholderEnv else .{ .Env = envId.? }, .t = undefined });
+            try typarams.append(self.backend.al, .{ .v = if (isFunEnvEmpty) .PlaceholderEnv else .{ .Env = envId.? }, .t = undefined });
         }
 
         for (params) |param| {
             switch (param.d.d) {
-                .Var => |v| try typarams.append(.{
+                .Var => |v| try typarams.append(self.backend.al, .{
                     .v = .{ .NormalVar = v },
                     .t = try self.typeContext.mapType(m, param.d.t),
                 }),
                 else => {
-                    try typarams.append(.{
+                    try typarams.append(self.backend.al, .{
                         .v = .{ .RefVar = param.refvar },
                         .t = try self.typeContext.mapType(m, param.d.t),
                     });
@@ -289,7 +290,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         try endBodyAndFinish(self);
 
         // add the function to places.
-        try self.backend.parts.append(self.backend.cur);
+        try self.backend.parts.append(self.backend.al, self.backend.cur);
         try self.backend.functionsGenerated.put(.{ .app = envapp, .hasEnv = hasEnv }, .{ .id = nuId, .envId = envId, .type = .Function });
     }
 
@@ -446,7 +447,7 @@ pub fn genEnvStruct(self: *Self, envfun: ast.EnvFun, um: *const ast.Match) !?Uni
             }
 
             try endBodyAndFinishStmt(self);
-            try self.backend.parts.append(self.backend.cur);
+            try self.backend.parts.append(self.backend.al, self.backend.cur);
         }
     }
 
@@ -517,7 +518,7 @@ fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
                 try ienv.finishStmt();
 
                 try endBodyAndFinishStmt(self);
-                try self.backend.parts.append(self.backend.cur);
+                try self.backend.parts.append(self.backend.al, self.backend.cur);
             }
 
             return .{ .id = nuId, .ut = .{ .OneEnv = envId } };
@@ -548,7 +549,7 @@ fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
                 }
 
                 try endBodyAndFinishStmt(self);
-                try self.backend.parts.append(self.backend.cur);
+                try self.backend.parts.append(self.backend.al, self.backend.cur);
             }
 
             // generate inst type
@@ -578,7 +579,7 @@ fn genUnionInst(self: *Self, t: ast.Type) !?UnionInstType {
                 try ienv.finishStmt();
 
                 try endBodyAndFinishStmt(self);
-                try self.backend.parts.append(self.backend.cur);
+                try self.backend.parts.append(self.backend.al, self.backend.cur);
             }
 
             return .{ .id = nuId, .ut = .MoreEnvs };
@@ -1224,21 +1225,21 @@ const Stmt = struct {
 
     fn init(ctx: *Self) @This() {
         return .{
-            .buf = std.ArrayList(u8).init(ctx.backend.al),
+            .buf = std.ArrayList(u8).empty, // ctx.backend.al
             .ctx = ctx,
             .indent = ctx.backend.cur.currentIndent,
         };
     }
 
     fn deinit(self: *@This()) void {
-        self.buf.deinit();
+        self.buf.deinit(self.ctx.backend.al);
     }
 
     fn finishStmt(stmt: *@This()) GenError!void {
         const cw = &stmt.ctx.backend.cur;
-        try stmt.buf.append(';');
+        try stmt.buf.append(stmt.ctx.backend.al, ';');
 
-        try cw.buf.append(.{
+        try cw.buf.append(stmt.ctx.backend.al, .{
             .indent = stmt.indent,
             .line = stmt.buf.items,
         });
@@ -1247,7 +1248,7 @@ const Stmt = struct {
     fn finish(stmt: *@This()) GenError!void {
         const cw = &stmt.ctx.backend.cur;
 
-        try cw.buf.append(.{
+        try cw.buf.append(stmt.ctx.backend.al, .{
             .indent = stmt.indent,
             .line = stmt.buf.items,
         });
@@ -1420,7 +1421,7 @@ const Stmt = struct {
                                 try retl.finishStmt();
                             }
                             try endBodyAndFinish(stmt.ctx);
-                            try stmt.ctx.backend.parts.append(stmt.ctx.backend.cur);
+                            try stmt.ctx.backend.parts.append(stmt.ctx.backend.al, stmt.ctx.backend.cur);
                         }
                         try stmt.j(.{ "builtin_", tyname, "cmp(" });
                         try stmt.genExpr(intr.args[0]);
@@ -1480,7 +1481,7 @@ const Stmt = struct {
                                 try sigarrln.definition(funTy, Join(.{ sigarrname, "[32]" }));
                                 try sigarrln.finishStmt();
 
-                                try self.backend.parts.append(self.backend.cur);
+                                try self.backend.parts.append(self.backend.al, self.backend.cur);
                             }
 
                             const sighandlerfnname = "_intr_sighandle";
@@ -1533,7 +1534,7 @@ const Stmt = struct {
                                 }
                                 try endBodyAndFinish(self);
 
-                                try self.backend.parts.append(self.backend.cur);
+                                try self.backend.parts.append(self.backend.al, self.backend.cur);
                             }
 
                             // generate register function
@@ -1571,7 +1572,7 @@ const Stmt = struct {
                                 }
                                 try endBodyAndFinish(self);
 
-                                try self.backend.parts.append(self.backend.cur);
+                                try self.backend.parts.append(self.backend.al, self.backend.cur);
                             }
                         }
 
@@ -2369,14 +2370,17 @@ const Stmt = struct {
     }
 
     fn genStr(stmt: *@This(), s: Str) !void {
-        const writer = stmt.buf.writer();
+        // we want to write to the list without destroying its contents.
+        var allocWriter = std.Io.Writer.Allocating.fromArrayList(stmt.ctx.backend.al, &stmt.buf);
+        defer stmt.buf = allocWriter.toArrayList(); // completely asinine Zig std design what the fuck.
+        const writer = &allocWriter.writer;
 
         if (stmt.spaced) {
             try writer.writeByte(' ');
         }
         try writer.writeAll("(uint8_t*)"); // cast it to u8 ptr, cuz thats how it's used inside.
         try writer.writeByte('"');
-        try std.zig.stringEscape(s, "", .{}, stmt.buf.writer()); // TODO: escape '?' in strings to avoid trigraphs
+        try std.zig.stringEscape(s, writer); // TODO: escape '?' in strings to avoid trigraphs
         try writer.writeByte('"');
     }
 
@@ -2385,10 +2389,10 @@ const Stmt = struct {
     // prints stuff and separates by space.
     fn generalPrint(self: *@This(), args: anytype, comptime fun: anytype) !void {
         switch (@typeInfo(@TypeOf(args))) {
-            .Struct => {
-                const fields = @typeInfo(@TypeOf(args)).Struct.fields;
-                inline for (fields) |field| {
-                    const arg = @field(args, field.name);
+            .@"struct" => {
+                const fields = @typeInfo(@TypeOf(args)).@"struct".field_names;
+                inline for (fields) |name| {
+                    const arg = @field(args, name);
                     try fun(self, arg);
                 }
             },
@@ -2406,7 +2410,7 @@ const Stmt = struct {
 
     fn printSpaced(self: *@This(), args: anytype) anyerror!void {
         if (self.spaced) {
-            try self.buf.append(' ');
+            try self.buf.append(self.ctx.backend.al, ' ');
         }
 
         try printArg(self, args);
@@ -2415,7 +2419,7 @@ const Stmt = struct {
 
     fn j(self: *@This(), args: anytype) !void {
         if (self.spaced) {
-            try self.buf.append(' ');
+            try self.buf.append(self.ctx.backend.al, ' ');
         }
         self.spaced = false;
 
@@ -2431,7 +2435,12 @@ const Stmt = struct {
         } //
         else if (argTy == Sanitize) {
             const name = (@as(Sanitize, arg)).unsanitary;
-            const writer = self.buf.writer();
+
+            // we want to write to the list without destroying its contents.
+            var allocWriter = std.Io.Writer.Allocating.fromArrayList(self.ctx.backend.al, &self.buf);
+            defer self.buf = allocWriter.toArrayList(); // completely asinine Zig std design what the fuck.
+            const writer = &allocWriter.writer;
+
             for (name) |c| {
                 switch (c) {
                     '-' => try writer.print("_dash_", .{}),
@@ -2529,8 +2538,14 @@ const Stmt = struct {
                 try arg.write(self);
             } else {
                 switch (@typeInfo(argTy)) {
-                    .Int, .Float, .ComptimeInt, .ComptimeFloat => try self.buf.writer().print("{}", .{arg}),
-                    else => try self.buf.appendSlice(@as(Str, arg)), // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
+                    .int, .float, .comptime_int, .comptime_float => {
+                        // we want to write to the list without destroying its contents.
+                        var allocWriter = std.Io.Writer.Allocating.fromArrayList(self.ctx.backend.al, &self.buf);
+                        defer self.buf = allocWriter.toArrayList(); // completely asinine Zig std design what the fuck.
+                        const writer = &allocWriter.writer;
+                        try writer.print("{}", .{arg});
+                    },
+                    else => try self.buf.appendSlice(self.ctx.backend.al, @as(Str, arg)), // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
                 }
             }
         }
@@ -2539,7 +2554,7 @@ const Stmt = struct {
     const TabSize = 4;
     fn beginLine(self: *@This()) !void {
         for (0..self.currentIndent) |_| {
-            try self.p(" " ** TabSize);
+            try self.p(@as([TabSize]u8, @splat(" ")));
         }
     }
 };
@@ -2618,6 +2633,7 @@ fn temp(self: *@This()) Temp {
 
 const CW = struct {
     buf: std.ArrayList(Line),
+    al: std.mem.Allocator,
     currentIndent: u32,
 
     const Line = struct {
@@ -2628,7 +2644,8 @@ const CW = struct {
     fn init(al: std.mem.Allocator) @This() {
         return .{
             .currentIndent = 0,
-            .buf = std.ArrayList(Line).init(al),
+            .buf = std.ArrayList(Line).empty, // al
+            .al = al,
         };
     }
 
@@ -2636,7 +2653,7 @@ const CW = struct {
         for (self.buf.items) |line| {
             // indent
             for (0..line.indent) |_| {
-                try writer.print(" " ** CW.TabSize, .{});
+                try writer.print(&@as([CW.TabSize]u8, @splat(' ')), .{});
             }
 
             try writer.writeAll(line.line);
@@ -2702,7 +2719,7 @@ fn SepBy(sep: Str, args: anytype) struct {
 
     pub fn write(self: @This(), stmt: *Stmt) anyerror!void {
         switch (comptime @typeInfo(@TypeOf(self.args))) {
-            .Struct => |strukt| {
+            .@"struct" => |strukt| {
                 const fields = strukt.fields;
                 inline for (fields, 0..) |field, i| {
                     if (i > 0) {
@@ -2800,7 +2817,7 @@ fn anonRecord(self: *Self, fields: []Field) !Unique {
         }
 
         try endBodyAndFinishStmt(self);
-        try self.backend.parts.append(self.backend.cur);
+        try self.backend.parts.append(self.backend.al, self.backend.cur);
     }
 
     return nuId;
@@ -2878,7 +2895,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
 
                     try endBodyAndFinishStmt(self);
 
-                    try self.backend.parts.append(self.backend.cur);
+                    try self.backend.parts.append(self.backend.al, self.backend.cur);
                 }
 
                 const gp = self.backend.typesGenerated.getPtr(tyApp).?;
@@ -2930,7 +2947,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         }
 
                         try endBodyAndFinishStmt(self);
-                        try self.backend.parts.append(self.backend.cur);
+                        try self.backend.parts.append(self.backend.al, self.backend.cur);
                     }
 
                     const gp = self.backend.typesGenerated.getPtr(tyApp).?;
@@ -2966,7 +2983,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         defer self.backend.cur = oldCW;
 
                         try genRecordStruct(self, nuId, con, .RecordLike);
-                        try self.backend.parts.append(self.backend.cur);
+                        try self.backend.parts.append(self.backend.al, self.backend.cur);
                     }
 
                     // constructor
@@ -2976,7 +2993,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                         defer self.backend.cur = oldCW;
 
                         try genRecordConstructor(self, nuId, con, .RecordLike);
-                        try self.backend.parts.append(self.backend.cur);
+                        try self.backend.parts.append(self.backend.al, self.backend.cur);
                     }
 
                     const gp = self.backend.typesGenerated.getPtr(tyApp).?;
@@ -3082,7 +3099,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                             }
                         }
                         try endBodyAndFinishStmt(self);
-                        try self.backend.parts.append(self.backend.cur);
+                        try self.backend.parts.append(self.backend.al, self.backend.cur);
                     }
 
                     // make constructors
@@ -3094,7 +3111,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                             defer self.backend.cur = oldCW;
 
                             try genRecordConstructor(self, nuId, con, .ADT);
-                            try self.backend.parts.append(self.backend.cur);
+                            try self.backend.parts.append(self.backend.al, self.backend.cur);
                         }
                     }
 
@@ -3117,7 +3134,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
                     try e.j(.{ sanitize(data.name), "_", gpr.value_ptr.id });
                     try e.finishStmt();
 
-                    try self.backend.parts.append(self.backend.cur);
+                    try self.backend.parts.append(self.backend.al, self.backend.cur);
                     gpr.value_ptr.declared = true;
                 }
                 return .{ .Application = .{ .data = data, .id = gpr.value_ptr.id } };
@@ -3170,7 +3187,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             }
 
             try endBodyAndFinishStmt(self);
-            try self.backend.parts.append(self.backend.cur);
+            try self.backend.parts.append(self.backend.al, self.backend.cur);
 
             const gp = self.backend.typesGenerated.getPtr(tyApp).?;
             gp.finish();

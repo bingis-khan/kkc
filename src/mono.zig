@@ -73,8 +73,8 @@ pub fn Mono(Back: type) type {
         };
         const Self = @This();
 
-        pub fn mono(modules: []ast, roots: []ast.Function.Use, prelude: *const Prelude, typeContext: *TypeContext, backend: *Backend, al: std.mem.Allocator, verbose: bool) !void {
-            const cgStartTime = try std.time.Instant.now();
+        pub fn mono(modules: []ast, roots: []ast.Function.Use, prelude: *const Prelude, typeContext: *TypeContext, backend: *Backend, io: std.Io, al: std.mem.Allocator, verbose: bool) !void {
+            const cgStartTime = std.Io.Timestamp.now(io, .real);
 
             var hadNewline = false;
             const monoStuff = try findFullFunctionEnvs(typeContext, al, roots);
@@ -85,11 +85,11 @@ pub fn Mono(Back: type) type {
 
             _ = monoStuff;
             var firstUseScope = InstUses.init(al, typeContext, null);
-            const cgTime = std.time.Instant.since(try std.time.Instant.now(), cgStartTime) / std.time.ns_per_ms;
+            const cgTime = std.Io.Timestamp.durationTo(cgStartTime, std.Io.Timestamp.now(io, .real)).toMilliseconds();
             if (verbose)
                 std.debug.print("=== mono call graph: {}ms ===\n", .{cgTime});
 
-            const monoStartTime = try std.time.Instant.now();
+            const monoStartTime = std.Io.Timestamp.now(io, .real);
             var self = Self{
                 .ctx = ast.Ctx.init(&hadNewline, typeContext),
                 .typeContext = typeContext,
@@ -102,7 +102,7 @@ pub fn Mono(Back: type) type {
                 try self.monoScope(module.toplevel);
             }
 
-            const monoTime = std.time.Instant.since(try std.time.Instant.now(), monoStartTime) / std.time.ns_per_ms;
+            const monoTime = std.Io.Timestamp.durationTo(monoStartTime, std.Io.Timestamp.now(io, .real)).toMilliseconds();
             if (verbose)
                 std.debug.print("=== mono compilation: {}ms ===\n", .{monoTime});
         }

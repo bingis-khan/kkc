@@ -650,7 +650,7 @@ const Chunk = struct {
     }
 
     fn appendOp(self: *@This(), comptime op: Op, args: [op.argNum()]u8) !void {
-        try self.code.append(@intFromEnum(op));
+        try self.code.append(@backingInt(op));
         try self.code.appendSlice(args[0..]);
         self.numOps += 1;
     }
@@ -735,7 +735,7 @@ const Chunk = struct {
 
         var i: u32 = 0;
         while (i < self.code.items.len) {
-            const op: Op = @enumFromInt(self.code.items[i]);
+            const op: Op = @fromBackingInt(@intCast(self.code.items[i]));
             const args = self.code.items;
 
             switch (op) {
@@ -898,7 +898,7 @@ const Chunk = struct {
             var i: u32 = 0;
             var li: u32 = 0;
             while (i < self.code.items.len) {
-                const op: Op = @enumFromInt(self.code.items[i]);
+                const op: Op = @fromBackingInt(@intCast(self.code.items[i]));
                 const args = self.code.items;
                 op.print(c, args, &i);
 
@@ -971,9 +971,9 @@ const Local = struct {
 
 const StackValue = union {
     Struct: [*]u8,
-    Mem: Mem,
+    Mem: MemVal,
 
-    const Mem = extern union {
+    const MemVal = extern union {
         Ptr: *anyopaque,
         I64: i64,
         // Tag: sizer.Tag,  // we use the same equality as for ints.
@@ -982,13 +982,13 @@ const StackValue = union {
     };
     const Size = @max(@sizeOf(*anyopaque), @sizeOf(i64));
     comptime {
-        if (@sizeOf(Mem) != Size) @compileError("sheeesh");
+        if (@sizeOf(MemVal) != Size) @compileError("sheeesh");
     }
     fn isOnStack(s: usize) bool {
         return s <= Size;
     }
 
-    fn init(mem: Mem) @This() {
+    fn init(mem: MemVal) @This() {
         return .{ .Mem = mem };
     }
 };

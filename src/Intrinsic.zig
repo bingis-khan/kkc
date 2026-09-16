@@ -74,27 +74,34 @@ const NumberOps = [_][]const u8{ "add", "sub", "mul", "div", "cmp" };
 
 // https://kihlander.net/post/extending-an-enum-in-zig/
 fn addNumericEnums(t: type) type {
-    const enumType = @typeInfo(t).Enum;
+    const enumType = @typeInfo(t).@"enum";
 
-    const EnumField = std.builtin.Type.EnumField;
-    var numberOps: []const EnumField = &.{};
-    inline for (NumberTypes) |numty| {
-        inline for (NumberOps) |op| {
-            numberOps = numberOps ++ .{EnumField{
-                .name = numty ++ "-" ++ op,
-                .value = enumType.fields.len + numberOps.len,
-            }};
+    var fieldNames = enumType.field_names;
+    var fieldValues: []const u8 = &.{};
+    for (enumType.field_values) |val| {
+        fieldValues = fieldValues ++ .{val};
+    }
+
+    for (NumberTypes) |numty| {
+        for (NumberOps) |op| {
+            fieldNames = fieldNames ++ .{numty ++ "-" ++ op};
+            fieldValues = fieldValues ++ .{fieldValues.len};
         }
     }
 
-    const enumInfo = std.builtin.Type.Enum{
-        .tag_type = u8,
-        .fields = enumType.fields ++ numberOps,
-        .decls = &[0]std.builtin.Type.Declaration{},
-        .is_exhaustive = true,
-    };
+    // const enumInfo = std.builtin.Type.Enum{
+    //     .tag_type = u8,
+    //     .fields = enumType.fields ++ numberOps,
+    //     .decls = &[0]std.builtin.Type.Declaration{},
+    //     .is_exhaustive = true,
+    // };
 
-    return @Type(std.builtin.Type{ .Enum = enumInfo });
+    return @Enum(
+        u8,
+        .exhaustive,
+        fieldNames,
+        fieldValues,
+    );
 }
 
 fn addNumericDecls() []const Self {

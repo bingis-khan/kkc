@@ -71,8 +71,8 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
         .preludeExports = null,
         .stdExports = null,
         .prelude = null,
-        .full = std.ArrayList(ast).init(al),
-        .roots = std.ArrayList(ast.Function.Use).init(al),
+        .full = std.ArrayList(ast).empty,
+        .roots = std.ArrayList(ast.Function.Use).empty,
         .stdPath = stdPath,
         .rootPath = root,
         .gen = Gen.init(),
@@ -83,8 +83,9 @@ pub fn init(al: std.mem.Allocator, errors: *Errors, typeContext: *TypeContext, r
 
 const preludePath: Str = "prelude.kkc";
 // sets defaultExports
-pub fn loadPrelude(self: *Self) !Prelude {
+pub fn loadPrelude(self: *Self, io: std.Io) !Prelude {
     const preludeModule = (try self.loadModule(
+        io,
         .{ .ByFilename = .{
             .isSTD = true,
             .path = &preludePath,
@@ -103,8 +104,9 @@ pub fn loadPrelude(self: *Self) !Prelude {
 
 // sets stdExports
 const convergedPath: Str = "converged.kkc";
-pub fn loadConverged(self: *Self) !Module {
+pub fn loadConverged(self: *Self, io: std.Io) !Module {
     const module = try self.loadModule(
+        io,
         .{ .ByFilename = .{
             .isSTD = true,
             .path = &convergedPath,
@@ -116,8 +118,9 @@ pub fn loadConverged(self: *Self) !Module {
     return module.?;
 }
 
-pub fn initialModule(self: *Self, filename: *const Str) !Module {
+pub fn initialModule(self: *Self, filename: *const Str, io: std.Io) !Module {
     return (try self.loadModule(
+        io,
         .{ .ByFilename = .{ .isSTD = false, .path = filename } },
         null,
         .{ .printAST = self.opts.printRootAST or self.opts.printAST, .printTokens = self.opts.printRootTokens or self.opts.printTokens },
@@ -128,6 +131,7 @@ pub fn initialModule(self: *Self, filename: *const Str) !Module {
 // OMG I HATE THIS BRUH. IT BECAME SO COMPLICATED. FOR SOME REASON I CANT THINK ABOUT THIS STUFF??????? WTF??????
 pub fn loadModule(
     self: *Self,
+    io: std.Io,
     pathtype: union(enum) {
         ByModulePath: struct { base: Module.BasePath, path: Module.Path },
         ByFilename: struct { isSTD: bool, path: *const Str },
@@ -173,7 +177,7 @@ pub fn loadModule(
     const source = switch (pathtype) {
         .ByModulePath => src: {
             const localSourcePath = try self.modulePathToFilepath(fullPath);
-            break :src self.readSource(localSourcePath) catch |err| switch (err) {
+            break :src self.readSource(localSourcePath, io) catch |err| switch (err) {
                 error.FileNotFound => b: {
                     if (fullPath.isSTD) {
                         try self.reportError(.{ .ModuleDoesNotExist = .{
@@ -195,7 +199,7 @@ pub fn loadModule(
                         return module.?;
                     }
                     const stdSourcePath = try self.modulePathToFilepath(fullPath);
-                    const stdSource = self.readSource(stdSourcePath) catch {
+                    const stdSource = self.readSource(stdSourcePath, io) catch {
                         try self.reportError(.{ .ModuleDoesNotExist = .{
                             .modulePath = fullPath.path,
                             .localSearchPath = localSourcePath,
@@ -211,18 +215,18 @@ pub fn loadModule(
         },
 
         .ByFilename => |fullpath| b: {
-            var filepath = std.ArrayList(u8).init(self.al);
+            var filepath = std.ArrayList(u8).empty;
             if (fullpath.isSTD) {
-                try filepath.appendSlice(self.stdPath);
+                try filepath.appendSlice(self.al, self.stdPath);
             } else {
                 if (self.rootPath.len > 0) {
-                    try filepath.appendSlice(self.rootPath);
-                    try filepath.append('/');
+                    try filepath.appendSlice(self.al, self.rootPath);
+                    try filepath.append(self.al, '/');
                 }
             }
-            try filepath.appendSlice(fullpath.path.*);
+            try filepath.appendSlice(self.al, fullpath.path.*);
             // std.debug.print("{s}\n", .{filepath.items});
-            break :b self.readSource(filepath.items) catch {
+            break :b self.readSource(filepath.items, io) catch {
                 // could not find module bruh.
                 try self.reportError(.{ .ModuleDoesNotExist = .{
                     .modulePath = fullPath.path,
@@ -254,7 +258,7 @@ pub fn loadModule(
         .ByModulePath => |modpath| modpath.base,
         .ByFilename => |filename| .{ .isSTD = filename.isSTD, .path = &.{} },
     };
-    var parser = try Parser.init(lexer, self.prelude, modBasePath, moduleName, self, self.errors, self.typeContext, self.al);
+    var parser = try Parser.init(lexer, self.prelude, modBasePath, moduleName, self, self.errors, self.typeContext, io, self.al);
 
     if (self.preludeExports) |*xports| {
         try parser.addExports(xports);
@@ -269,8 +273,8 @@ pub fn loadModule(
     }
 
     const module = try parser.parse();
-    try self.full.append(module.ast);
-    try self.roots.appendSlice(module.calls);
+    try self.full.append(self.al, module.AST);
+    try self.roots.appendSlice(self.al, module.calls);
     try self.modules.put(fullPath, module);
 
     // ctx
@@ -278,7 +282,7 @@ pub fn loadModule(
     const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
 
     if (opts.printAST orelse self.opts.printAST) {
-        module.ast.print(ctx);
+        module.AST.print(ctx);
     }
 
     // module exports
@@ -302,36 +306,36 @@ pub fn getRoots(self: *const Self) []ast.Function.Use {
     return self.roots.items;
 }
 
-fn readSource(self: *Self, filepath: Str) !Str {
-    const source = try std.fs.cwd().readFileAlloc(self.al, filepath, 1337420);
+fn readSource(self: *Self, filepath: Str, io: std.Io) !Str {
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, filepath, self.al, std.Io.Limit.unlimited);
     return source;
 }
 
 fn modulePathToFilepath(self: *const Self, base: Module.BasePath) !Str {
-    var sb = std.ArrayList(u8).init(self.al);
+    var sb = std.ArrayList(u8).empty;
 
     if (base.isSTD) {
-        try sb.appendSlice(self.stdPath);
+        try sb.appendSlice(self.al, self.stdPath);
     } else {
         if (self.rootPath.len > 0) {
-            try sb.appendSlice(self.rootPath);
-            try sb.append('/');
+            try sb.appendSlice(self.al, self.rootPath);
+            try sb.append(self.al, '/');
         }
     }
 
     // TODO: i don't feel like making an iterator in stack :)
     for (base.path[0 .. base.path.len - 1]) |p| {
-        try sb.appendSlice(p);
-        try sb.append('/');
+        try sb.appendSlice(self.al, p);
+        try sb.append(self.al, '/');
     }
-    try sb.appendSlice(base.path[base.path.len - 1]);
-    try sb.appendSlice(".kkc");
+    try sb.appendSlice(self.al, base.path[base.path.len - 1]);
+    try sb.appendSlice(self.al, ".kkc");
 
     return sb.items;
 }
 
 pub fn cloneWithAllocator(self: *const Self, al: std.mem.Allocator) !Self {
-    const nuErrors = try common.allocOne(al, try common.cloneArrayListWithAllocator(self.errors.*, al));
+    const nuErrors = try common.allocOne(al, Errors{ .list = try common.cloneArrayListWithAllocator(self.errors.list, al), .al = al });
     return .{
         .modules = try self.modules.cloneWithAllocator(al),
         .errors = nuErrors,
@@ -345,7 +349,7 @@ pub fn cloneWithAllocator(self: *const Self, al: std.mem.Allocator) !Self {
         .stdPath = self.stdPath,
         .gen = self.gen.clone(),
         .opts = self.opts,
-        .roots = try self.roots.clone(),
+        .roots = try self.roots.clone(al),
         .signalFunTy = undefined, // TODO: how do we transfer types between type contexts????? (hard with pointers (ast.TyRefPointer), easy with offsets (!ast.TyRefPointer))
     };
 }

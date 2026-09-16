@@ -9,7 +9,6 @@ const endianness = builtin.target.cpu.arch.endian();
 const TypeContext = @import("TypeContext.zig");
 const Args = @import("Args.zig");
 const errr = @import("error.zig");
-const stdlib = @cImport(@cInclude("stdlib.h"));
 const TypeMap = @import("TypeMap.zig").TypeMap;
 const posix = std.posix;
 const sizer = @import("sizer.zig");
@@ -40,12 +39,12 @@ progArgs: []Args.Arg,
 signalHandlers: SignalHandlers,
 constStrings: ConstStrings,
 
-const SignalHandlers = std.AutoArrayHashMap(i32, struct {
+const SignalHandlers = std.array_hash_map.Auto(i32, struct {
     funval: Value,
     funty: ast.Type,
 });
 
-const ConstStrings = std.AutoArrayHashMap([*]const u8, [:0]u8);
+const ConstStrings = std.array_hash_map.Auto([*]const u8, [:0]u8);
 
 // right now a very simple interpreter where we don't free.
 pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs: []Args.Arg, arena: std.mem.Allocator, alBase: std.mem.Allocator) !i64 {
@@ -71,8 +70,8 @@ pub fn run(modules: []ast, prelude: Prelude, typeContext: *TypeContext, progArgs
         .funLoader = DyLibLoader.init(arena),
         .prelude = prelude,
         .progArgs = progArgs,
-        .signalHandlers = SignalHandlers.init(arena),
-        .constStrings = ConstStrings.init(arena),
+        .signalHandlers = SignalHandlers.empty, // arena
+        .constStrings = ConstStrings.empty, // arena
     };
     sigself = &self;
 
@@ -280,7 +279,7 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapsho
     const maxGeneralClassFuns = if (scheme) |sch| sch.associations.len else 0;
     var varSnapshot = try std.ArrayList(EnvSnapshot.VarSnapshot).initCapacity(self.arena, env.insts.items.len + maxGeneralClassFuns);
     for (env.insts.items) |ei| {
-        try varSnapshot.append(switch (ei.v) {
+        try varSnapshot.append(self.arena, switch (ei.v) {
             .TNum => |tnum| b: {
                 const tnumvar = tnum.asVar();
                 break :b .{
@@ -317,7 +316,7 @@ fn initEnvSnapshot(self: *Self, env: *ast.Env, scheme: ?*ast.Scheme) !EnvSnapsho
     if (scheme) |sch| {
         for (sch.associations) |assoc| {
             if (assoc.concrete) |conc| {
-                try varSnapshot.append(b: {
+                try varSnapshot.append(self.arena, b: {
                     const instfun = switch (conc.ref.*.?) {
                         .InstFun => |instfun| instfun,
                         .Id => |id| self.tymap.tryGetFunctionByID(id) orelse break :b .{ .AssocID = id },
@@ -483,11 +482,10 @@ fn tryDeconstruct(self: *Self, decon: *const ast.Decon, v: RawValueRef) !bool {
                     // initialize whole ListSpread.
                     var buf = try Value.initOwnedAlloc(spreadSize, sal);
                     std.debug.assert(!buf.smol());
-                    var stream = std.io.fixedBufferStream(buf.getSlice());
-                    const w = stream.writer();
+                    var w = std.Io.Writer.fixed(buf.getSlice());
 
                     try w.writeInt(RawValue.Tag, 2, endianness);
-                    try pad(w, @alignOf(*anyopaque)); // why align to anyopaque??? (cuz we pass a pointer here bruh)
+                    try pad(&w, @alignOf(*anyopaque)); // why align to anyopaque??? (cuz we pass a pointer here bruh)
                     try w.writeInt(usize, @intFromPtr(innerValPtr.get().ptr), endianness);
 
                     break :b buf;
@@ -1052,8 +1050,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
             // THIS ASSUMES THAT RECORDS GET THAT `setType` TREATMENT
             // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
             var buf = try Value.initOwnedAlloc(self.sizeOf(e.t), sal);
-            var stream = std.io.fixedBufferStream(buf.getSlice());
-            const w = stream.writer();
+            var w = std.Io.Writer.fixed(buf.getSlice());
 
             switch (self.getType(e.t)) {
                 .Anon => |fields| {
@@ -1061,7 +1058,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                     for (fields) |field| {
                         for (recs) |rec| {
                             if (common.streq(field.field, rec.field)) {
-                                _ = try self.writeExpr(w, rec.value);
+                                _ = try self.writeExpr(&w, rec.value);
                                 break;
                             }
                         } else unreachable;
@@ -1075,7 +1072,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                                 const field = afield.rec;
                                 for (recs) |rec| {
                                     if (common.streq(field.field, rec.field)) {
-                                        _ = try self.writeExpr(w, rec.value);
+                                        _ = try self.writeExpr(&w, rec.value);
                                         break;
                                     }
                                 } else unreachable;
@@ -1092,7 +1089,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                         for (tyvs.fields) |field| {
                             for (recs) |rec| {
                                 if (common.streq(field.field, rec.field)) {
-                                    _ = try self.writeExpr(w, rec.value);
+                                    _ = try self.writeExpr(&w, rec.value);
                                     break;
                                 }
                             } else unreachable;
@@ -1113,8 +1110,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
             // ALSO, COPYPASTA FROM `initRecord`. MAYBE WE CAN GENERALIZE IT SOMEHOW?
             // SECOND GRADE COPYPASTA FROM `AnonymousRecord`
             var buf = try Value.initOwnedAlloc(self.sizeOf(e.t), sal);
-            var stream = std.io.fixedBufferStream(buf.getSlice());
-            const w = stream.writer();
+            var w = std.Io.Writer.fixed(buf.getSlice());
 
             const fields = nrec.data.stuff.recs;
 
@@ -1123,7 +1119,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
                 const field = afield.rec;
                 for (nrec.fields) |rec| {
                     if (common.streq(field.field, rec.field)) {
-                        _ = try self.writeExpr(w, rec.value);
+                        _ = try self.writeExpr(&w, rec.value);
                         break;
                     }
                 } else unreachable;
@@ -1213,7 +1209,7 @@ fn call(self: *Self, fun: Value, cargs: []TypeVal, cfunTy: ast.Type) !Value {
     switch (funType) {
         .ExternalFunction => {
             const funTys = self.typeContext.getType(cfunTy).Fun;
-            const ffiFunPtr: *const fn (...) callconv(.C) i64 = @ptrCast(ptrToFunPtr.smol.extptr);
+            const ffiFunPtr: *const fn (...) callconv(.c) i64 = @ptrCast(ptrToFunPtr.smol.extptr);
 
             var func: ffi.Function = undefined;
             const paramFFITypes = try sal.alloc(*ffi.Type, funTys.args.len);
@@ -1238,7 +1234,7 @@ fn call(self: *Self, fun: Value, cargs: []TypeVal, cfunTy: ast.Type) !Value {
             const ret = try self.sizeOfFFI(funTys.ret);
             defer self.freeFFIType(ret);
 
-            try func.prepare(ffi.Abi.default, @intCast(args.len), paramFFITypes.ptr, ret);
+            try func.prepare(ffi.Abi.default(), @intCast(args.len), paramFFITypes.ptr, ret);
 
             var result = try Value.initOwnedAlloc(self.sizeOf(funTys.ret), sal);
 
@@ -1560,11 +1556,11 @@ fn function_(self: *Self, funAndEnv: *SmolValue.Fun, comptime Arg: type, args: [
 }
 
 fn evaluateString(self: *Self, s: Str) ![:0]u8 {
-    const res = try self.constStrings.getOrPut(s.ptr);
+    const res = try self.constStrings.getOrPut(self.arena, s.ptr);
     if (res.found_existing) {
         return res.value_ptr.*;
     } else {
-        res.value_ptr.* = try self.arena.dupeZ(u8, s);
+        res.value_ptr.* = try self.arena.dupeSentinel(u8, s, 0);
         return res.value_ptr.*;
     }
 }
@@ -1805,13 +1801,18 @@ const Value = struct {
         } else {
             const mem = try al.alloc(u8, sz.size);
             return .{
-                .val = .{ .Owned = .{ .ref = @alignCast(@ptrCast(mem.ptr)) } },
+                .val = .{ .Owned = .{ .ref = @ptrCast(@alignCast(mem.ptr)) } },
                 .size = sz,
             };
         }
     }
 
-    fn int(i: anytype) Value {
+    fn int(ii: anytype) Value {
+        const i =
+            if (@TypeOf(ii) == posix.SIG)
+                @backingInt(ii)
+            else
+                ii;
         // var ty = @TypeOf(i);
         // comptime if (Size.of(ty).size == 0) {
         //     @panic("what");
@@ -1903,7 +1904,7 @@ const RawValue = extern union {
     fn offset(self: *align(1) @This(), off: usize) RawValueRef {
         const p: [*]u8 = @ptrCast(self);
         const offp = p[off..];
-        return @alignCast(@ptrCast(offp));
+        return @ptrCast(@alignCast(offp));
     }
 
     fn slice(self: *align(1) @This(), sz: usize) []u8 {
@@ -1990,8 +1991,7 @@ fn initRecord(self: *Self, c: *ast.Con, args: []TypeVal, t: ast.Type) !Value {
     //   (watch out: it's incomplete, because from some Zig issue I've seen, i128 padding might be 8)
     //  nested structs do not create "big alignments". If the struct's max alignment was 8, it gets carred to the outer struct.
     var buf = try Value.initOwnedAlloc(self.sizeOf(t), self.alCurStack.?);
-    var stream = std.io.fixedBufferStream(buf.getSlice());
-    var w = stream.writer();
+    var w = std.Io.Writer.fixed(buf.getSlice());
 
     var maxAlignment: usize = 1;
     if (c.data.structureType() == .ADT) {
@@ -2001,22 +2001,22 @@ fn initRecord(self: *Self, c: *ast.Con, args: []TypeVal, t: ast.Type) !Value {
 
     // remember: check bytes written with `w.context.items.len`
     for (args) |a| {
-        const alignment = try self.writeVal(w, a);
+        const alignment = try self.writeVal(&w, a);
 
         maxAlignment = @max(maxAlignment, alignment);
     }
 
     // write ending padding (from experiments it's based on max padding.)
-    try pad(w, maxAlignment);
+    try pad(&w, maxAlignment);
 
     return buf;
 }
 
-fn writeExpr(self: *Self, w: anytype, a: *ast.Expr) !usize {
+fn writeExpr(self: *Self, w: *std.Io.Writer, a: *ast.Expr) !usize {
     return try self.writeVal(w, .{ .v = try self.expr(a), .t = a.t });
 }
 
-fn writeVal(self: *Self, w: anytype, a: TypeVal) !usize {
+fn writeVal(self: *Self, w: *std.Io.Writer, a: TypeVal) !usize {
     const ty = a.t;
     const sz = self.sizeOf(ty);
     try pad(w, sz.alignment);
@@ -2026,11 +2026,11 @@ fn writeVal(self: *Self, w: anytype, a: TypeVal) !usize {
     return sz.alignment;
 }
 
-fn pad(w: anytype, alignment: usize) !void {
-    const i = w.context.pos;
+fn pad(w: *std.Io.Writer, alignment: usize) !void {
+    const i = w.end;
     const padding = calculatePadding(i, alignment);
     if (padding != 0) { // no padding needed when padding == alignment
-        try w.writeByteNTimes(undefined, padding);
+        try w.splatByteAll(undefined, padding);
     }
 }
 
@@ -2257,20 +2257,20 @@ const Scope = struct {
 };
 
 fn registerSignal(self: *Self, sig: i32, fun: Value, funty: ast.Type) !void {
-    try self.signalHandlers.put(sig, .{
+    try self.signalHandlers.put(self.arena, sig, .{
         .funty = funty,
         .funval = fun,
     });
-    try posix.sigaction(@intCast(sig), &.{
+    posix.sigaction(@fromBackingInt(@intCast(sig)), &.{
         .handler = .{ .handler = sighandler },
-        .mask = posix.empty_sigset,
+        .mask = posix.sigemptyset(),
         .flags = 0,
     }, null);
 }
 
-fn sighandler(sig: c_int) callconv(.C) void {
+fn sighandler(sig: posix.SIG) callconv(.c) void {
     const self = sigself.?;
-    const fun = self.signalHandlers.get(sig).?;
+    const fun = self.signalHandlers.get(@intCast(@backingInt(sig))).?;
     const argty = self.getType(fun.funty).Fun.args[0];
     const sigparamref = Value.int(sig);
     const sigval: TypeVal = .{ .t = argty, .v = sigparamref };
@@ -2373,6 +2373,7 @@ const RealErr = error{
     CaseNotMatched,
 
     OutOfMemory,
+    WriteFailed,
 
     Bruh,
 } || std.DynLib.Error || ffi.Error || error{OperationNotSupported};

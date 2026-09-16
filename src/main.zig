@@ -16,29 +16,25 @@ const VM = @import("mono/bytecode.zig");
 const Bytecode = VM.Mono;
 const C = @import("mono/c.zig");
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+
     // SETUP
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const al = gpa.allocator();
-    defer {
-        const deinit_status = gpa.deinit(); // this prints all the leaks
-        std.debug.print("gpa deinit status = {}\n", .{deinit_status});
-    }
+    const al = init.gpa;
 
     // global allocator for STUFF
-    var arena = std.heap.ArenaAllocator.init(al);
-    defer arena.deinit();
+    const arena = init.arena;
     const aa = arena.allocator();
 
     // PARSE ARGS
-    const opts = try Args.parse(std.process.args(), aa);
+    const opts = try Args.parse(init.minimal.args.iterate(), aa);
 
-    const compilationStartTime = try std.time.Instant.now();
-    var modules = try preloadModules(&opts, aa);
+    const compilationStartTime = std.Io.Timestamp.now(io, .real);
+    var modules = try preloadModules(&opts, io, init.environ_map, aa);
     const fileonly = std.fs.path.basename(opts.filename);
-    _ = try compileFile(&modules, fileonly);
+    _ = try compileFile(&modules, fileonly, io);
 
-    const compilationTime = std.time.Instant.since(try std.time.Instant.now(), compilationStartTime) / std.time.ns_per_ms;
+    const compilationTime = std.Io.Timestamp.durationTo(compilationStartTime, std.Io.Timestamp.now(io, .real)).toMilliseconds();
 
     std.debug.print("=== compilation time: {}ms ===\n", .{compilationTime});
 
@@ -48,18 +44,18 @@ pub fn main() !void {
     fakeNewline = false; // SIKE (but obv. temporary)
 
     if (!opts.hideErrors) {
-        for (modules.errors.items) |err| {
+        for (modules.errors.list.items) |err| {
             err.err.print(fakeHackCtx, err.module);
         }
     } else {
-        if (modules.errors.items.len > 0) {
-            std.debug.print("Hidden {} errors.\n", .{modules.errors.items.len});
+        if (modules.errors.list.items.len > 0) {
+            std.debug.print("Hidden {} errors.\n", .{modules.errors.list.items.len});
         }
     }
 
     const moduleAST = modules.getAST();
 
-    if (modules.errors.items.len > 0) return;
+    if (modules.errors.list.items.len > 0) return;
 
     // go and interpret
     if (opts.backend) |backend| {
@@ -68,28 +64,29 @@ pub fn main() !void {
                 // mono it
                 // var backend = Bytecode.Backend.init(aa, modules.typeContext);
                 var cbackend = C.init(aa, modules.typeContext);
-                try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, aa, true);
+                try C.Mono.mono(moduleAST, modules.getRoots(), &modules.prelude.?, modules.typeContext, &cbackend, io, aa, true);
 
                 const outname = opts.exeName orelse std.fs.path.stem(opts.filename);
 
-                var stdoutbuf = std.io.bufferedWriter(std.io.getStdOut().writer());
-                const stdout = stdoutbuf.writer();
-                const ccomp = try compileC(aa, &cbackend, outname, null, stdout);
-                try stdoutbuf.flush();
+                var stdoutbuf: [4096]u8 = undefined;
+                var stdout = std.Io.File.stdout().writer(io, &stdoutbuf);
+                const outwriter = &stdout.interface;
+                const ccomp = try compileC(aa, &cbackend, outname, null, outwriter, io);
+                try stdout.flush();
 
                 if (opts.printAST or opts.printRootAST) {
-                    try cbackend.writeTo(stdout);
+                    try cbackend.writeTo(outwriter);
                 }
 
-                try stdoutbuf.flush();
+                try stdout.flush();
 
                 std.debug.print("=== writing and compiling (C) time: {}ms ===\n", .{ccomp.time});
 
                 if (ccomp.succeeded and !opts.dontCompile and !opts.dontRun) {
-                    const term = try runExe(aa, ccomp.exeFilename, opts.programArgs);
+                    const term = try runExe(io, aa, ccomp.exeFilename, opts.programArgs);
 
                     switch (term) {
-                        .Exited => |code| {
+                        .exited => |code| {
                             std.debug.print("program exited with code {}\n", .{code});
                         },
                         else => |code| {
@@ -101,11 +98,11 @@ pub fn main() !void {
         }
     } else {
         if (!opts.dontRun) {
-            const interpretStartTime = try std.time.Instant.now();
+            const interpretStartTime = std.Io.Timestamp.now(io, .real);
 
             // how would I handle a partially declared Prelude? or should I even do it? it may be useful?
             const ret = try Interpreter.run(moduleAST, modules.prelude.?, modules.typeContext, opts.programArgs, aa, al);
-            const interpretTime = std.time.Instant.since(try std.time.Instant.now(), interpretStartTime) / std.time.ns_per_ms;
+            const interpretTime = std.Io.Timestamp.durationTo(interpretStartTime, std.Io.Timestamp.now(io, .real)).toMilliseconds();
 
             std.debug.print("=== return value: {} ===\n", .{ret});
             std.debug.print("=== interpret time: {}ms ===\n", .{interpretTime});
@@ -125,13 +122,10 @@ pub const CompilationStuff = struct {
     // compilationTimeMS: u64,
 };
 
-pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
-    const stdRoot = std.process.getEnvVarOwned(aa, "KKC_STD") catch |e| switch (e) {
-        error.EnvironmentVariableNotFound => b: {
-            std.debug.print("KKC_STD env var not set. Defaulting to 'std/'.\n", .{});
-            break :b "std/";
-        },
-        else => return e,
+pub fn preloadModules(opts: *const Args, io: std.Io, environ: *const std.process.Environ.Map, aa: std.mem.Allocator) !Modules {
+    const stdRoot = environ.get("KKC_STD") orelse b: {
+        std.debug.print("KKC_STD env var not set. Defaulting to 'std/'.\n", .{});
+        break :b "std/";
     };
 
     // -|| MODULES ||-
@@ -142,22 +136,22 @@ pub fn preloadModules(opts: *const Args, aa: std.mem.Allocator) !Modules {
     var modules = try Modules.init(aa, errors, typeContext, root, stdRoot, opts);
 
     if (!opts.noImplicitPrelude) {
-        const prelude = try modules.loadPrelude();
+        const prelude = try modules.loadPrelude(io);
         typeContext.prelude = prelude;
         if (!opts.noDefaultImports) {
-            _ = try modules.loadConverged();
+            _ = try modules.loadConverged(io);
         }
     }
 
     return modules;
 }
 
-pub fn compileC(aa: std.mem.Allocator, cbackend: *const C, outName: Str, mdir: ?Str, out: anytype) !struct {
-    time: u64,
+pub fn compileC(aa: std.mem.Allocator, cbackend: *const C, outName: Str, mdir: ?Str, out: *std.Io.Writer, io: std.Io) !struct {
+    time: i64,
     exeFilename: [:0]const u8,
     succeeded: bool,
 } {
-    const cWritingCompilingStartTime = try std.time.Instant.now();
+    const cWritingCompilingStartTime = std.Io.Timestamp.now(io, .real);
 
     var c_filename = try std.mem.concat(aa, u8, &.{ outName, ".c" });
     if (mdir) |dir| {
@@ -169,28 +163,29 @@ pub fn compileC(aa: std.mem.Allocator, cbackend: *const C, outName: Str, mdir: ?
         outname = try std.mem.concat(aa, u8, &.{ dir, "/", outname });
     }
 
-    const file = try std.fs.cwd().createFile(c_filename, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(io, c_filename, .{});
+    defer file.close(io);
 
-    const writer = file.writer();
-    try cbackend.writeTo(writer);
+    var filebuf: [4096]u8 = undefined;
+    var writer = file.writer(io, &filebuf);
+    try cbackend.writeTo(&writer.interface);
 
-    var copts = std.ArrayList([]const u8).init(aa);
-    try copts.appendSlice(&.{ "cc", c_filename, "-o", outname });
+    var copts = std.ArrayList([]const u8).empty; // aa
+    try copts.appendSlice(aa, &.{ "cc", c_filename, "-o", outname });
 
     var prog_c_opts = cbackend.coptions.iterator();
     while (prog_c_opts.next()) |copt| {
-        try copts.append(copt.*);
+        try copts.append(aa, copt.*);
     }
 
-    const res = try std.process.Child.run(.{ .allocator = aa, .argv = copts.items });
+    const res = try std.process.run(aa, io, .{ .argv = copts.items });
     try out.writeAll(res.stdout);
     try out.writeAll(res.stderr);
 
-    const cWritingCompilingTime = std.time.Instant.since(try std.time.Instant.now(), cWritingCompilingStartTime) / std.time.ns_per_ms;
-    const exeFilename = try aa.dupeZ(u8, outname);
+    const cWritingCompilingTime = std.Io.Timestamp.durationTo(cWritingCompilingStartTime, std.Io.Timestamp.now(io, .real)).toMilliseconds();
+    const exeFilename = try aa.dupeSentinel(u8, outname, 0);
     switch (res.term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code == 0) {
                 return .{
                     .time = cWritingCompilingTime,
@@ -209,29 +204,38 @@ pub fn compileC(aa: std.mem.Allocator, cbackend: *const C, outName: Str, mdir: ?
     };
 }
 
-pub fn runExe(aa: std.mem.Allocator, outName: Str, args: []const [*:0]const u8) !std.process.Child.Term {
+pub fn runExe(io: std.Io, aa: std.mem.Allocator, outName: Str, args: []const [*:0]const u8) !std.process.Child.Term {
     const exe_name = if (outName[0] != '/') try std.mem.concat(aa, u8, &.{ "./", outName }) else outName;
 
     // prepare prog with args.
-    var proc_params = std.ArrayList([]const u8).init(aa);
-    try proc_params.append(exe_name);
+    var proc_params = std.ArrayList([]const u8).empty; // aa
+    try proc_params.append(aa, exe_name);
     for (args[1..]) |ztArg| {
         var arg: []const u8 = undefined;
         arg.ptr = ztArg;
         arg.len = std.mem.len(ztArg);
-        try proc_params.append(arg);
+        try proc_params.append(aa, arg);
     }
-    var child = std.process.Child.init(proc_params.items, aa);
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
+    const options = std.process.RunOptions{ .argv = proc_params.items };
+    var child = try std.process.spawn(io, .{
+        .argv = options.argv,
+        .cwd = options.cwd,
+        .environ_map = options.environ_map,
+        .expand_arg0 = options.expand_arg0,
+        .progress_node = options.progress_node,
+        .create_no_window = options.create_no_window,
+        .disable_aslr = options.disable_aslr,
 
-    try child.spawn();
-    const term = try child.wait();
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+
+    const term = try child.wait(io);
 
     return term;
 }
 
-pub fn compileFile(modules: *Modules, filename: Str) !Module {
-    return try modules.initialModule(&filename);
+pub fn compileFile(modules: *Modules, filename: Str, io: std.Io) !Module {
+    return try modules.initialModule(&filename, io);
 }

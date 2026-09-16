@@ -19,20 +19,9 @@ static  const char*   from_dash_string3 (    uint8_t *  ptr86 ,    size_t  dref8
     return ( ( (const char* ) (  ptr86 ) ) );
 }
 
-struct Array_5 {
-    uint8_t _arr [32];
-};
-
-struct Termios_4 {
-    uint32_t  f_c_dash_iflag;
-    uint32_t  f_c_dash_oflag;
-    uint32_t  f_c_dash_cflag;
-    uint32_t  f_c_dash_lflag;
-    uint8_t  f_c_dash_line;
-    struct Array_5  f_c_dash_cc;
-    uint32_t  f_c_dash_ispeed;
-    uint32_t  f_c_dash_ospeed;
-};
+static  int8_t   from_dash_integral4 (    size_t  x59 ) {
+    return ( (int8_t ) (  x59 ) );
+}
 
 int main(int argc, const char **argv) {
 	_global_argc = argc; _global_argv = argv;
@@ -40,6 +29,5 @@ int main(int argc, const char **argv) {
     size_t  growth_dash_factor2448 = ( (  from_dash_integral0 ( 2 ) ) );
     size_t  shrink_dash_factor2449 = ( (  from_dash_integral0 ( 8 ) ) );
     ( ( setlocale ) ( ( (  lc_dash_ctype1 ) ( ) ) ,  ( (  from_dash_string3 ) ( ( (uint8_t*)"" ) ,  ( 0 ) ) ) ) );
-    struct Termios_4  temp6;
-    struct Termios_4  x3381 = ( (  temp6 ) );
+    return (  from_dash_integral4 ( 1 ) );
 }

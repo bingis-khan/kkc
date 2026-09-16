@@ -22,6 +22,7 @@ const Intrinsic = @import("Intrinsic.zig");
 
 // fuck it. let's do it one pass.
 arena: std.mem.Allocator,
+io: std.Io,
 
 errors: *Errors,
 name: Str,
@@ -65,9 +66,10 @@ const ReturnStatus = enum {
 const Imports = std.HashMap(Module.Path, ?Module, Module.PathCtx, std.hash_map.default_max_load_percentage);
 
 const Self = @This();
-pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str, modules: *Modules, errors: *Errors, context: *TypeContext, arena: std.mem.Allocator) !Self {
+pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str, modules: *Modules, errors: *Errors, context: *TypeContext, io: std.Io, arena: std.mem.Allocator) !Self {
     var parser = Self{
         .arena = arena,
+        .io = io,
         .errors = errors, // TODO: use GPA
         .name = moduleName,
 
@@ -81,7 +83,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str,
         .env = null,
         .gen = &modules.gen,
         .base = base,
-        .topLevels = std.ArrayList(AST.Function.Use).init(arena),
+        .topLevels = .empty,
 
         // typeshit
         .typeContext = context,
@@ -91,7 +93,7 @@ pub fn init(l: Lexer, prelude: ?Prelude, base: Module.BasePath, moduleName: Str,
         .selfType = null,
         .prelude = prelude,
 
-        .associations = std.ArrayList(Association).init(arena),
+        .associations = .empty,
 
         .modules = modules,
         .importedModules = Imports.init(arena),
@@ -128,12 +130,12 @@ const Export = struct {
     exportedThing: Thing,
 };
 pub fn parse(self: *Self) !Module {
-    var decs = std.ArrayList(*AST.Stmt).init(self.arena);
+    var decs = std.ArrayList(*AST.Stmt).empty;
     self.consumeSeps();
 
     // first collect exports
     // we must parse it, BUT EVALUATE IT AT THE END!
-    var definedExports = std.ArrayList(Export).init(self.arena);
+    var definedExports = std.ArrayList(Export).empty;
     if (self.check(.EXPORT)) {
         defer self.consumeSeps();
 
@@ -172,7 +174,7 @@ pub fn parse(self: *Self) !Module {
             const fakeHackCtx = AST.Ctx.init(&fakeNewline, self.typeContext);
             fakeNewline = false; // SIKE (but obv. temporary)
 
-            for (self.modules.errors.items) |err| {
+            for (self.modules.errors.list.items) |err| {
                 err.err.print(fakeHackCtx, err.module);
             }
             return e;
@@ -181,7 +183,7 @@ pub fn parse(self: *Self) !Module {
         // consume statement separators
         self.consumeSeps();
 
-        if (dec != null) try decs.append(dec.?);
+        if (dec != null) try decs.append(self.arena, dec.?);
     }
 
     // dont add a return here, because we don't know if its the last file.
@@ -198,7 +200,7 @@ pub fn parse(self: *Self) !Module {
     const exports = try self.exportListToExports(definedExports.items);
 
     return .{
-        .ast = AST{ .toplevel = decs.items },
+        .AST = AST{ .toplevel = decs.items },
         .exports = exports,
         .calls = self.topLevels.items,
     };
@@ -223,10 +225,10 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, annot
         for (tvarToks) |t| {
             if (t.type == .NUMTYNAME) {
                 const numtv = try self.newTNum(t.literal(self.lexer.source)[1..], .{ .Data = data.uid });
-                try tvars.append(.{ .TNum = numtv });
+                try tvars.append(self.arena, .{ .TNum = numtv });
             } else if (t.type == .IDENTIFIER) {
                 const tv = try self.newTVar(t.literal(self.lexer.source), .{ .Data = data.uid });
-                try tvars.append(.{ .TVar = tv });
+                try tvars.append(self.arena, .{ .TVar = tv });
             } else {
                 unreachable;
             }
@@ -252,10 +254,10 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, annot
 
         self.skip();
 
-        var cons = std.ArrayList(AST.Con).init(self.arena);
-        var recs = std.ArrayList(AST.Data.DecRecord).init(self.arena);
+        var cons = std.ArrayList(AST.Con).empty; // self.arena
+        var recs = std.ArrayList(AST.Data.DecRecord).empty; // self.arena
         var tag: u32 = 0;
-        var assocs = std.ArrayList(AST.Association).init(self.arena);
+        var assocs = std.ArrayList(AST.Association).empty; // self.arena
         const tyconstr = Type.Constrain{ .Data = .{ .uid = data.uid, .assocs = &assocs } };
         var ftvs = TypeContext.FTVs.init(self.arena, self.typeContext); // TODO: this is slow. We should add a pointer to an arraylist to the Type(..) constructor. FTV also does deduplication which is not needed here.
         var outerTVarSet = Set(AST.TVarOrNum, AST.TVarOrNum.comparator()).init(self.arena);
@@ -269,7 +271,7 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, annot
                     try self.typeContext.ftvs(&ftvs, t.e);
                     try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, t.e);
 
-                    try recs.append(.{
+                    try recs.append(self.arena, .{
                         .rec = .{
                             .field = recname.literal(self.lexer.source),
                             .t = t.e,
@@ -279,18 +281,18 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, annot
                     try self.endStmt();
                 } else if (self.consume(.TYPE)) |conName| {
                     // constructor
-                    var tys = std.ArrayList(AST.Type).init(self.arena);
+                    var tys = std.ArrayList(AST.Type).empty; // self.arena
                     while (!(self.check(.STMT_SEP) or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                         const ty = try Type.init(self, .{ .constrain = tyconstr, .knots = knots }).typ();
 
                         try self.typeContext.ftvs(&ftvs, ty.e);
                         try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, ty.e);
 
-                        try tys.append(ty.e);
+                        try tys.append(self.arena, ty.e);
                     }
                     self.consumeSeps();
 
-                    try cons.append(.{
+                    try cons.append(self.arena, .{
                         .uid = self.gen.cons.newUnique(),
                         .name = conName.literal(self.lexer.source),
                         .tys = tys.items,
@@ -311,17 +313,17 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, annot
             {
 
                 // constructor
-                var tys = std.ArrayList(AST.Type).init(self.arena);
+                var tys = std.ArrayList(AST.Type).empty; // self.arena
                 while (!(self.peek().type == .STMT_SEP or (self.peek().type == .DEDENT))) { // we must not consume the last DEDENT, as it's used to terminate the whole type declaration.
                     const ty = try Type.init(self, .{ .constrain = tyconstr, .knots = knots }).typ();
 
                     try self.typeContext.ftvs(&ftvs, ty.e);
                     try self.typeContext.getOuterTVars(.{ .Data = data.uid }, &outerTVarSet, ty.e);
 
-                    try tys.append(ty.e);
+                    try tys.append(self.arena, ty.e);
                 }
 
-                try cons.append(.{
+                try cons.append(self.arena, .{
                     .uid = self.gen.cons.newUnique(),
                     .name = dataName,
                     .tys = tys.items,
@@ -338,13 +340,13 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, annot
         // scheme
         // don't forget to add associations at the end!!!!
         for (assocs.items) |assoc| {
-            try tvars.append(.{ .TVar = assoc.depends });
+            try tvars.append(self.arena, .{ .TVar = assoc.depends });
         }
 
-        var envs = std.ArrayList(AST.UnionRef).init(self.arena);
+        var envs = std.ArrayList(AST.UnionRef).empty; // self.arena
         var envIter = ftvs.envs.iterator();
         while (envIter.next()) |env| {
-            try envs.append(env.*);
+            try envs.append(self.arena, env.*);
         }
 
         data.scheme = .{
@@ -354,10 +356,10 @@ fn dataDef(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, annot
         };
 
         // outer tvars
-        var outerTVars = std.ArrayList(AST.TVarOrNum).init(self.arena);
+        var outerTVars = std.ArrayList(AST.TVarOrNum).empty; // self.arena
         var otvIt = outerTVarSet.iterator();
         while (otvIt.next()) |tv| {
-            try outerTVars.append(tv.*);
+            try outerTVars.append(self.arena, tv.*);
         }
 
         data.outerTVars = outerTVars.items;
@@ -390,22 +392,22 @@ fn typeSynonym(self: *Self, typename: Token, tvarToks: []Token, knots: *Knots, a
         for (tvarToks) |t| {
             if (t.type == .NUMTYNAME) {
                 const numtv = try self.newTNum(t.literal(self.lexer.source)[1..], .{ .Data = uid });
-                try tvars.append(.{ .TNum = numtv });
+                try tvars.append(self.arena, .{ .TNum = numtv });
             } else if (t.type == .IDENTIFIER) {
                 const tv = try self.newTVar(t.literal(self.lexer.source), .{ .Data = uid });
-                try tvars.append(.{ .TVar = tv });
+                try tvars.append(self.arena, .{ .TVar = tv });
             } else {
                 unreachable;
             }
         }
 
-        var assocs = std.ArrayList(AST.Association).init(self.arena);
+        var assocs = std.ArrayList(AST.Association).empty; // self.arena
         const tyconstr = Type.Constrain{ .Data = .{ .uid = uid, .assocs = &assocs } };
         const t = try Type.init(self, .{ .constrain = tyconstr, .knots = knots }).sepTyo();
 
         // COPYPASTA: don't forget to add associations at the end!!!!
         for (assocs.items) |assoc| {
-            try tvars.append(.{ .TVar = assoc.depends });
+            try tvars.append(self.arena, .{ .TVar = assoc.depends });
         }
 
         break :b Common.allocOne(self.arena, AST.TypeSynonym{
@@ -436,7 +438,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     // already begin env
     const env = try self.beginEnv(fun);
 
-    var params = std.ArrayList(AST.DeconBase).init(self.arena);
+    var params = std.ArrayList(AST.DeconBase).empty; // self.arena
     const tyconstr = Type.Constrain{ .Function = .{ .uid = fun.name.uid } };
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
@@ -450,7 +452,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
                 ).sepTyo();
                 try self.typeContext.unify(decon.t, pt.e, &.{ .l = decon.l, .r = pt.l });
             }
-            try params.append(.{ .d = decon, .refvar = refvar });
+            try params.append(self.arena, .{ .d = decon, .refvar = refvar });
 
             if (!self.check(.COMMA)) break;
         }
@@ -544,7 +546,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
 fn finishBodyAndInferReturnType(self: *Self, fnBody: *std.ArrayList(*AST.Stmt), returnStatus: ReturnStatus, l: Loc) !void {
     // TODO: factor it out!
     if (!self.triedReturningAtAll) {
-        try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(l))); // TODO: add special location type for "midlines"
+        try fnBody.append(self.arena, try Common.allocOne(self.arena, try self.unitReturn(l))); // TODO: add special location type for "midlines"
         // eg.
         //      askjdklasjdk
         //  |-> ----------
@@ -557,7 +559,7 @@ fn finishBodyAndInferReturnType(self: *Self, fnBody: *std.ArrayList(*AST.Stmt), 
         //  Otherwise, error obv.
         switch (self.typeContext.getType(self.returnType.?)) {
             .Con => |c| if (c.type.uid == (try self.defined(.Unit)).data.uid) {
-                try fnBody.append(try Common.allocOne(self.arena, try self.unitReturn(l)));
+                try fnBody.append(self.arena, try Common.allocOne(self.arena, try self.unitReturn(l)));
                 break :retcheck;
             },
             else => {
@@ -579,12 +581,12 @@ fn body(self: *Self) !struct { stmts: std.ArrayList(*AST.Stmt), returnStatus: Re
     try self.devour(.INDENT);
 
     self.beginScope();
-    var stmts = std.ArrayList(*AST.Stmt).init(self.arena);
+    var stmts = std.ArrayList(*AST.Stmt).empty; // self.arena
     var knots: ?Knots = null;
     while (!self.check(.DEDENT)) {
         const stmt = try self.statement(&knots);
         if (stmt) |s| {
-            try stmts.append(s);
+            try stmts.append(self.arena, s);
         }
     }
     self.endScope();
@@ -631,7 +633,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
     if (self.peek().type == .TYPE) {
         // first type def
         if (knots.* == null) {
-            knots.* = Knots.init(self.arena);
+            knots.* = .empty;
         }
     } else {
         if (knots.*) |knotz| {
@@ -716,13 +718,13 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             //
         } // break
         else if (self.check(.USE)) {
-            var modpath = std.ArrayList(Str).init(self.arena);
+            var modpath = std.ArrayList(Str).empty;
             const firstMod = try self.expect(.TYPE);
             var l = self.loc(firstMod);
-            try modpath.append(firstMod.literal(self.lexer.source));
+            try modpath.append(self.arena, firstMod.literal(self.lexer.source));
             while (self.check(.DOT)) {
                 const mod = try self.expect(.TYPE);
-                try modpath.append(mod.literal(self.lexer.source));
+                try modpath.append(self.arena, mod.literal(self.lexer.source));
                 l = l.between(self.loc(mod));
             }
 
@@ -832,10 +834,10 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
                 }, false);
 
                 var innerTy = vv.t;
-                var accessors = std.ArrayList(AST.Stmt.Accessor).init(self.arena);
+                var accessors = std.ArrayList(AST.Stmt.Accessor).empty; // self.arena
                 while (true) {
                     if (self.consume(.REF)) |reftok| {
-                        try accessors.append(.{ .tBefore = innerTy, .acc = .Deref });
+                        try accessors.append(self.arena, .{ .tBefore = innerTy, .acc = .Deref });
 
                         const ptr = (try self.defined(.Ptr)).dataInst;
 
@@ -844,7 +846,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
                     } else if (self.consume(.DOT)) |dottok| {
                         const name = try self.expect(.IDENTIFIER);
                         const field = name.literal(self.lexer.source);
-                        try accessors.append(.{
+                        try accessors.append(self.arena, .{
                             .tBefore = innerTy,
                             .acc = .{ .Access = field },
                         });
@@ -922,13 +924,13 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             const bTrue = bTrueBod.stmts.items;
             var returnStatus = bTrueBod.returnStatus;
 
-            var elifs = std.ArrayList(AST.Stmt.Elif).init(self.arena);
+            var elifs = std.ArrayList(AST.Stmt.Elif).empty; // self.arena
             while (self.check(.ELIF)) {
                 const elifCond = try self.expression();
                 try self.typeContext.unify(elifCond.t, try self.definedType(.Bool), &.{ .l = elifCond.l });
                 const elifBodyAndStatus = try self.body();
                 returnStatus = returnStatus.alternative(elifBodyAndStatus.returnStatus);
-                try elifs.append(AST.Stmt.Elif{ .cond = elifCond, .body = elifBodyAndStatus.stmts.items });
+                try elifs.append(self.arena, AST.Stmt.Elif{ .cond = elifCond, .body = elifBodyAndStatus.stmts.items });
             }
 
             const elseBody = if (self.check(.ELSE)) els: {
@@ -965,7 +967,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             self.beginScope();
             defer self.endScope();
             const refvar = self.deconRefVar();
-            const decon = .{
+            const decon = AST.DeconBase{
                 .d = try self.deconstruction(refvar),
                 .refvar = refvar,
             };
@@ -1018,14 +1020,14 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             const refvar = self.deconRefVar();
 
             var returnStatus = ReturnStatus.Returned; // mempty-like
-            var cases = std.ArrayList(AST.Case).init(self.arena);
+            var cases = std.ArrayList(AST.Case).empty; // self.arena
             try self.devour(.INDENT);
             self.beginScope();
             while (!self.check(.DEDENT)) {
                 const decon = try self.deconstruction(refvar);
                 try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
                 const bod = try self.body();
-                try cases.append(.{ .decon = decon, .body = bod.stmts.items });
+                try cases.append(self.arena, .{ .decon = decon, .body = bod.stmts.items });
                 returnStatus = returnStatus.alternative(bod.returnStatus);
             }
             self.endScope();
@@ -1070,12 +1072,12 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
                 class.default = data;
             }
 
-            var classFuns = std.ArrayList(*AST.ClassFun).init(self.arena);
+            var classFuns = std.ArrayList(*AST.ClassFun).empty; // self.arena
             try self.devour(.INDENT);
             while (!self.check(.DEDENT)) {
                 const classFun = try self.classFunction(.{ .tvar = selfVar, .t = selfType }, class);
                 self.consumeSeps();
-                try classFuns.append(classFun);
+                try classFuns.append(self.arena, classFun);
             }
 
             self.selfType = oldSelf;
@@ -1098,7 +1100,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             self.selfType = instantiatedSelfType;
             defer self.selfType = oldSelf;
 
-            var instFuns = std.ArrayList(AST.Instance.InstFun).init(self.arena);
+            var instFuns = std.ArrayList(AST.Instance.InstFun).empty; // self.arena
             try self.devour(.INDENT);
             while (true) { // while1
                 const funName = try self.expect(.IDENTIFIER);
@@ -1115,7 +1117,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
                     .ret = undefined,
                     .body = undefined,
                     .temp__isRecursive = true,
-                    .temp__calls = std.ArrayList(AST.Function.Instantiation).init(self.arena),
+                    .temp__calls = std.ArrayList(AST.Function.Instantiation).empty, // self.arena
                     .temp__finishedParsing = false,
                     .temp__mono = AST.Function.Mono.empty(self.typeContext, self.arena),
                 };
@@ -1127,7 +1129,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
 
                     // class function found. unify types.
                     // todo
-                    try instFuns.append(.{ .fun = fun, .classFunId = classFun.uid });
+                    try instFuns.append(self.arena, .{ .fun = fun, .classFunId = classFun.uid });
                     break;
                 } else {
                     // error that instance function is not found.
@@ -1216,7 +1218,7 @@ fn typeDefinition(self: *Self, typename: Token, knots: *Knots, annotations: []AS
     }
 
     // start counting tvars.
-    var tvars = std.ArrayList(Token).init(self.arena);
+    var tvars = std.ArrayList(Token).empty; // self.arena
 
     // can be a tvar or a postfix call.
     // TODO BUG: seems like it's currently broken?
@@ -1232,16 +1234,16 @@ fn typeDefinition(self: *Self, typename: Token, knots: *Knots, annotations: []AS
             try self.finishFold(pm);
             return .{ .Expr = try self.finishExpression(ce) };
         } else {
-            try tvars.append(mtv);
+            try tvars.append(self.arena, mtv);
         }
     }
 
     // consume tvars yo!
     while (true) {
         if (self.consume(.NUMTYNAME)) |numtyTok| {
-            try tvars.append(numtyTok);
+            try tvars.append(self.arena, numtyTok);
         } else if (self.consume(.IDENTIFIER)) |tvname| {
-            try tvars.append(tvname);
+            try tvars.append(self.arena, tvname);
         } else {
             break;
         }
@@ -1389,14 +1391,14 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
 
     try self.devour(.LEFT_PAREN);
 
-    var params = std.ArrayList(AST.ExternalFunction.Param).init(self.arena);
+    var params = std.ArrayList(AST.ExternalFunction.Param).empty; // self.arena
     const tyconstr = Type.Constrain{ .ExternalFunction = .{ .uid = uid } };
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
             const pname = try self.expect(.IDENTIFIER);
             const v = try self.newVar(pname, null); // pointless fresh.
             const t = try Type.init(self, .{ .constrain = tyconstr }).sepTyo();
-            try params.append(.{ .pn = v.v.v, .pt = t.e });
+            try params.append(self.arena, .{ .pn = v.v.v, .pt = t.e });
 
             if (self.check(.RIGHT_PAREN)) {
                 break;
@@ -1410,10 +1412,10 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     try self.endStmt();
 
     // TODO: Technically, we should be able to pass buffers. But we should not in general allow type integers.
-    var definedTVars = std.ArrayList(AST.TVarOrNum).init(self.arena);
+    var definedTVars = std.ArrayList(AST.TVarOrNum).empty; // self.arena
     var it = self.scope.currentScope().tvars.valueIterator();
     while (it.next()) |tvar| {
-        try definedTVars.append(tvar.*);
+        try definedTVars.append(self.arena, tvar.*);
     }
     self.endScope();
 
@@ -1450,11 +1452,11 @@ fn exportListToExports(self: *Self, definedExports: []Export) !Module.Exports {
         switch (thing.exportedThing) {
             .Wildcard => {
                 if (thing.externalModule.len == 0) {
-                    try exports.mergeWith(&try self.scopeToExports());
+                    try exports.mergeWith(&try self.scopeToExports(), self.arena);
                 } else {
                     const motherModule = try self.loadModuleFromPath(thing.externalModule, thing.qualifierLoc.?);
                     if (motherModule) |otherModule| {
-                        try exports.mergeWith(&otherModule.exports);
+                        try exports.mergeWith(&otherModule.exports, self.arena);
                     } else {
                         // loadModuleFromPath should throw an error, right?
                     }
@@ -1583,8 +1585,9 @@ fn exportListToExports(self: *Self, definedExports: []Export) !Module.Exports {
 fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: Module.Path) !bool {
     // try qualified type thing.
     // due to the way we parse it, we first must check which type was parsed yo.
-    var moduleQualifier = std.ArrayList(Str).init(self.arena);
-    try moduleQualifier.appendSlice(outerPath);
+    const mqal = self.arena;
+    var moduleQualifier = std.ArrayList(Str).empty;
+    try moduleQualifier.appendSlice(mqal, outerPath);
 
     var qualifierLoc: ?Loc = null;
     var exportedType: ?Token = null;
@@ -1592,7 +1595,7 @@ fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: 
         exportedType = first;
         while (self.check(.DOT)) {
             const curLoc = self.loc(exportedType.?);
-            try moduleQualifier.append(first.literal(self.lexer.source));
+            try moduleQualifier.append(mqal, first.literal(self.lexer.source));
             qualifierLoc = if (qualifierLoc) |l| l.between(curLoc) else curLoc;
 
             if (self.consume(.TYPE)) |tytok| {
@@ -1606,7 +1609,7 @@ fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: 
     }
 
     if (exportedType) |ty| {
-        try definedExports.append(.{
+        try definedExports.append(self.arena, .{
             .externalModule = moduleQualifier.items,
             .qualifierLoc = qualifierLoc,
             .exportedThing = try self.exportedThing(ty),
@@ -1614,7 +1617,7 @@ fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: 
     } else {
         if (self.check(.LEFT_PAREN)) {
             while (!self.check(.RIGHT_PAREN)) {
-                try definedExports.append(.{
+                try definedExports.append(self.arena, .{
                     .externalModule = moduleQualifier.items,
                     .qualifierLoc = qualifierLoc,
                     .exportedThing = try self.exportedThing(null),
@@ -1641,7 +1644,7 @@ fn oneHotExport(self: *Self, definedExports: *std.ArrayList(Export), outerPath: 
             return true;
         } //
         else {
-            try definedExports.append(.{
+            try definedExports.append(self.arena, .{
                 .externalModule = moduleQualifier.items,
                 .qualifierLoc = qualifierLoc,
                 .exportedThing = try self.exportedThing(null),
@@ -1661,9 +1664,9 @@ fn exportedThing(self: *Self, firstType: ?Token) !Export.Thing {
                     return .AllCons;
                 } else {
                     // can be class or data yo!
-                    var constructors = std.ArrayList(Token).init(this.arena);
+                    var constructors = std.ArrayList(Token).empty;
                     while (!this.check(.RIGHT_PAREN)) {
-                        try constructors.append(try this.expectOneOf(&.{ .TYPE, .IDENTIFIER }));
+                        try constructors.append(this.arena, try this.expectOneOf(&.{ .TYPE, .IDENTIFIER }));
 
                         if (this.check(.RIGHT_PAREN)) break;
                         try this.devour(.COMMA);
@@ -1719,7 +1722,7 @@ fn addImportToScope(dest: anytype, src: anytype) !void {
 
 // NOTE: assumes Module.Exports now owns the thing.
 fn scopeToExports(self: *Self) !Module.Exports {
-    std.debug.assert(self.errors.items.len > 0 or self.scope.scopes.current == 1);
+    std.debug.assert(!self.errors.empty() or self.scope.scopes.current == 1);
 
     const scope = self.scope.currentScope();
 
@@ -1752,19 +1755,19 @@ fn cloneImported(comptime T: type, al: std.mem.Allocator, src: std.StringHashMap
 // TODO: check if statements make sense in context.
 // TODO: merge / somehow handle duplicate annotations
 fn parseAnnotation(self: *Self) ![]AST.Annotation {
-    var annotations = std.ArrayList(AST.Annotation).init(self.arena); // nothing is allocated when there are no annotations.
+    var annotations = std.ArrayList(AST.Annotation).empty; // nothing is allocated when there are no annotations.
     while (self.check(.BEGIN_ANNOTATION)) {
         if (!self.check(.RIGHT_SQBR)) while (true) {
             const annName = try self.expect(.IDENTIFIER);
 
-            var annParams = std.ArrayList(Str).init(self.arena);
+            var annParams = std.ArrayList(Str).empty;
             while (self.consume(.STRING)) |param| {
                 const litWithQuotes = param.literal(self.lexer.source);
                 const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
-                try annParams.append(lit);
+                try annParams.append(self.arena, lit);
             }
 
-            try annotations.append(.{
+            try annotations.append(self.arena, .{
                 .name = annName.literal(self.lexer.source),
                 .params = annParams.items,
             });
@@ -1813,15 +1816,15 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     const uid = self.gen.classFuns.newUnique();
 
     self.beginScope();
-    var params = std.ArrayList(AST.ClassFun.Param).init(self.arena);
-    var assocs = std.ArrayList(AST.Association).init(self.arena);
+    var params = std.ArrayList(AST.ClassFun.Param).empty; // self.arena
+    var assocs = std.ArrayList(AST.Association).empty; // self.arena
     const tyconstr = Type.Constrain{ .ClassFunction = .{ .uid = uid, .assocs = &assocs } };
     try self.devour(.LEFT_PAREN);
     if (!self.check(.RIGHT_PAREN)) while (true) {
         // consume identifier if possible.
         if (self.check(.IDENTIFIER)) {}
 
-        try params.append(.{ .t = (try Type.init(self, .{ .constrain = tyconstr }).sepTyo()).e });
+        try params.append(self.arena, .{ .t = (try Type.init(self, .{ .constrain = tyconstr }).sepTyo()).e });
 
         if (self.check(.RIGHT_PAREN)) {
             break;
@@ -1841,16 +1844,16 @@ fn classFunction(self: *Self, classSelf: struct { tvar: AST.TVar, t: AST.Type },
     self.endScope();
 
     // make a scheme from deze vars yo.
-    var tvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
-    try tvars.append(.{ .TVar = classSelf.tvar });
+    var tvars = std.ArrayList(AST.TVarOrNum).empty; // self.arena
+    try tvars.append(self.arena, .{ .TVar = classSelf.tvar });
     var tvit = tvarsMap.valueIterator();
     while (tvit.next()) |tvar| {
-        try tvars.append(tvar.*);
+        try tvars.append(self.arena, tvar.*);
     }
 
     // also append implicit tvars from inner class definitions.
     for (assocs.items) |ass| {
-        try tvars.append(.{ .TVar = ass.depends });
+        try tvars.append(self.arena, .{ .TVar = ass.depends });
     }
 
     // make sure to add the implicit tvars before this!
@@ -1900,9 +1903,9 @@ fn constraints(self: *Self) !Constraints {
                             .TNum => unreachable, // TODO: error
                         };
 
-                        const e = try constraints_.getOrPutValue(tvar, std.ArrayList(*AST.Class).init(self.arena)); // NOTE: source says it's not allocating anything until an element is inserted.
+                        const e = try constraints_.getOrPutValue(tvar, .empty); // array list allocator: self.arena
 
-                        try e.value_ptr.append(class);
+                        try e.value_ptr.append(self.arena, class);
                     },
                     .Data => unreachable, // TODO: error.
                     .Synonym => unreachable, // TODO: error
@@ -1925,7 +1928,7 @@ fn addConstraintsToAssocs(self: *Self, assocs: *std.ArrayList(AST.Association), 
     var constrIt = constrs.iterator();
     while (constrIt.next()) |kv| {
         for (kv.value_ptr.items) |class| {
-            try assocs.append(.{
+            try assocs.append(self.arena, .{
                 .depends = kv.key_ptr.*,
                 .uid = self.gen.assocs.newUnique(),
                 .class = class,
@@ -1969,339 +1972,339 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
             .d = .{ .Var = v.v.v },
         };
     } // var
-    else if (self.consume(.UNDERSCORE)) |ut| b: {
-        break :b .{
-            .t = try self.typeContext.fresh(),
-            .l = self.loc(ut),
-            .d = .{ .None = .{} },
-        };
-    } // ignore var
-    else if (self.consumeInteger()) |numTok| b: {
-        const l = self.loc(numTok);
-        const numd = try self.instantiateNumDecon(self.parseInt(numTok), false, l);
-
-        break :b .{
-            .t = numd.t,
-            .l = l,
-            .d = .{ .Num = numd.d },
-        };
-    } // number
-    else if (self.consume(.MINUS)) |minus| b: {
-        const numTok = try self.expectInteger();
-        const l = self.loc(minus).between(self.loc(numTok));
-        const numd = try self.instantiateNumDecon(self.parseInt(numTok), true, l);
-
-        break :b .{
-            .t = numd.t,
-            .l = l,
-            .d = .{ .Num = numd.d },
-        };
-        //
-    } // -number
-    else if (self.consume(.STRING)) |strtok| b: {
-        const l = self.loc(strtok);
-        const litWithQuotes = strtok.literal(self.lexer.source);
-        const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
-
-        const cst = try self.constStrType(lit, l);
-
-        const eqClass = try self.definedClass(.Eq);
-        const eqfun = eqClass.classFuns[0];
-        const eqInst = try self.instantiateClassFunction(eqfun, l);
-
-        const eqfunTy = try self.makeType(.{ .Fun = .{
-            .args = [_]AST.Type{ cst.selfTy, cst.selfTy },
-            .ret = try self.typeContext.fresh(),
-        } });
-        try self.typeContext.unify(eqInst.t, eqfunTy, &.{ .l = l });
-
-        break :b .{
-            .t = cst.selfTy,
-            .l = l,
-            .d = .{
-                .Str = .{
-                    .str = lit,
-                    .instEq = eqInst.ref,
-                    .instFromString = cst.ref,
-                },
-            },
-        };
-    } // string
-    else if (self.consume(.LEFT_PAREN)) |lp| b: {
-        const path = try AST.Decon.Path.concat(self.arena, dp, .None);
-        const first = try self.deconstruction_(path);
-        if (self.check(.COMMA)) {
-            var tups = std.ArrayList(*AST.Decon).init(self.arena);
-            var paths = std.ArrayList(*AST.Decon.Path).init(self.arena);
-            try tups.append(first);
-            try paths.append(path);
-
-            const rp = bb: while (true) {
-                const pp = try AST.Decon.Path.concat(self.arena, dp, .None);
-                try tups.append(try self.deconstruction_(pp));
-                try paths.append(pp);
-
-                if (self.consume(.RIGHT_PAREN)) |rp| break :bb rp;
-                try self.devour(.COMMA);
+        else if (self.consume(.UNDERSCORE)) |ut| b: {
+            break :b .{
+                .t = try self.typeContext.fresh(),
+                .l = self.loc(ut),
+                .d = .{ .None = .{} },
             };
-
-            std.debug.assert(tups.items.len > 1);
-            const tupty = try switch (tups.items.len) {
-                2 => self.defined(.Tuple2),
-                3 => self.defined(.Tuple3),
-                4 => self.defined(.Tuple4),
-                else => unreachable,
-            };
-
-            // update paths after determining the type of the tuple.
-            const con = &tupty.data.stuff.cons[0];
-            for (tups.items, paths.items, 0..) |d, p, i| {
-                p.Concat.path = .{ .Con = .{
-                    .con = con,
-                    .field = i,
-                    .t = d.t,
-                } };
-                try self.typeContext.unify(tupty.dataInst.tyArgs[i].Type, d.t, null);
-            }
+        } // ignore var
+        else if (self.consumeInteger()) |numTok| b: {
+            const l = self.loc(numTok);
+            const numd = try self.instantiateNumDecon(self.parseInt(numTok), false, l);
 
             break :b .{
-                .t = tupty.dataInst.t,
-                .l = self.loc(lp).between(self.loc(rp)),
+                .t = numd.t,
+                .l = l,
+                .d = .{ .Num = numd.d },
+            };
+        } // number
+        else if (self.consume(.MINUS)) |minus| b: {
+            const numTok = try self.expectInteger();
+            const l = self.loc(minus).between(self.loc(numTok));
+            const numd = try self.instantiateNumDecon(self.parseInt(numTok), true, l);
+
+            break :b .{
+                .t = numd.t,
+                .l = l,
+                .d = .{ .Num = numd.d },
+            };
+            //
+        } // -number
+        else if (self.consume(.STRING)) |strtok| b: {
+            const l = self.loc(strtok);
+            const litWithQuotes = strtok.literal(self.lexer.source);
+            const lit = litWithQuotes[1 .. litWithQuotes.len - 1];
+
+            const cst = try self.constStrType(lit, l);
+
+            const eqClass = try self.definedClass(.Eq);
+            const eqfun = eqClass.classFuns[0];
+            const eqInst = try self.instantiateClassFunction(eqfun, l);
+
+            const eqfunTy = try self.makeType(.{ .Fun = .{
+                .args = [_]AST.Type{ cst.selfTy, cst.selfTy },
+                .ret = try self.typeContext.fresh(),
+            } });
+            try self.typeContext.unify(eqInst.t, eqfunTy, &.{ .l = l });
+
+            break :b .{
+                .t = cst.selfTy,
+                .l = l,
                 .d = .{
-                    .Con = .{
-                        .con = con,
-                        .decons = tups.items,
+                    .Str = .{
+                        .str = lit,
+                        .instEq = eqInst.ref,
+                        .instFromString = cst.ref,
                     },
                 },
             };
-        } else {
-            try self.devour(.RIGHT_PAREN);
-            return first;
-        }
-        //
-    } // grouping OR tuple
-    else if (self.consume(.TYPE)) |cn| b: {
-        const con = bb: {
-            if (self.check(.DOT)) {
-                var modpath = std.ArrayList(Str).init(self.arena);
-                try modpath.append(cn.literal(self.lexer.source));
-                // TODO: oof. what is this? I need to check it if it's duplicate code.
-                loop: while (true) {
-                    if (self.consume(.TYPE)) |tn| {
-                        if (self.check(.DOT)) {
-                            try modpath.append(tn.literal(self.lexer.source));
-                            continue :loop;
+        } // string
+        else if (self.consume(.LEFT_PAREN)) |lp| b: {
+            const path = try AST.Decon.Path.concat(self.arena, dp, .None);
+            const first = try self.deconstruction_(path);
+            if (self.check(.COMMA)) {
+                var tups = std.ArrayList(*AST.Decon).empty; // self.arena
+                var paths = std.ArrayList(*AST.Decon.Path).empty; // self.arena
+                try tups.append(self.arena, first);
+                try paths.append(self.arena, path);
+
+                const rp = bb: while (true) {
+                    const pp = try AST.Decon.Path.concat(self.arena, dp, .None);
+                    try tups.append(self.arena, try self.deconstruction_(pp));
+                    try paths.append(self.arena, pp);
+
+                    if (self.consume(.RIGHT_PAREN)) |rp| break :bb rp;
+                    try self.devour(.COMMA);
+                };
+
+                std.debug.assert(tups.items.len > 1);
+                const tupty = try switch (tups.items.len) {
+                    2 => self.defined(.Tuple2),
+                    3 => self.defined(.Tuple3),
+                    4 => self.defined(.Tuple4),
+                    else => unreachable,
+                };
+
+                // update paths after determining the type of the tuple.
+                const con = &tupty.data.stuff.cons[0];
+                for (tups.items, paths.items, 0..) |d, p, i| {
+                    p.Concat.path = .{ .Con = .{
+                        .con = con,
+                        .field = i,
+                        .t = d.t,
+                    } };
+                    try self.typeContext.unify(tupty.dataInst.tyArgs[i].Type, d.t, null);
+                }
+
+                break :b .{
+                    .t = tupty.dataInst.t,
+                    .l = self.loc(lp).between(self.loc(rp)),
+                    .d = .{
+                        .Con = .{
+                            .con = con,
+                            .decons = tups.items,
+                        },
+                    },
+                };
+            } else {
+                try self.devour(.RIGHT_PAREN);
+                return first;
+            }
+            //
+        } // grouping OR tuple
+        else if (self.consume(.TYPE)) |cn| b: {
+            const con = bb: {
+                if (self.check(.DOT)) {
+                    var modpath = std.ArrayList(Str).empty; // self.arena
+                    try modpath.append(self.arena, cn.literal(self.lexer.source));
+                    // TODO: oof. what is this? I need to check it if it's duplicate code.
+                    loop: while (true) {
+                        if (self.consume(.TYPE)) |tn| {
+                            if (self.check(.DOT)) {
+                                try modpath.append(self.arena, tn.literal(self.lexer.source));
+                                continue :loop;
+                            } else {
+                                break :bb try self.instantiateCon(modpath.items, tn);
+                            }
                         } else {
-                            break :bb try self.instantiateCon(modpath.items, tn);
+                            unreachable; // TODO
                         }
-                    } else {
-                        unreachable; // TODO
                     }
-                }
-            } else {
-                break :bb try self.instantiateCon(&.{}, cn);
-            }
-        };
-
-        const conLocation = self.loc(cn); // TODO: incorrect in case of qualified types
-
-        var decons: []*AST.Decon = &.{};
-        var args: []AST.Type = &.{};
-        var tysLoc: ?Loc = null;
-        if (self.check(.LEFT_PAREN)) {
-            var ds = std.ArrayList(*AST.Decon).init(self.arena);
-            var tys = std.ArrayList(AST.Type).init(self.arena);
-
-            while (true) { // while1
-                const d = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, if (con.con.data.isPointer()) .Ptr else .{ .Con = .{
-                    .con = con.con,
-                    .field = ds.items.len,
-                    .t = con.t,
-                } }));
-                try ds.append(d);
-                try tys.append(d.t);
-                tysLoc = if (tysLoc) |l| l.between(d.l) else d.l;
-
-                if (self.check(.RIGHT_PAREN)) break;
-
-                try self.devour(.COMMA);
-            }
-
-            decons = ds.items;
-            args = tys.items;
-        }
-
-        try self.typeContext.unifyParams(con.tys, args, &.{
-            .l = conLocation,
-            .r = tysLoc,
-        }, &.{
-            .lfull = con.t,
-            .rfull = null,
-        });
-        break :b .{
-            .t = con.t,
-            .l = conLocation.between(tysLoc),
-            .d = .{
-                .Con = .{
-                    .con = con.con,
-                    .decons = decons,
-                },
-            },
-        };
-    } // con decon
-    else if (self.consume(.LEFT_BRACE)) |leftBraceTok| b: {
-        const t = try self.typeContext.fresh();
-
-        var fields = std.ArrayList(AST.Decon.Field).init(self.arena);
-        while (true) {
-            const fieldTok = try self.expect(.IDENTIFIER);
-            const fieldName = fieldTok.literal(self.lexer.source);
-
-            const fieldTy = try self.typeContext.field(t, fieldName, null);
-
-            if (self.check(.COLON)) {
-                const decon = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, .{
-                    .Field = .{ .rec = fieldName, .t = t },
-                }));
-                try self.typeContext.unify(fieldTy, decon.t, null);
-                try fields.append(.{
-                    .field = fieldName,
-                    .decon = decon,
-                });
-            } else {
-                const vnt = try self.newVar(fieldTok, .{ .dp = try AST.Decon.Path.concat(self.arena, dp, .{
-                    .Field = .{ .rec = fieldName, .t = t },
-                }) });
-                try self.typeContext.unify(fieldTy, vnt.t, null);
-                try fields.append(.{
-                    .field = fieldName,
-                    .decon = try Common.allocOne(self.arena, AST.Decon{
-                        .t = fieldTy,
-                        .d = .{ .Var = vnt.v.v },
-                        .l = self.loc(fieldTok),
-                    }),
-                });
-            }
-            if (!self.check(.COMMA)) break;
-        }
-        const rightBraceTok = try self.expect(.RIGHT_BRACE);
-        const dloc = self.loc(leftBraceTok).between(self.loc(rightBraceTok));
-
-        // TODO: right now we only care that the deconstructed struct has all the fields defined. basically { <whatever we write>, ... }
-        // later expect the user to write `...` to ignore extra fields.
-        break :b .{
-            .t = t,
-            .d = .{ .Record = fields.items },
-            .l = dloc,
-        };
-    } // record deccon
-    else if (self.consume(.LEFT_SQBR)) |ltok| b: {
-        var left = std.ArrayList(*AST.Decon).init(self.arena);
-        var right = std.ArrayList(*AST.Decon).init(self.arena);
-        const listTy = try self.typeContext.fresh();
-        const elemTy = try self.typeContext.fresh();
-        const spreadTy = try self.typeContext.fresh();
-        const spreadInnerTy = try self.typeContext.fresh();
-
-        // for now, parse an easy version of this.
-        var decons = &left;
-        var spreadVar: ?AST.Var = null;
-        var hadSpread = false;
-        var idx: u32 = 0;
-        const lrefvar = self.deconRefVar();
-        var rrefvar: ?AST.Var = null;
-        var refvar = lrefvar;
-        const dloc = if (self.consume(.RIGHT_SQBR)) |rtok| bb: {
-            break :bb self.loc(ltok).between(self.loc(rtok));
-        } else bb: {
-            while (true) {
-                if (!hadSpread and self.check(.DOT)) {
-                    // scuffed spread xddddd
-                    try self.devour(.DOT);
-                    try self.devour(.DOT);
-
-                    if (self.consume(.IDENTIFIER)) |svtok| {
-                        const sv = try self.newVar(svtok, null);
-                        try self.typeContext.unify(sv.t, spreadInnerTy, &.{ .l = self.loc(svtok) });
-                        spreadVar = sv.v.v;
-                    }
-
-                    hadSpread = true;
-                    decons = &right;
-                    rrefvar = self.deconRefVar();
-                    refvar = rrefvar.?;
-                    idx = 0;
                 } else {
-                    const decon = try self.deconstructionIdx(refvar, idx);
-                    try self.typeContext.unify(decon.t, elemTy, &.{ .l = decon.l });
-                    try decons.append(decon);
-                    idx += 1;
+                    break :bb try self.instantiateCon(&.{}, cn);
+                }
+            };
+
+            const conLocation = self.loc(cn); // TODO: incorrect in case of qualified types
+
+            var decons: []*AST.Decon = &.{};
+            var args: []AST.Type = &.{};
+            var tysLoc: ?Loc = null;
+            if (self.check(.LEFT_PAREN)) {
+                var ds = std.ArrayList(*AST.Decon).empty; // self.arena
+                var tys = std.ArrayList(AST.Type).empty; // self.arena
+
+                while (true) { // while1
+                    const d = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, if (con.con.data.isPointer()) .Ptr else .{ .Con = .{
+                        .con = con.con,
+                        .field = ds.items.len,
+                        .t = con.t,
+                    } }));
+                    try ds.append(self.arena, d);
+                    try tys.append(self.arena, d.t);
+                    tysLoc = if (tysLoc) |l| l.between(d.l) else d.l;
+
+                    if (self.check(.RIGHT_PAREN)) break;
+
+                    try self.devour(.COMMA);
                 }
 
-                if (self.consume(.RIGHT_SQBR)) |rtok| {
-                    break :bb self.loc(ltok).between(self.loc(rtok));
-                }
-                try self.devour(.COMMA);
+                decons = ds.items;
+                args = tys.items;
             }
+
+            try self.typeContext.unifyParams(con.tys, args, &.{
+                .l = conLocation,
+                .r = tysLoc,
+            }, &.{
+                .lfull = con.t,
+                .rfull = null,
+            });
+            break :b .{
+                .t = con.t,
+                .l = conLocation.between(tysLoc),
+                .d = .{
+                    .Con = .{
+                        .con = con.con,
+                        .decons = decons,
+                    },
+                },
+            };
+        } // con decon
+        else if (self.consume(.LEFT_BRACE)) |leftBraceTok| b: {
+            const t = try self.typeContext.fresh();
+
+            var fields = std.ArrayList(AST.Decon.Field).empty; // self.arena
+            while (true) {
+                const fieldTok = try self.expect(.IDENTIFIER);
+                const fieldName = fieldTok.literal(self.lexer.source);
+
+                const fieldTy = try self.typeContext.field(t, fieldName, null);
+
+                if (self.check(.COLON)) {
+                    const decon = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, .{
+                        .Field = .{ .rec = fieldName, .t = t },
+                    }));
+                    try self.typeContext.unify(fieldTy, decon.t, null);
+                    try fields.append(self.arena, .{
+                        .field = fieldName,
+                        .decon = decon,
+                    });
+                } else {
+                    const vnt = try self.newVar(fieldTok, .{ .dp = try AST.Decon.Path.concat(self.arena, dp, .{
+                        .Field = .{ .rec = fieldName, .t = t },
+                    }) });
+                    try self.typeContext.unify(fieldTy, vnt.t, null);
+                    try fields.append(self.arena, .{
+                        .field = fieldName,
+                        .decon = try Common.allocOne(self.arena, AST.Decon{
+                            .t = fieldTy,
+                            .d = .{ .Var = vnt.v.v },
+                            .l = self.loc(fieldTok),
+                        }),
+                    });
+                }
+                if (!self.check(.COMMA)) break;
+            }
+            const rightBraceTok = try self.expect(.RIGHT_BRACE);
+            const dloc = self.loc(leftBraceTok).between(self.loc(rightBraceTok));
+
+            // TODO: right now we only care that the deconstructed struct has all the fields defined. basically { <whatever we write>, ... }
+            // later expect the user to write `...` to ignore extra fields.
+            break :b .{
+                .t = t,
+                .d = .{ .Record = fields.items },
+                .l = dloc,
+            };
+        } // record deccon
+        else if (self.consume(.LEFT_SQBR)) |ltok| b: {
+            var left = std.ArrayList(*AST.Decon).empty; // self.arena
+            var right = std.ArrayList(*AST.Decon).empty; // self.arena
+            const listTy = try self.typeContext.fresh();
+            const elemTy = try self.typeContext.fresh();
+            const spreadTy = try self.typeContext.fresh();
+            const spreadInnerTy = try self.typeContext.fresh();
+
+            // for now, parse an easy version of this.
+            var decons = &left;
+            var spreadVar: ?AST.Var = null;
+            var hadSpread = false;
+            var idx: u32 = 0;
+            const lrefvar = self.deconRefVar();
+            var rrefvar: ?AST.Var = null;
+            var refvar = lrefvar;
+            const dloc = if (self.consume(.RIGHT_SQBR)) |rtok| bb: {
+                break :bb self.loc(ltok).between(self.loc(rtok));
+            } else bb: {
+                while (true) {
+                    if (!hadSpread and self.check(.DOT)) {
+                        // scuffed spread xddddd
+                        try self.devour(.DOT);
+                        try self.devour(.DOT);
+
+                        if (self.consume(.IDENTIFIER)) |svtok| {
+                            const sv = try self.newVar(svtok, null);
+                            try self.typeContext.unify(sv.t, spreadInnerTy, &.{ .l = self.loc(svtok) });
+                            spreadVar = sv.v.v;
+                        }
+
+                        hadSpread = true;
+                        decons = &right;
+                        rrefvar = self.deconRefVar();
+                        refvar = rrefvar.?;
+                        idx = 0;
+                    } else {
+                        const decon = try self.deconstructionIdx(refvar, idx);
+                        try self.typeContext.unify(decon.t, elemTy, &.{ .l = decon.l });
+                        try decons.append(self.arena, decon);
+                        idx += 1;
+                    }
+
+                    if (self.consume(.RIGHT_SQBR)) |rtok| {
+                        break :bb self.loc(ltok).between(self.loc(rtok));
+                    }
+                    try self.devour(.COMMA);
+                }
+            };
+
+            const class: *AST.Class = try self.definedClass(.ListDecon); // NOTE: assumes, that we won't be doing any deconstructing of lists in prelude (a fair assumption)
+            const cfun = class.classFuns[0]; // assume only one function! no need create another enum or search by string!
+
+            const ifn = try self.instantiateClassFunction(cfun, dloc);
+
+            // ====== Construct fun ty from here. ======
+            const params = try self.arena.alloc(AST.Type, 6);
+            for (params) |*param| {
+                param.* = try self.typeContext.fresh();
+            }
+
+            try self.typeContext.unify(params[0], listTy, null);
+
+            const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
+            const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
+            // this is to allow modification, while allowing types which don't have a stable pointer to any element.
+            try self.typeContext.unify(elemPtr.tyArgs[0].Type, elemTy, null); // TODO: nulls here, we'll see if this place can error out.
+            try self.typeContext.unify(elemPtrPtr.tyArgs[0].Type, elemPtr.t, null);
+
+            try self.typeContext.unify(params[1], elemPtrPtr.t, null);
+            try self.typeContext.unify(params[4], elemPtrPtr.t, null);
+
+            const spread = (try self.defined(.ListSpread)).dataInst;
+            try self.typeContext.unify(spread.tyArgs[0].Type, spreadInnerTy, null);
+            try self.typeContext.unify(params[3], spread.t, null);
+            try self.typeContext.unify(spread.t, spreadTy, null);
+
+            const funTy = try self.typeContext.newType(.{ .Fun = .{
+                .args = params,
+                .ret = try self.definedType(.Bool),
+                .env = try self.typeContext.newEnv(null),
+            } });
+
+            try self.typeContext.unify(ifn.t, funTy, &.{ .l = dloc });
+
+            break :b .{
+                .t = listTy,
+                .l = dloc,
+                .d = .{ .List = .{
+                    .l = left.items,
+                    .lrefvar = lrefvar,
+                    .r = if (hadSpread) .{
+                        .spreadVar = if (spreadVar) |v| .{ .v = v, .t = spreadInnerTy } else null,
+                        .r = right.items,
+                        .rrefvar = rrefvar.?,
+                    } else null,
+                    .assocRef = ifn.ref,
+
+                    .elemTy = elemTy,
+                    .spreadTy = spreadTy,
+                } },
+            };
+            //
+        } // arr decon [...]
+        else {
+            return try self.errorExpect("decon");
         };
-
-        const class: *AST.Class = try self.definedClass(.ListDecon); // NOTE: assumes, that we won't be doing any deconstructing of lists in prelude (a fair assumption)
-        const cfun = class.classFuns[0]; // assume only one function! no need create another enum or search by string!
-
-        const ifn = try self.instantiateClassFunction(cfun, dloc);
-
-        // ====== Construct fun ty from here. ======
-        const params = try self.arena.alloc(AST.Type, 6);
-        for (params) |*param| {
-            param.* = try self.typeContext.fresh();
-        }
-
-        try self.typeContext.unify(params[0], listTy, null);
-
-        const elemPtr = (try self.defined(.Ptr)).dataInst; // pointer to actual elements
-        const elemPtrPtr = (try self.defined(.Ptr)).dataInst; // ptr to ptr which switches on real data or the premade list.
-        // this is to allow modification, while allowing types which don't have a stable pointer to any element.
-        try self.typeContext.unify(elemPtr.tyArgs[0].Type, elemTy, null); // TODO: nulls here, we'll see if this place can error out.
-        try self.typeContext.unify(elemPtrPtr.tyArgs[0].Type, elemPtr.t, null);
-
-        try self.typeContext.unify(params[1], elemPtrPtr.t, null);
-        try self.typeContext.unify(params[4], elemPtrPtr.t, null);
-
-        const spread = (try self.defined(.ListSpread)).dataInst;
-        try self.typeContext.unify(spread.tyArgs[0].Type, spreadInnerTy, null);
-        try self.typeContext.unify(params[3], spread.t, null);
-        try self.typeContext.unify(spread.t, spreadTy, null);
-
-        const funTy = try self.typeContext.newType(.{ .Fun = .{
-            .args = params,
-            .ret = try self.definedType(.Bool),
-            .env = try self.typeContext.newEnv(null),
-        } });
-
-        try self.typeContext.unify(ifn.t, funTy, &.{ .l = dloc });
-
-        break :b .{
-            .t = listTy,
-            .l = dloc,
-            .d = .{ .List = .{
-                .l = left.items,
-                .lrefvar = lrefvar,
-                .r = if (hadSpread) .{
-                    .spreadVar = if (spreadVar) |v| .{ .v = v, .t = spreadInnerTy } else null,
-                    .r = right.items,
-                    .rrefvar = rrefvar.?,
-                } else null,
-                .assocRef = ifn.ref,
-
-                .elemTy = elemTy,
-                .spreadTy = spreadTy,
-            } },
-        };
-        //
-    } // arr decon [...]
-    else {
-        return try self.errorExpect("decon");
-    };
 
     return try Common.allocOne(self.arena, decon);
 }
@@ -2426,13 +2429,13 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
         self.skip(); // if accepted, consume
 
         if (binop == .Call) {
-            var params = std.ArrayList(*AST.Expr).init(self.arena);
+            var params = std.ArrayList(*AST.Expr).empty; // self.arena
             const leftLoc = self.loc(optok);
             const rightLoc = if (self.consume(.RIGHT_PAREN)) |rightTok| b: {
                 break :b self.loc(rightTok);
             } else b: {
                 while (true) {
-                    try params.append(try self.expression());
+                    try params.append(self.arena, try self.expression());
                     if (!self.check(.COMMA)) break;
                 }
 
@@ -2473,14 +2476,14 @@ fn increasingPrecedenceExpression(self: *Self, left: *AST.Expr, minPrec: u32) !*
         if (binop == .PostfixCall) {
             const funt: *AST.Expr = try self.qualified(optok);
 
-            var params = std.ArrayList(*AST.Expr).init(self.arena);
-            try params.append(left);
+            var params = std.ArrayList(*AST.Expr).empty; // self.arena
+            try params.append(self.arena, left);
             _ = try self.devour(.LEFT_PAREN);
             const rightLoc = if (self.consume(.RIGHT_PAREN)) |rightTok| b: {
                 break :b self.loc(rightTok);
             } else b: {
                 while (true) {
-                    try params.append(try self.expression());
+                    try params.append(self.arena, try self.expression());
                     if (!self.check(.COMMA)) break;
                 }
 
@@ -2785,7 +2788,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
     // TODO: maybe make some function to automatically allocate memory when expr succeeds?
     if (self.consume(.FN)) |tokfun| { // smol hack to allow quick empty lambdas.
-        var params = std.ArrayList(AST.DeconBase).init(self.arena);
+        var params = std.ArrayList(AST.DeconBase).empty; // self.arena
 
         const env = try self.beginEnv(null);
 
@@ -2800,7 +2803,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
                 while (true) {
                     const refvar = self.deconRefVar();
                     const decon = try self.deconstruction(refvar);
-                    try params.append(.{ .d = decon, .refvar = refvar });
+                    try params.append(self.arena, .{ .d = decon, .refvar = refvar });
 
                     if (self.consume(.RIGHT_PAREN)) |rparen| {
                         l = l.between(self.loc(rparen));
@@ -2822,7 +2825,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             // single param
             const refvar = self.deconRefVar();
             const decon = try self.deconstruction(refvar);
-            try params.append(.{ .d = decon, .refvar = refvar });
+            try params.append(self.arena, .{ .d = decon, .refvar = refvar });
             try self.devour(.COLON);
         }
 
@@ -2917,7 +2920,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         try self.devour(.COLON);
         const ifTrue = try self.expression();
 
-        var elifs = std.ArrayList(AST.Expr.Elif).init(self.arena);
+        var elifs = std.ArrayList(AST.Expr.Elif).empty; // self.arena
         while (self.check(.ELIF)) {
             const elifCond = try self.expression();
             try self.typeContext.unify(elifCond.t, try self.definedType(.Bool), &.{ .l = elifCond.l });
@@ -2925,7 +2928,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             const elifThen = try self.expression();
             try self.typeContext.unify(elifThen.t, ifTrue.t, &.{ .l = elifThen.l, .r = ifTrue.l });
 
-            try elifs.append(.{ .cond = elifCond, .then = elifThen });
+            try elifs.append(self.arena, .{ .cond = elifCond, .then = elifThen });
         }
         try self.devour(.ELSE);
         // try self.devour(.COLON);  // DESIGN: should this be here???
@@ -2994,11 +2997,11 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         const intrName = fullIntr[1..];
         if (Intrinsic.findByName(intrName)) |intr| {
             // parse any required arguments brah.
-            var args = std.ArrayList(*AST.Expr).init(self.arena);
+            var args = std.ArrayList(*AST.Expr).empty; // self.arena
             if (intr.args > 0) {
                 try self.devour(.LEFT_PAREN);
                 for (0..intr.args) |i| {
-                    try args.append(try self.expression());
+                    try args.append(self.arena, try self.expression());
                     if (i != intr.args - 1) {
                         try self.devour(.COMMA);
                     } else {
@@ -3253,11 +3256,11 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
 
         // check if we're defining a tuple.
         if (self.check(.COMMA)) {
-            var tups = std.ArrayList(*AST.Expr).init(self.arena);
-            try tups.append(expr);
+            var tups = std.ArrayList(*AST.Expr).empty; // self.arena
+            try tups.append(self.arena, expr);
 
             const rp = b: while (true) {
-                try tups.append(try self.expression());
+                try tups.append(self.arena, try self.expression());
                 if (self.consume(.RIGHT_PAREN)) |rp| break :b rp;
                 try self.devour(.COMMA);
             };
@@ -3318,7 +3321,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         });
     } // anonymous struct.
     else if (self.consume(.LEFT_SQBR)) |ltok| {
-        var listLikeThing = std.ArrayList(*AST.Expr).init(self.arena);
+        var listLikeThing = std.ArrayList(*AST.Expr).empty; // self.arena
         const elemTy = try self.typeContext.fresh();
         const l: Loc = if (self.consume(.RIGHT_SQBR)) |rtok| b: {
             break :b self.loc(ltok).between(self.loc(rtok));
@@ -3326,7 +3329,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             while (true) {
                 const expr = try self.expression();
                 try self.typeContext.unify(expr.t, elemTy, &.{ .l = expr.l }); // TODO: unify all of them AFTER. Then, you can use the location of the whole list to use as .{ .r } to stand for elemTy.
-                try listLikeThing.append(expr);
+                try listLikeThing.append(self.arena, expr);
                 if (self.consume(.RIGHT_SQBR)) |rtok| {
                     break :b self.loc(ltok).between(self.loc(rtok));
                 }
@@ -3463,7 +3466,7 @@ fn multilineLambda(self: *Self, tempLoc: Loc) !void {
 }
 
 // NOTE: this is seriously unfinished!
-fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc: Loc) !void {
+fn caseExpr(self: *Self, prev: ParsingMode.SimpleMode, caseexpr: *AST.Expr, tempLoc: Loc) !void {
     _ = tempLoc;
     // COPYPASTA
     self.mode = .{ .Simple = .Normal };
@@ -3471,7 +3474,7 @@ fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc:
     const refvar = caseexpr.e.CaseExpr.refvar;
     const exprRetTy = caseexpr.t;
     // var returnStatus = ReturnStatus.Returned; // mempty-like
-    var cases = std.ArrayList(AST.Expr.ExprCase).init(self.arena);
+    var cases = std.ArrayList(AST.Expr.ExprCase).empty; // self.arena
     try self.devour(.INDENT);
     self.beginScope();
     while (!self.check(.DEDENT)) {
@@ -3482,7 +3485,7 @@ fn caseExpr(self: *Self, prev: ParsingMode.Simple, caseexpr: *AST.Expr, tempLoc:
             const oldMode = self.foldFromHere();
             const exp = try self.expression();
             try self.typeContext.unify(exprRetTy, exp.t, &.{ .l = exp.l });
-            try cases.append(.{ .Expr = .{ .decon = decon, .expr = exp } });
+            try cases.append(self.arena, .{ .Expr = .{ .decon = decon, .expr = exp } });
             try self.finishFold(oldMode);
         } else {
             unreachable;
@@ -3537,14 +3540,14 @@ fn qualified(self: *Self, first: Token) !*AST.Expr {
     } // single constructor
     else unreachable;
 
-    var modpath = std.ArrayList(Str).init(self.arena);
-    try modpath.append(first.literal(self.lexer.source));
+    var modpath = std.ArrayList(Str).empty; // self.arena
+    try modpath.append(self.arena, first.literal(self.lexer.source));
 
     var l = self.loc(first);
     loop: while (true) {
         if (self.consume(.TYPE)) |possibleCon| {
             if (self.check(.DOT)) {
-                try modpath.append(possibleCon.literal(self.lexer.source));
+                try modpath.append(self.arena, possibleCon.literal(self.lexer.source));
                 l = l.between(self.loc(possibleCon));
                 continue :loop;
             } else if (self.check(.LEFT_BRACE)) {
@@ -3640,7 +3643,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
     }
 
     // PLACEHOLDER EXPR.
-    std.debug.assert(self.errors.items.len > 0);
+    std.debug.assert(!self.errors.empty());
     return try self.allocExpr(.{
         .e = .{ .AnonymousRecord = &.{} },
         .t = try self.typeContext.fresh(),
@@ -3651,7 +3654,7 @@ fn namedRecordDefinition(self: *Self, modpath: Module.Path, name: Token) !*AST.E
 // either anonymous or normal :)
 // checks for duplicates.
 fn someRecordDefinition(self: *Self) !struct { fields: []AST.Expr.Field, rightLoc: Loc } {
-    var definitions = std.ArrayList(AST.Expr.Field).init(self.arena);
+    var definitions = std.ArrayList(AST.Expr.Field).empty; // self.arena
     while (true) {
         const fieldTok = try self.expect(.IDENTIFIER);
         const fieldName = fieldTok.literal(self.lexer.source);
@@ -3680,7 +3683,7 @@ fn someRecordDefinition(self: *Self) !struct { fields: []AST.Expr.Field, rightLo
             }
         } else {
             // not a duplicate.
-            try definitions.append(.{ .field = fieldName, .value = expr });
+            try definitions.append(self.arena, .{ .field = fieldName, .value = expr });
         }
 
         if (!self.check(.COMMA)) break;
@@ -3697,11 +3700,11 @@ fn parseQualifiedType(self: *Self, first: Token) !QualifiedType {
     }
 
     var fullPath = try std.ArrayList(Str).initCapacity(self.arena, 1);
-    try fullPath.append(first.literal(self.lexer.source));
+    try fullPath.append(self.arena, first.literal(self.lexer.source));
     var qloc = self.loc(first);
     while (self.check(.DOT)) {
         const tt = try self.expect(.TYPE);
-        try fullPath.append(tt.literal(self.lexer.source));
+        try fullPath.append(self.arena, tt.literal(self.lexer.source));
         qloc = qloc.between(self.loc(tt));
     }
 
@@ -3779,7 +3782,7 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
     // }
 
     var e: ?*AST.Expr = null;
-    var s = std.ArrayList(u8).init(self.arena);
+    var s = std.ArrayList(u8).empty; // self.arena
     var i: usize = 1;
     var last: usize = i;
     while (i < og.len - 1) {
@@ -3792,7 +3795,7 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                     const start = i;
 
                     if (last != ci) {
-                        const se = try self.constStr(try s.toOwnedSlice(), .{
+                        const se = try self.constStr(try s.toOwnedSlice(self.arena), .{
                             .from = st.from + last, // this is probably incorrect.
                             .to = st.from + ci,
                             .line = self.lexer.line, // should be correct... right?
@@ -3916,29 +3919,29 @@ fn stringLiteral(self: *Self, st: Token) !*AST.Expr {
                     }
                     last = i;
                 },
-                't' => try s.append('\t'),
-                'n' => try s.append('\n'),
-                'r' => try s.append('\r'),
-                '\\' => try s.append('\\'),
-                '\'' => try s.append('\''),
+                't' => try s.append(self.arena, '\t'),
+                'n' => try s.append(self.arena, '\n'),
+                'r' => try s.append(self.arena, '\r'),
+                '\\' => try s.append(self.arena, '\\'),
+                '\'' => try s.append(self.arena, '\''),
                 'x' => {
                     // TODO: do error checking.
                     const hex = og[i .. i + 2];
                     const num = std.fmt.parseInt(u8, hex, 16) catch unreachable;
                     i += 2;
-                    try s.append(num);
+                    try s.append(self.arena, num);
                 },
-                '0' => try s.append(0),
+                '0' => try s.append(self.arena, 0),
                 else => unreachable, // TODO handle errors
             }
         } else {
-            try s.append(c);
+            try s.append(self.arena, c);
             i += 1;
         }
     }
 
     if (last != i) {
-        const se = try self.constStr(try s.toOwnedSlice(), .{
+        const se = try self.constStr(try s.toOwnedSlice(self.arena), .{
             // NOTE: same problem as the loc definition for string in the beginning.
             .from = st.from + last,
             .to = st.from + i,
@@ -4222,7 +4225,7 @@ const Type = struct {
                 try self.unifyDeclaration(ts.tyArgs, &.{}, ity.t, ity.look.loc);
             } else {
                 if (this.knots) |knots| {
-                    try knots.append(.{ .ty = ity, .tyArgs = &.{} });
+                    try knots.append(self.arena, .{ .ty = ity, .tyArgs = &.{} });
                 } else {
                     ity = try self.newPlaceholderType(ty.literal(self.lexer.source), self.loc(ty));
                 }
@@ -4244,10 +4247,10 @@ const Type = struct {
             }
             const ty = try this.sepTyo();
             if (self.check(.COMMA)) {
-                var args = std.ArrayList(AST.Type).init(self.arena);
-                try args.append(ty.e);
+                var args = std.ArrayList(AST.Type).empty; // self.arena
+                try args.append(self.arena, ty.e);
                 const rp = b: while (true) {
-                    try args.append((try this.sepTyo()).e);
+                    try args.append(self.arena, (try this.sepTyo()).e);
                     if (self.consume(.RIGHT_PAREN)) |rp| break :b rp;
                     try self.devour(.COMMA);
                 };
@@ -4283,11 +4286,11 @@ const Type = struct {
                 }
             }
         } else if (self.consume(.LEFT_BRACE)) |leftTok| {
-            var fields = std.ArrayList(AST.TypeF(AST.Type).Field).init(self.arena);
+            var fields = std.ArrayList(AST.TypeF(AST.Type).Field).empty; // self.arena
             while (true) {
                 const field = try self.expect(.IDENTIFIER);
                 const t = try this.sepTyo();
-                try fields.append(.{
+                try fields.append(self.arena, .{
                     .t = t.e,
                     .field = field.literal(self.lexer.source),
                 });
@@ -4312,7 +4315,7 @@ const Type = struct {
         if (self.consume(.TYPE)) |tyName| {
             var ty = try this.qualifiedType(tyName);
 
-            var encounteredTyArgs = std.ArrayList(AST.TypeOrNum).init(self.arena);
+            var encounteredTyArgs = std.ArrayList(AST.TypeOrNum).empty; // self.arena
             var l = self.loc(tyName);
             {
                 var i: usize = 0; // bruh
@@ -4372,7 +4375,7 @@ const Type = struct {
                             break :b .{ .Type = lt.e };
                         }
                     };
-                    try encounteredTyArgs.append(argTy);
+                    try encounteredTyArgs.append(self.arena, argTy);
                 }
             }
 
@@ -4380,7 +4383,7 @@ const Type = struct {
                 try self.unifyDeclaration(ts.tyArgs, encounteredTyArgs.items, ty.t, ty.look.loc);
             } else {
                 if (this.knots) |knots| {
-                    try knots.append(.{ .ty = ty, .tyArgs = encounteredTyArgs.items });
+                    try knots.append(self.arena, .{ .ty = ty, .tyArgs = encounteredTyArgs.items });
                 } else {
                     ty = try self.newPlaceholderType(tyName.literal(self.lexer.source), self.loc(tyName));
                 }
@@ -4410,14 +4413,14 @@ const Type = struct {
         } else if (self.consume(.LEFT_PAREN)) |ltok| {
             // try parse function (but it can also be an extra paren!)
             var l = self.loc(ltok);
-            var args = std.ArrayList(AST.Type).init(self.arena);
+            var args = std.ArrayList(AST.Type).empty; // self.arena
             if (self.consume(.RIGHT_PAREN)) |rtok| {
                 l = l.between(self.loc(rtok));
             } else {
                 while (true) {
                     const t = try this.sepTyo();
                     l = l.between(t.l);
-                    try args.append(t.e);
+                    try args.append(self.arena, t.e);
 
                     if (!self.check(.COMMA)) {
                         break;
@@ -4530,7 +4533,7 @@ const Type = struct {
                                     .fields = &.{},
                                     .fieldsTotal = false,
                                 };
-                                try data.assocs.append(.{
+                                try data.assocs.append(this.parser.arena, .{
                                     .depends = tv,
                                     .uid = self.gen.assocs.newUnique(),
                                     .class = class,
@@ -4638,7 +4641,7 @@ fn loadModuleFromPath(self: *Self, path: Module.Path, l: Loc) ParserError!?Modul
         return mmod;
     }
 
-    const mmod = try self.modules.loadModule(.{ .ByModulePath = .{ .base = self.base, .path = path } }, l, .{});
+    const mmod = try self.modules.loadModule(self.io, .{ .ByModulePath = .{ .base = self.base, .path = path } }, l, .{});
     try self.importedModules.put(path, mmod);
 
     // automatically add instances (like muh haskells)
@@ -4691,7 +4694,7 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
         .ret = undefined,
         .body = undefined,
         .temp__isRecursive = true,
-        .temp__calls = std.ArrayList(AST.Function.Instantiation).init(self.arena),
+        .temp__calls = std.ArrayList(AST.Function.Instantiation).empty,
         .temp__finishedParsing = false,
         .temp__mono = AST.Function.Mono.empty(self.typeContext, self.arena),
     };
@@ -4781,9 +4784,9 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
             // add uses
             const use = AST.Function.Use{ .Fun = .{ .fun = fun, .m = funTyAndMatch.m, .t = funTyAndMatch.t } };
             if (AST.EnvFun.getFun(self.env)) |envfun| {
-                try envfun.temp__mono.uses.append(use);
+                try envfun.temp__mono.uses.append(self.arena, use);
             } else {
-                try self.topLevels.append(use);
+                try self.topLevels.append(self.arena, use);
             }
 
             break :b .{
@@ -4817,9 +4820,9 @@ fn instantiateVar(self: *@This(), modpath: Module.Path, varTok: Token) !VarInst 
         .Extern => |extfun| {
             const match = try self.instantiateScheme(extfun.scheme, null, self.loc(varTok));
 
-            var params = std.ArrayList(AST.Type).init(self.arena);
+            var params = std.ArrayList(AST.Type).empty; // self.arena
             for (extfun.params) |p| {
-                try params.append(try self.typeContext.mapType(match, p.pt));
+                try params.append(self.arena, try self.typeContext.mapType(match, p.pt));
             }
 
             const ret = try self.typeContext.mapType(match, extfun.ret);
@@ -4945,7 +4948,7 @@ fn addToEnvIfPossible(self: *Self, menv: ?AST.EnvFun, inst: AST.EnvVar, temp__so
                 return;
             }
 
-            try env.insts.append(inst);
+            try env.insts.append(self.arena, inst);
 
             if (ef.fun) |_| {
                 return;
@@ -5062,9 +5065,9 @@ fn instantiateClassFunction(self: *Self, cfun: *const AST.ClassFun, l: Loc) !str
     const match = try self.instantiateScheme(cfun.scheme, null, l);
 
     // mk new, instantiated type
-    var params = std.ArrayList(AST.Type).init(self.arena);
+    var params = std.ArrayList(AST.Type).empty; // arena
     for (cfun.params) |p| {
-        try params.append(try self.typeContext.mapType(match, p.t));
+        try params.append(self.arena, try self.typeContext.mapType(match, p.t));
     }
 
     const ret = try self.typeContext.mapType(match, cfun.ret);
@@ -5108,9 +5111,9 @@ fn instantiateClassFunction(self: *Self, cfun: *const AST.ClassFun, l: Loc) !str
 
     // add uses
     if (AST.EnvFun.getFun(self.env)) |fun| {
-        try fun.temp__mono.uses.append(use);
+        try fun.temp__mono.uses.append(self.arena, use);
     } else {
-        try self.topLevels.append(use);
+        try self.topLevels.append(self.arena, use);
     }
 
     return .{
@@ -5124,9 +5127,9 @@ fn instantiateFunction(self: *Self, fun: *AST.Function, instances: ?Module.Class
     const match = try self.instantiateScheme(fun.scheme, instances, l);
 
     // mk normal, uninstantiated type.
-    var params = std.ArrayList(AST.Type).init(self.arena);
+    var params = std.ArrayList(AST.Type).empty; // self.arena
     for (fun.params) |p| {
-        try params.append(p.d.t);
+        try params.append(self.arena, p.d.t);
     }
 
     const funTy = try self.typeContext.newType(.{
@@ -5156,7 +5159,7 @@ fn instantiateFunction(self: *Self, fun: *AST.Function, instances: ?Module.Class
 
     const funInst = AST.Function.Instantiation{ .t = try self.typeContext.mapType(match, funTy), .m = match };
     if (!fun.temp__isRecursive) {
-        try fun.temp__calls.append(funInst);
+        try fun.temp__calls.append(self.arena, funInst);
     }
 
     return funInst;
@@ -5179,7 +5182,7 @@ fn getInstances(self: *Self) !Module.ClassInstance {
         while (classIt.next()) |classDataInsts| {
             const nuInstsEntry = try foundInsts.getOrPut(classDataInsts.key_ptr.*);
             if (!nuInstsEntry.found_existing) {
-                nuInstsEntry.value_ptr.* = Module.DataInstance.init(self.arena);
+                nuInstsEntry.value_ptr.* = .empty;
             }
             const nuInsts = nuInstsEntry.value_ptr;
 
@@ -5187,7 +5190,7 @@ fn getInstances(self: *Self) !Module.ClassInstance {
             var instIt = insts.iterator();
             while (instIt.next()) |inst| {
                 if (nuInsts.getKey(inst.key_ptr.*) == null) {
-                    try nuInsts.put(inst.key_ptr.*, inst.value_ptr.*);
+                    try nuInsts.put(self.arena, inst.key_ptr.*, inst.value_ptr.*);
                 }
             }
         }
@@ -5625,9 +5628,9 @@ fn instantiateCon(self: *@This(), modpath: Module.Path, conTok: Token) !struct {
         return .{ .con = con, .t = dt.t, .tys = &.{} };
     } else {
         // NOTE: function type making moved to .Con case in expression()
-        var args = std.ArrayList(AST.Type).init(self.arena);
+        var args = std.ArrayList(AST.Type).empty; // self.arena
         for (con.tys) |ty| {
-            try args.append(try self.typeContext.mapType(dt.match, ty));
+            try args.append(self.arena, try self.typeContext.mapType(dt.match, ty));
         }
         return .{
             .con = con,
@@ -5786,12 +5789,12 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
 
     // make tvars out of them
     // TODO: assign pretty names ('a, 'b, etc.).
-    var tvars = std.ArrayList(AST.TVarOrNum).init(self.arena);
+    var tvars = std.ArrayList(AST.TVarOrNum).empty; // self.arena
 
     // add defined tvars in this function.
     var tvit = alreadyDefinedTVars.valueIterator();
     while (tvit.next()) |tvar| {
-        try tvars.append(tvar.*);
+        try tvars.append(self.arena, tvar.*);
     }
 
     var it = funftvs.tyvars.iterator();
@@ -5811,7 +5814,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
             .fields = if (fields) |tyvs| tyvs.fields else &.{},
             .fieldsTotal = if (fields) |tyvs| tyvs.total else false,
         };
-        try tvars.append(.{ .TVar = tv });
+        try tvars.append(self.arena, .{ .TVar = tv });
         const tvt = try self.typeContext.newType(.{ .TVar = tv });
         try self.typeContext.unify(e.t, tvt, null);
     }
@@ -5827,17 +5830,17 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
         const tnumref = try self.typeContext.newNum(.{ .TNum = tnum });
 
         try self.typeContext.unifyNum(freenum.*, tnumref, null, undefined);
-        try tvars.append(.{ .TNum = tnum });
+        try tvars.append(self.arena, .{ .TNum = tnum });
     }
 
-    var envs = std.ArrayList(AST.UnionRef).init(self.arena);
+    var envs = std.ArrayList(AST.UnionRef).empty; // self.arena
     var envIt = funftvs.envs.iterator();
     while (envIt.next()) |e| {
-        try envs.append(e.*);
+        try envs.append(self.arena, e.*);
     }
 
     // also, make sure to gather assocs
-    var assocs = std.ArrayList(AST.Association).init(self.arena);
+    var assocs = std.ArrayList(AST.Association).empty; // self.arena
     var assocsChanged = true;
     while (assocsChanged) {
         assocsChanged = false;
@@ -5886,20 +5889,20 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                                 .fields = if (fields) |tyvs| tyvs.fields else &.{},
                                 .fieldsTotal = if (fields) |tyvs| tyvs.total else false,
                             };
-                            try tvars.append(.{ .TVar = tv });
+                            try tvars.append(self.arena, .{ .TVar = tv });
                             const tvt = try self.typeContext.newType(.{ .TVar = tv });
                             try self.typeContext.unify(tyv.t, tvt, null);
                         }
 
                         var assocEnvIt = assocFTVs.envs.iterator();
                         while (assocEnvIt.next()) |e| {
-                            try envs.append(e.*);
+                            try envs.append(self.arena, e.*);
                         }
 
                         // here we are adding an existing association to a scheme.
                         // remember to create a uid and pointer-write it to the previous match's association.
                         conc.ref.* = .{ .Id = assocID };
-                        try assocs.append(.{
+                        try assocs.append(self.arena, .{
                             .depends = assocTV,
                             .class = assoc.class,
                             .uid = assocID,
@@ -5942,7 +5945,7 @@ fn mkSchemeForFunction(self: *Self, alreadyDefinedTVars: *const std.StringHashMa
                         //     .m = conc.match,
                         // });
                     } else {
-                        try assocs.append(.{
+                        try assocs.append(self.arena, .{
                             .depends = assocTV,
                             .class = assoc.class,
                             .uid = assocID,
@@ -6057,17 +6060,17 @@ pub const Association = struct {
 };
 
 fn addAssociation(self: *Self, assoc: Association) !void {
-    try self.associations.append(assoc);
+    try self.associations.append(self.arena, assoc);
 }
 
 fn addInstance(self: *Self, scope: *CurrentScope, instance: *AST.Instance) !void {
     const getOrPutResult = try scope.instances.getOrPut(instance.class);
     if (!getOrPutResult.found_existing) {
-        getOrPutResult.value_ptr.* = Module.DataInstance.init(self.arena);
+        getOrPutResult.value_ptr.* = .empty;
     }
 
     const dataInsts = getOrPutResult.value_ptr;
-    try dataInsts.put(instance.data, instance);
+    try dataInsts.put(self.arena, instance.data, instance);
 }
 
 fn beginEnv(self: *Self, fun: ?*AST.Function) !*AST.Env {
@@ -6075,7 +6078,7 @@ fn beginEnv(self: *Self, fun: ?*AST.Function) !*AST.Env {
 
     const nuEnv = try Common.allocOne(self.arena, AST.Env{
         .id = self.gen.envs.newUnique(),
-        .insts = std.ArrayList(AST.EnvVar).init(self.arena),
+        .insts = .empty, // self.arena
         .level = self.level(), // x + 1 ;; number of scopes -> level
         .outer = self.env,
         .monoInsts = AST.Env.Mono.initContext(self.arena, .{
@@ -6231,7 +6234,7 @@ fn defined(self: *Self, predefinedType: Prelude.PremadeType) !struct {
     } else b: {
         const data = switch (self.maybeLookupType(Prelude.PremadeTypeName.get(predefinedType)) orelse break :b error.PreludeError) {
             .Data => |data| data,
-            .Class => |_| break :b error.PreludeError,
+            .Class => break :b error.PreludeError,
             .Synonym => break :b error.PreludeError,
         };
 
@@ -6247,7 +6250,7 @@ fn definedClass(self: *Self, predefinedType: Prelude.PremadeClass) !*AST.Class {
         return prelude.definedClass(predefinedType);
     } else b: {
         return switch (self.maybeLookupType(Prelude.PremadeClassName.get(predefinedType)) orelse break :b error.PreludeError) {
-            .Data => |_| error.PreludeError,
+            .Data => error.PreludeError,
             .Class => |c| c,
             .Synonym => error.PreludeError,
         };
@@ -6388,7 +6391,7 @@ fn skip(self: *Self) void {
 }
 
 const ParsingMode = union(enum) {
-    const Simple = union(enum) {
+    const SimpleMode = union(enum) {
         Normal,
         CountIndent: struct {
             indent: u32,
@@ -6400,9 +6403,9 @@ const ParsingMode = union(enum) {
             }
         },
     };
-    Simple: Simple,
+    Simple: SimpleMode,
     Multiline: struct {
-        prev: Simple,
+        prev: SimpleMode,
         this: union(enum) {
             Lambda: struct {
                 lamExpr: *AST.Expr, // TODO: fix iffy typing.

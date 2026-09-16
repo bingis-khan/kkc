@@ -506,7 +506,23 @@ pub const Error = union(enum) {
 
 // const Formatted = struct { fmt: com, args: anytype };
 
-pub const Errors = std.ArrayList(struct { module: ModuleInfo, err: Error });
+pub const Errors = struct {
+    const Report = struct { module: ModuleInfo, err: Error };
+    list: std.ArrayList(Report),
+    al: std.mem.Allocator,
+
+    pub fn init(al: std.mem.Allocator) @This() {
+        return .{ .list = std.ArrayList(Report).empty, .al = al };
+    }
+
+    pub fn append(self: *@This(), err: Report) !void {
+        try self.list.append(self.al, err);
+    }
+
+    pub fn empty(self: *const @This()) bool {
+        return self.list.items.len == 0;
+    }
+};
 fn errorAtLocation(module: ModuleInfo, c: ast.Ctx, loc: Loc, labels: anytype) void {
     const label = @field(labels, "label");
     c.print(.{ module.name, ": " });
@@ -555,10 +571,10 @@ fn errorAtLocation(module: ModuleInfo, c: ast.Ctx, loc: Loc, labels: anytype) vo
 
         // PRINT THE UNDERLINE
         // TEMP: with normal stdio, just count the number once.
-        var lineLengthMeasure = std.io.countingWriter(std.io.null_writer);
-        var measureWriter = lineLengthMeasure.writer();
+        const lineLengthMeasure = std.Io.Writer.Discarding.init(&.{});
+        var measureWriter = lineLengthMeasure.writer;
         measureWriter.print("{}", .{loc.line}) catch {};
-        for (0..lineLengthMeasure.bytes_written + 1) |_| {
+        for (0..lineLengthMeasure.fullCount() + 1) |_| {
             c.print(" "); // pad
         }
 

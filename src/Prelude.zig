@@ -43,13 +43,13 @@ pub const NumPredefinedTypes = NumEnums(PremadeType);
 
 // later should be defined in prelude?
 pub fn defined(self: *const Self, premade: PremadeType) *const ast.Data {
-    return self.predefinedTypes[@intFromEnum(premade)];
+    return self.predefinedTypes[@backingInt(premade)];
 }
 
 pub fn fromData(self: *const Self, data: *const ast.Data) ?PremadeType {
     for (self.predefinedTypes, 0..) |pd, i| {
         if (pd == data) {
-            return @as(PremadeType, @enumFromInt(i));
+            return @as(PremadeType, @fromBackingInt(@intCast(i)));
         }
     }
 
@@ -87,18 +87,19 @@ pub const NumPredefinedClasses = NumEnums(PremadeClass);
 pub const PremadeClassName = TypeNameArray(PremadeClass);
 
 pub fn definedClass(self: *const Self, premade: PremadeClass) *ast.Class {
-    return self.predefinedClasses[@intFromEnum(premade)];
+    return self.predefinedClasses[@backingInt(premade)];
 }
 
 // generic stuff
 fn NumEnums(t: type) comptime_int {
-    return @typeInfo(t).Enum.fields.len;
+    return @typeInfo(t).@"enum".field_names.len;
 }
 
 fn TypeNameArray(t: type) std.EnumArray(t, Str) {
     var typenames = std.EnumArray(t, Str).initUndefined();
-    for (@typeInfo(t).Enum.fields) |enumField| {
-        typenames.set(@enumFromInt(enumField.value), enumField.name);
+    const ehnum = @typeInfo(t).@"enum";
+    for (ehnum.field_names, ehnum.field_values) |name, value| {
+        typenames.set(@fromBackingInt(@intCast(value)), name);
     }
     return typenames;
 }

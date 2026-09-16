@@ -48,7 +48,7 @@ pub const Union = struct {
     // mono__used: Set(UnionRef, UnionRef.Comparator),
 
     fn init(self: *Self) @This() {
-        return .{ .envs = std.ArrayList(Env).init(self.arena), .uid = self.gen.newUnique() };
+        return .{ .envs = .empty, .uid = self.gen.newUnique() };
     }
 
     // allocates a new union, but keeps the ID. used when mapping unions.
@@ -158,12 +158,12 @@ arena: std.mem.Allocator, // for `mapType` functions
 
 const Self = @This();
 pub fn init(al: std.mem.Allocator, errors: *Errors) !Self {
-    const context = TyStore.init(al);
+    const context = TyStore.empty;
 
     return .{
         .context = context,
-        .envContext = EnvStore.init(al),
-        .numContext = NumStore.init(al),
+        .envContext = EnvStore.empty,
+        .numContext = NumStore.empty,
         .tyvarFields = TyVarFields.init(al),
         .gen = UniqueGen.init(),
         .errors = errors,
@@ -186,9 +186,9 @@ pub fn newAnon(self: *Self, fields: []ast.TypeF(ast.Type).Field) !ast.Type {
     const gp = try self.tyvarFields.getOrPut(tyv);
 
     const tyvstuff = gp.value_ptr;
-    tyvstuff.* = .{ .areFieldsLockedIn = true, .fields = std.ArrayList(ast.Record).init(self.arena) };
+    tyvstuff.* = .{ .areFieldsLockedIn = true, .fields = std.ArrayList(ast.Record).empty };
     for (fields) |f| {
-        try tyvstuff.fields.append(.{ .field = f.field, .t = f.t });
+        try tyvstuff.fields.append(self.arena, .{ .field = f.field, .t = f.t });
     }
 
     return t;
@@ -201,7 +201,7 @@ pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
         return .{ .id = tid };
     } else {
         const tp = try common.allocOne(self.arena, TyStoreElem{ .Type = t });
-        try self.context.append(tp);
+        try self.context.append(self.arena, tp);
         return .{ .id = tp };
     }
 }
@@ -209,10 +209,10 @@ pub fn newType(self: *Self, t: ast.TypeF(TyRef)) !ast.Type {
 pub fn newEnv(self: *Self, e: ?Env) !ast.UnionRef {
     var envUnion = Union.init(self);
     if (e) |ee| {
-        try envUnion.envs.append(ee);
+        try envUnion.envs.append(self.arena, ee);
     }
 
-    try self.envContext.append(.{ .Union = envUnion });
+    try self.envContext.append(self.arena, .{ .Union = envUnion });
     const envid = self.envContext.items.len - 1;
     return .{ .id = envid };
 }
@@ -221,7 +221,7 @@ pub fn cloneMapUnion(self: *Self, match: anytype, euRef: ast.UnionRef) !ast.Unio
     const eu = self.getUnion(euRef).env;
     var nueu = Union.init(self);
     for (eu.envs.items) |env| {
-        try nueu.envs.append(.{
+        try nueu.envs.append(self.arena, .{
             .env = env.env,
             .fun = env.fun,
             .match = try self.mapMatch(match, env.match),
@@ -232,13 +232,13 @@ pub fn cloneMapUnion(self: *Self, match: anytype, euRef: ast.UnionRef) !ast.Unio
 }
 
 fn addUnion(self: *Self, eu: *const Union) !ast.UnionRef {
-    try self.envContext.append(.{ .Union = eu.* });
+    try self.envContext.append(self.arena, .{ .Union = eu.* });
     const envid = self.envContext.items.len - 1;
     return .{ .id = envid };
 }
 
 pub fn newNum(self: *Self, n: ast.TypeOrNum.TyNum) !ast.NumRef {
-    try self.numContext.append(.{ .Num = n });
+    try self.numContext.append(self.arena, .{ .Num = n });
     const numid = self.numContext.items.len - 1;
     return .{ .id = numid };
 }
@@ -486,7 +486,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
             const gpr = try self.tyvarFields.getOrPut(tyv);
             if (!gpr.found_existing) {
                 gpr.value_ptr.* = .{
-                    .fields = std.ArrayList(ast.Record).init(self.tyvarFields.allocator),
+                    .fields = std.ArrayList(ast.Record).empty, // self.tyvarFields.allocator
                     .areFieldsLockedIn = false,
                 };
             }
@@ -504,7 +504,7 @@ pub fn field(self: *Self, t: ast.Type, mem: Str, locs: Locs) !ast.Type {
                 if (tyvstats.areFieldsLockedIn) {
                     try self.typeDoesNotHaveField(t, mem, locs, t);
                 } else {
-                    try fields.append(.{ .field = mem, .t = ft });
+                    try fields.append(self.arena, .{ .field = mem, .t = ft });
                 }
                 return ft;
             }
@@ -577,10 +577,10 @@ pub fn unifyUnion(self: *Self, lenvref: UnionRef, renvref: UnionRef, locs: Locs,
     }
 
     if (llenv.envs.items.len > rrenv.envs.items.len) {
-        try llenv.envs.appendSlice(rrenv.envs.items);
+        try llenv.envs.appendSlice(self.arena, rrenv.envs.items);
         self.setEnvRef(renvref, lenvref);
     } else {
-        try rrenv.envs.appendSlice(llenv.envs.items);
+        try rrenv.envs.appendSlice(self.arena, llenv.envs.items);
         self.setEnvRef(lenvref, renvref);
     }
 
@@ -1193,24 +1193,24 @@ pub const AllStore = struct {
     }
 
     pub fn toScheme(self: *const @This(), envs: *const FTVs.Envs, assocs: []ast.Association) !ast.Scheme {
-        var stvars = std.ArrayList(ast.TVarOrNum).init(self.al);
+        var stvars = std.ArrayList(ast.TVarOrNum).empty; // self.al
         var stvarIt = self.tvars.iterator();
         while (stvarIt.next()) |tv| {
-            try stvars.append(tv.*);
+            try stvars.append(self.al, tv.*);
         }
 
-        var stenvs = std.ArrayList(ast.UnionRef).init(self.al);
+        var stenvs = std.ArrayList(ast.UnionRef).empty; // self.al
         var stenvIt = self.envs.iterator();
         while (stenvIt.next()) |env| {
             if (envs.contains(env.*)) {
-                try stenvs.append(env.*);
+                try stenvs.append(self.al, env.*);
             }
         }
 
-        var stassocs = std.ArrayList(ast.Association).init(self.al);
+        var stassocs = std.ArrayList(ast.Association).empty; // self.al
         for (assocs) |ass| {
             if (self.assocs.contains(ass.uid)) {
-                try stassocs.append(ass);
+                try stassocs.append(self.al, ass);
             }
         }
 
@@ -1460,11 +1460,11 @@ pub fn mapType(self: *Self, match: anytype, ty: ast.Type) error{OutOfMemory}!ast
         .Fun => |fun| b: {
             var changed = false;
 
-            var args = std.ArrayList(ast.Type).init(self.arena);
+            var args = std.ArrayList(ast.Type).empty;
             for (fun.args) |oldTy| {
                 const newTy = try self.mapType(match, oldTy);
                 changed = changed or !newTy.eq(oldTy);
-                try args.append(newTy);
+                try args.append(self.arena, newTy);
             }
 
             const ret = try self.mapType(match, fun.ret);
@@ -1476,7 +1476,7 @@ pub fn mapType(self: *Self, match: anytype, ty: ast.Type) error{OutOfMemory}!ast
             changed = changed or env.id != fun.env.id;
 
             if (!changed) {
-                args.deinit();
+                args.deinit(self.arena);
                 break :b ty;
             }
 
@@ -1545,30 +1545,30 @@ pub fn mapMatch(self: *Self, match: anytype, mm: *const ast.Match) !*const ast.M
 fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
     var changed = false;
 
-    var tvars = std.ArrayList(ast.TypeOrNum).init(self.arena);
+    var tvars = std.ArrayList(ast.TypeOrNum).empty;
     for (mm.tvars) |oldTyOrNum| {
         switch (oldTyOrNum) {
             .Type => |oldTy| {
                 const newTy = try self.mapType(match, oldTy);
                 changed = changed or !newTy.eq(oldTy);
-                try tvars.append(.{ .Type = newTy });
+                try tvars.append(self.arena, .{ .Type = newTy });
             },
             .Num => |num| {
                 const nuNum = self.mapNum(match, num);
                 changed = changed or nuNum != null;
-                try tvars.append(.{ .Num = nuNum orelse num });
+                try tvars.append(self.arena, .{ .Num = nuNum orelse num });
             },
         }
     }
 
-    var envs = std.ArrayList(ast.UnionRef).init(self.arena);
+    var envs = std.ArrayList(ast.UnionRef).empty;
     for (mm.envVars) |oldEnv| {
         const nuEnv = try self.mapUnion(match, oldEnv);
         changed = changed or oldEnv.id != nuEnv.id;
-        try envs.append(nuEnv);
+        try envs.append(self.arena, nuEnv);
     }
 
-    var assocs = std.ArrayList(*?ast.Match.AssocRef).init(self.arena);
+    var assocs = std.ArrayList(*?ast.Match.AssocRef).empty;
     for (mm.assocs) |moldAssoc| {
         if (moldAssoc.*) |oldAssoc| {
             switch (oldAssoc) {
@@ -1579,11 +1579,11 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
                     //     c.print(.{ id, " :: ", match, "\n" });
                     // }
                     if (match.tryGetFunctionOrIDByID(id)) |ref| {
-                        try assocs.append(ref);
+                        try assocs.append(self.arena, ref);
                         changed = true;
                         continue;
                     } else {
-                        try assocs.append(moldAssoc);
+                        try assocs.append(self.arena, moldAssoc);
                         continue;
                     }
                 },
@@ -1592,11 +1592,11 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
                         const ar = try self.arena.create(?ast.Match.AssocRef);
                         ar.* = ast.Match.AssocRef{ .InstFun = ifun };
                         ar.*.?.InstFun.m = nuMatch;
-                        try assocs.append(ar);
+                        try assocs.append(self.arena, ar);
 
                         changed = true;
                     } else {
-                        try assocs.append(moldAssoc);
+                        try assocs.append(self.arena, moldAssoc);
                     }
                     continue;
                 },
@@ -1605,7 +1605,7 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
             // NOTE: this was a way to catch match errors! not needed now ig?
             unreachable;
         }
-        try assocs.append(moldAssoc);
+        try assocs.append(self.arena, moldAssoc);
     }
 
     std.debug.assert(tvars.items.len == mm.tvars.len);
@@ -1613,9 +1613,9 @@ fn mapMatch_(self: *Self, match: anytype, mm: *const ast.Match) !?*ast.Match {
     std.debug.assert(assocs.items.len == mm.assocs.len);
 
     if (!changed) {
-        tvars.deinit();
-        envs.deinit();
-        assocs.deinit();
+        tvars.deinit(self.arena);
+        envs.deinit(self.arena);
+        assocs.deinit(self.arena);
         return null;
     }
 
@@ -1645,7 +1645,7 @@ fn mapUnion(self: *Self, match: anytype, envref: ast.UnionRef) error{OutOfMemory
         var nueu = try Union.mappedUnion(self, envAndBase.env);
         for (envAndBase.env.envs.items) |env| {
             const menvMatch = try self.mapMatch_(match, env.match);
-            try nueu.envs.append(if (menvMatch) |envMatch| b: {
+            try nueu.envs.append(self.arena, if (menvMatch) |envMatch| b: {
                 changed = true;
                 break :b .{
                     .env = env.env,

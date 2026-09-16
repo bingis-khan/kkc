@@ -20,7 +20,7 @@ pub const DataOrClass = union(enum) {
     Class: *ast.Class,
     Synonym: *ast.TypeSynonym,
 };
-pub const DataInstance = std.AutoArrayHashMap(*const ast.Data, *ast.Instance);
+pub const DataInstance = std.array_hash_map.Auto(*const ast.Data, *ast.Instance);
 pub const ClassInstance = std.AutoHashMap(*ast.Class, DataInstance);
 
 pub const Exports = struct {
@@ -58,7 +58,7 @@ pub const Exports = struct {
         };
     }
 
-    pub fn mergeWith(self: *@This(), other: *const @This()) !void {
+    pub fn mergeWith(self: *@This(), other: *const @This(), al: std.mem.Allocator) !void {
         try common.addToHash(&self.vars, &other.vars);
         try common.addToHash(&self.cons, &other.cons);
         try common.addToHash(&self.types, &other.types);
@@ -69,13 +69,13 @@ pub const Exports = struct {
             while (iit.next()) |inst| {
                 const getOrPutResult = try self.instances.getOrPut(class);
                 if (!getOrPutResult.found_existing) {
-                    getOrPutResult.value_ptr.* = DataInstance.init(self.instances.allocator);
+                    getOrPutResult.value_ptr.* = .empty;
                 }
 
                 const dataInsts = getOrPutResult.value_ptr;
 
                 const data = inst.key_ptr.*;
-                try dataInsts.put(data, inst.value_ptr.*);
+                try dataInsts.put(al, data, inst.value_ptr.*);
             }
         }
     }
@@ -132,7 +132,7 @@ pub const BasePath = struct {
     };
 }; // hack for loading from STDs
 
-ast: ast,
+AST: ast,
 exports: Exports,
 calls: []ast.Function.Use,
 
@@ -152,12 +152,12 @@ pub fn lookupData(self: *const Self, dataName: Str) ?DataOrClass {
 pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
 
     // types
-    var enums: [Prelude.NumPredefinedTypes]*const ast.Data = .{undefined} ** Prelude.NumPredefinedTypes;
+    var enums: [Prelude.NumPredefinedTypes]*const ast.Data = @splat(undefined);
     var copy = Prelude.PremadeTypeName;
     var it = copy.iterator();
     while (it.next()) |kv| {
         if (self.lookupData(kv.value.*)) |dc| {
-            const dataId: usize = @intCast(@intFromEnum(kv.key));
+            const dataId: usize = @intCast(@backingInt(kv.key));
             switch (dc) {
                 .Data => |d| enums[dataId] = d,
                 .Class => return error.PreludeError,
@@ -183,13 +183,13 @@ pub fn mkPrelude(self: *const Self, typeContext: *TypeContext) !Prelude {
     }
 
     // classes
-    var classEnums: [Prelude.NumPredefinedClasses]*ast.Class = .{undefined} ** Prelude.NumPredefinedClasses;
+    var classEnums: [Prelude.NumPredefinedClasses]*ast.Class = @splat(undefined);
     var classNames = Prelude.PremadeClassName;
     var cit = classNames.iterator();
     while (cit.next()) |kv| {
         if (self.lookupData(kv.value.*)) |dc| {
             switch (dc) {
-                .Class => |c| classEnums[@intCast(@intFromEnum(kv.key))] = c,
+                .Class => |c| classEnums[@intCast(@backingInt(kv.key))] = c,
                 .Data => return error.PreludeError,
                 .Synonym => return error.PreludeError,
             }

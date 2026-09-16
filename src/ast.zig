@@ -155,9 +155,9 @@ pub const Ctx = struct {
 
     pub fn print(self: Self, args: anytype) void {
         switch (@typeInfo(@TypeOf(args))) {
-            .Struct => {
-                const fields = @typeInfo(@TypeOf(args)).Struct.fields;
-                inline for (fields) |field| {
+            .@"struct" => {
+                const strukt = @typeInfo(@TypeOf(args)).@"struct";
+                inline for (strukt.field_names, strukt.field_types) |fieldName, fieldType| {
                     // switch (@typeInfo(@TypeOf(arg))) {
                     //     .Pointer => |ptrinfo| {
                     //         switch (ptrinfo.size) {
@@ -170,8 +170,8 @@ pub const Ctx = struct {
                     //     else => arg.print(self),
                     // }
                     // dumbest thing. const strings are a pointer to ONE(!), which means I can't call print on pointers if I proceed in this direction.
-                    const arg = @field(args, field.name);
-                    self.printArg(arg, field.type);
+                    const arg = @field(args, fieldName);
+                    self.printArg(arg, fieldType);
                 }
             },
 
@@ -187,7 +187,7 @@ pub const Ctx = struct {
             arg.print(self);
         } else {
             switch (@typeInfo(@TypeOf(arg))) {
-                .Int, .Float, .ComptimeInt, .ComptimeFloat => self.sp("{}", .{arg}),
+                .int, .float, .comptime_int, .comptime_float => self.sp("{}", .{arg}),
                 else => self.s(@as(Str, arg)), // IF THIS CAST FAILS, IT MEANS YOU MUST ADD `pub` TO YOUR `fn print()`
             }
         }
@@ -321,7 +321,7 @@ pub const Function = struct {
 
         pub fn empty(typeContext: *const TypeContext, al: std.mem.Allocator) @This() {
             return .{
-                .uses = std.ArrayList(Use).init(al),
+                .uses = std.ArrayList(Use).empty, // al
                 .alreadyExpanded = false,
                 .alreadyGenerated = false,
                 .matches = MonoMatches.initContext(al, .{ .typeContext = typeContext }),
@@ -466,11 +466,7 @@ pub const Env = struct {
     pub fn empty(id: Unique) Env {
         return .{
             .id = id,
-            .insts = std.ArrayList(EnvVar){
-                .allocator = undefined,
-                .capacity = 0,
-                .items = &.{},
-            },
+            .insts = .empty,
             .level = 0,
             .outer = null,
             .monoInsts = Mono{
@@ -1082,9 +1078,9 @@ pub const Expr = struct {
             .ConstSize => |sz| c.sp("#{}", .{sz}),
             .Float => |f| c.sp("{}", .{f}),
             .Str => |s| {
-                std.debug.lockStdErr();
-                defer std.debug.unlockStdErr();
-                std.zig.stringEscape(s, "'", .{}, std.io.getStdErr().writer()) catch unreachable;
+                var stderr = std.debug.lockStderr(&.{});
+                defer std.debug.unlockStderr();
+                std.zig.stringEscape(s, &stderr.file_writer.interface) catch unreachable;
             },
             .Intrinsic => |intr| {
                 std.debug.print("{}", .{intr.intr.ty});
@@ -1575,12 +1571,12 @@ pub fn TypeF(comptime a: ?type) type {
         };
 
         Con: TypeApplication,
-        Fun: Fun,
+        Fun: FunT,
         TVar: TVar,
         TyVar: TyVar,
         Anon: []Field,
 
-        pub const Fun = struct {
+        pub const FunT = struct {
             args: []Rec,
             ret: Rec,
             env: UnionRef,
@@ -1588,7 +1584,7 @@ pub fn TypeF(comptime a: ?type) type {
             pub const Comparator = struct {
                 typeContext: *const TypeContext,
 
-                pub fn eql(ctx: @This(), l: Fun, r: Fun) bool {
+                pub fn eql(ctx: @This(), l: FunT, r: FunT) bool {
                     if (!l.ret.tyEq(r.ret, ctx.typeContext)) return false;
                     for (l.args, r.args) |ll, rr| {
                         if (!ll.tyEq(rr, ctx.typeContext)) return false;
@@ -1598,7 +1594,7 @@ pub fn TypeF(comptime a: ?type) type {
                     return true;
                 }
 
-                pub fn hash(ctx: @This(), k: Fun) u64 {
+                pub fn hash(ctx: @This(), k: FunT) u64 {
                     _ = ctx;
                     _ = k;
                     // TEMP, because we want to test equality.
@@ -1976,23 +1972,23 @@ pub const Match = struct {
     pub fn joinScheme(self: *const @This(), scheme: *const Scheme, tc: *TypeContext, al: std.mem.Allocator) !*const @This() {
         const s = try Scheme.joinScheme(&self.scheme, scheme, al);
 
-        var tvars = std.ArrayList(TypeOrNum).init(al);
-        try tvars.appendSlice(self.tvars);
+        var tvars = std.ArrayList(TypeOrNum).empty; // al
+        try tvars.appendSlice(al, self.tvars);
         for (scheme.tvars) |tom| {
             switch (tom) {
                 .TVar => |tv| {
-                    try tvars.append(.{ .Type = try tc.newType(.{ .TVar = tv }) });
+                    try tvars.append(al, .{ .Type = try tc.newType(.{ .TVar = tv }) });
                 },
                 .TNum => |tnum| {
-                    try tvars.append(.{ .Num = try tc.newNum(.{ .TNum = tnum }) });
+                    try tvars.append(al, .{ .Num = try tc.newNum(.{ .TNum = tnum }) });
                 },
             }
         }
 
-        var envVars = std.ArrayList(UnionRef).init(al);
-        try envVars.appendSlice(self.envVars);
+        var envVars = std.ArrayList(UnionRef).empty; // al
+        try envVars.appendSlice(al, self.envVars);
         for (scheme.envVars) |ev| {
-            try envVars.append(ev);
+            try envVars.append(al, ev);
         }
 
         var assocsStuff = try al.alloc(?AssocRef, scheme.associations.len);
@@ -2020,21 +2016,21 @@ pub const Match = struct {
 
     // "Blank" means that we initialize "default values" for match, so that they could be mapped in case of scheme instantiation.
     pub fn blankMatch(scheme: *const Scheme, tc: *TypeContext, al: std.mem.Allocator) !*const @This() {
-        var tvars = std.ArrayList(TypeOrNum).init(al);
+        var tvars = std.ArrayList(TypeOrNum).empty; // al
         for (scheme.tvars) |tom| {
             switch (tom) {
                 .TVar => |tv| {
-                    try tvars.append(.{ .Type = try tc.newType(.{ .TVar = tv }) });
+                    try tvars.append(al, .{ .Type = try tc.newType(.{ .TVar = tv }) });
                 },
                 .TNum => |tnum| {
-                    try tvars.append(.{ .Num = try tc.newNum(.{ .TNum = tnum }) });
+                    try tvars.append(al, .{ .Num = try tc.newNum(.{ .TNum = tnum }) });
                 },
             }
         }
 
-        var envVars = std.ArrayList(UnionRef).init(al);
+        var envVars = std.ArrayList(UnionRef).empty; // al
         for (scheme.envVars) |ev| {
-            try envVars.append(ev);
+            try envVars.append(al, ev);
         }
 
         var assocsStuff = try al.alloc(?AssocRef, scheme.associations.len);

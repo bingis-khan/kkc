@@ -21,10 +21,10 @@ exeName: ?Str = null,
 
 pub const Arg = [*:0]const u8;
 
-pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
+pub fn parse(args: std.process.Args.Iterator, al: std.mem.Allocator) !@This() {
     var opts = @This(){ .filename = undefined };
     var filename: ?[:0]const u8 = null;
-    var progArgs = std.ArrayList(Arg).init(al);
+    var progArgs = std.ArrayList(Arg).empty;
     var argIt = args;
     _ = argIt.skip(); // skip filename
     while (argIt.next()) |arg| {
@@ -49,7 +49,7 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
             const option = std.meta.stringToEnum(ProgramOption, arg[2..]) orelse {
                 // if option does not exist, pass it to the proogram
                 // TODO: add trailing '/' if not present
-                try progArgs.append(try al.dupeZ(u8, arg)); // NOTE: copy just in case, I'm not sure if its needed tho.
+                try progArgs.append(al, try al.dupeSentinel(u8, arg, 0)); // NOTE: copy just in case, I'm not sure if its needed tho.
                 continue;
             };
 
@@ -80,7 +80,7 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
             const option = std.meta.stringToEnum(ShortOption, arg[1..]) orelse {
                 // if option does not exist, pass it to the proogram
                 // TODO: add trailing '/' if not present
-                try progArgs.append(try al.dupeZ(u8, arg)); // NOTE: copy just in case, I'm not sure if its needed tho.
+                try progArgs.append(al, try al.dupeSentinel(u8, arg, 0)); // NOTE: copy just in case, I'm not sure if its needed tho.
                 continue;
             };
 
@@ -91,7 +91,7 @@ pub fn parse(args: std.process.ArgIterator, al: std.mem.Allocator) !@This() {
             }
         } else {
             // we also include the program name for argc/argv C compat.
-            try progArgs.append(arg);
+            try progArgs.append(al, arg);
 
             if (filename == null) {
                 filename = arg;
