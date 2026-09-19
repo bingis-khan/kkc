@@ -21,3 +21,17 @@ inst Ord Timespec
 			else
 				return EQ
 
+
+
+DIRIter
+	og Ptr Cnile.DIR
+
+inst Iter DIRIter
+	next (self Ptr _) -> Maybe (Ptr Cnile.Dirent)
+		return Cnile.readdir(self&.og) Mem.castptr-ptr()
+
+inst IntoIter DIRIter
+	into-iter (self _): self
+
+
+fn consooming-c-dir-iter(dir Ptr Cnile.DIR) -> DIRIter: { og: dir }

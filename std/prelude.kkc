@@ -64,6 +64,7 @@ Ptr a: a
 # if/when we remove it from there, we will delegate it to the Cnile module.
 #[ctype 'const char*']
 ConstStr
+CStr = ConstStr
 
 # define it here for use in StrView.
 # (BUT BEFORE IT WAS PRETTY COOL WE DIDN'T DEPEND ON Slice necessarily bruh, BUT NOW WE'VE MADE IT PART OF PRELUDE)

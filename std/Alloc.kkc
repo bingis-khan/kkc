@@ -47,7 +47,7 @@ fn default(al Allocator, count Size, x a) -> Slice a
 	s Slice.map(fn _: x)
 	return s
 
-fn clone(s Slice a, al Allocator) -> Slice a
+fn clone-slice(s Slice a, al Allocator) -> Slice a
 	nus = al allocate(s.count)
 	for (sx, og) in nus Slice.addresses() zip(s)
 		sx <&= og

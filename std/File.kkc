@@ -1,15 +1,16 @@
 use Cnile
 use Mem
 use Alloc
-	allocate
+	allocate, Allocator
 use Slice (Slice)
 use Str
 	chars
+	Str
 use StrView
 use Error
 	or-fail, unreachable, panic
 use Iter
-	next
+	next, map, filter, map-maybe
 
 # TODO: make filename a general string
 # NOTE: silently allocate + 1 for a null terminator.
@@ -111,3 +112,88 @@ fn try-write-bytes (filename, contents)
 fn write-bytes (filename, contents)
 	if not try-write-bytes(filename, contents)
 		panic('could not write to file \(filename)')
+
+
+# Dirs..? Or should I make a "filesystem" module? like FS? or just keep it file?
+
+# alternate interface:
+# load dir contents by default (or make it lazy) => simpler iteration. access to both to file info. but how do we open dirs without a filename?
+# what about recursion?
+# store allocator inside it for this.
+# close dir also deallocates the contents.
+# (simpler, but too abstract? i guess lazy load contents? nice, but lazy loading might fail when iterating? so just open all of it anyway?)
+
+DirType
+	File
+	Directory
+	# moar?
+
+inst Eq DirType
+	eq (l _, r _) -> Bool: (case (l, r))
+		(File, File): True
+		(Directory, Directory): True
+		_: False
+
+DirEntry
+	name StrView
+	type Maybe DirType  # dirent may provide "unknown" - this is it
+
+Dir
+	handle Ptr Cnile.DIR
+	# parent: Str
+
+
+fn open-dir-os(s CStr) -> Maybe Dir
+	dir-ptr = Cnile.opendir(s)
+	if dir-ptr Mem.is-ptr-null()
+		return None
+	return Just({ handle: dir-ptr })
+	
+fn open-dir(s Str, al Allocator) -> Maybe Dir
+	cstr = s Str.mk-cstr(al)
+	dir = open-dir-os(cstr)
+	cstr Str.free-cstr(al)
+	return dir
+	
+fn close-dir(dir Dir)
+	Cnile.closedir(dir.handle)
+
+
+DirEntries = Slice DirEntry
+
+fn dir-entries(dir Dir, al Allocator) -> DirEntries:
+	CnileInst.consooming-c-dir-iter(dir.handle)
+	map-maybe(fn(dirent))
+		cstr-name = @cast(&dirent&.d-name) as ConstStr
+		if cstr-name == '.' or cstr-name == '..'
+			return None
+	
+		name = cstr-name StrView.from-str(al)
+		type = (case dirent&.d-type)
+			4: Just(Directory)
+			8: Just(File)
+			_: None  # everything else consider as file for now.
+		return Just({ name, type })
+	List.to-list(al)
+	List.to-slice()
+
+fn free-dir-entries(dir-entries DirEntries, al Allocator)
+	for entry in dir-entries
+		entry.name StrView.free(al)
+	al Alloc.free(dir-entries)
+
+
+fn list-dir(dirname Str, al Allocator) -> Maybe DirEntries
+	case open-dir(dirname, al)
+		None
+			return None
+		Just(dir)
+			entries = dir dir-entries(al)
+			close-dir(dir)
+			return Just(entries)
+
+
+# when can cwd fail?
+fn cwd() -> Dir:
+	open-dir-os('.') or-fail('cwd should not fail, but did?')
+

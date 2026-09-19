@@ -1,0 +1,33 @@
+use Alloc (Allocator)
+
+
+# Creates a list based on a non-resizable buffer.
+# (rename to SliceList?)
+BufList a
+	slice Slice a
+	capacity Size
+
+# slice.count contains amount of elements, and capacity contains max Slice capacity.
+# kinda funny and switched up. that's how Zig does it and it makes buflist.slice safe.
+
+fn mk (og Slice a) -> BufList a:
+	{ slice: { ptr: og.ptr, count: 0 }, capacity: og.count }
+
+fn free (self Ptr (BufList a), al Allocator)
+	al Alloc.free(self&.slice)
+
+fn slice (self Ptr (BufList a)): self&.slice
+
+fn add (self Ptr (BufList a), elem a) -> Ptr (BufList a)
+	if self&.slice.count >= self&.capacity
+		Error.panic('(BufList.add) list full (\(self&.capacity))')
+	
+	self <&.slice.count= self&.slice.count + 1
+	self&.slice Slice.set(self&.slice.count - 1, elem)
+	return self
+
+fn add-all (self Ptr (BufList a), elems) -> Ptr (BufList a)
+	for elem in elems
+		self add(elem)
+	return self
+

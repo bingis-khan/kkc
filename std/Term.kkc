@@ -3,7 +3,7 @@ export Prim.( print, println ), *
 use Str (Str(*))
 use Mem (cast)
 use Math (rshift)
-use Iter (for-each)
+use Iter (for-each, map, sum)
 use Prim (print, println)
 
 
@@ -30,6 +30,59 @@ fn beep()
 # C's wcwidth.
 Cnile.setlocale(Cnile.lc-ctype(), '')  # <- set this for wcwidth to work properly wtf (GNUfail)
 fn wcwidth (c Char): c Char.to-c-wchar() Cnile.wcwidth()
+
+# fixed wcwidth as to how it's actually rendered
+fn rendered-wcwidth (c Char):
+	Math.max(wcwidth(c), 1)
+
+# this function should say how many terminal cells will be taken by the string
+# (didn't i already implement it somewhere?)
+fn rendered-str-width(s Str): s chars() map(rendered-wcwidth) sum()
+
+
+fn trim-strview-to-wcwidth (s StrView, width-to-trim-to I32) -> StrView
+	i = 0
+	wcsum = 0
+	for wcw in s map(rendered-wcwidth)
+		wcsum <= wcsum + wcw
+		if wcsum > width-to-trim-to
+			break
+		
+		i <= i + 1
+	return s StrView.substr(0, i)
+
+
+WCWidthTrimmer it
+	s it
+	limit I32
+	wcw-sum I32
+
+inst IntoIter WCWidthTrimmer
+	into-iter (self _): self
+
+inst Iter WCWidthTrimmer
+	next (self Ptr _) -> Maybe Char
+		# early quittin'
+		if self&.wcw-sum > self&.limit
+			return None
+		
+		case next(&self&.s)
+			None
+				return None
+			Just(c)
+				wcw = rendered-wcwidth(c)
+				self <&.wcw-sum = self&.wcw-sum + wcw  # still add it so that the next time we can quit early.
+				if self&.wcw-sum > self&.limit
+					return None
+				else
+					return Just(c)
+
+inst Str WCWidthTrimmer
+	chars (self): self into-iter()
+	print-str (self): self for-each(print-str)
+
+fn trim-to-wcwidth(s, limit I32): WCWidthTrimmer { s: s chars(), wcw-sum: 0, limit } 
+
 
 
 ## color term stuff.

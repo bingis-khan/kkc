@@ -35,6 +35,7 @@ fn count(sb Ptr (StrBuilder alloc)): sb&.chars.count
 fn num-bytes(sb Ptr (StrBuilder alloc)): sb&.chars.count
 
 
+# TODO(utf-8)
 fn pop (sb Ptr (StrBuilder alloc)) <= Allocator alloc: List.pop(&sb&.chars)
 
 fn trim-bytes (sb Ptr (StrBuilder Allocator), new-count Size): List.trim(&sb&.chars, new-count)
@@ -83,10 +84,10 @@ fn mk-dyn-str(s, al)
 	# hide nullchar
 	return StrView { contents: Slice { ptr: dynstr.contents.ptr, count: dynstr.contents.count - 1 } }
 
-fn mk-const-str(s, al):
-	s mk-dyn-str(al).contents.ptr Mem.cast() as ConstStr
 
 
 # in reality, shouldn't be here
+fn mk-const-str(s, al):
+	s mk-dyn-str(al).contents.ptr Mem.cast() as ConstStr
 fn free-const-str (s ConstStr, al Allocator)
 	al Alloc.free(Slice{ ptr: @cast(s), count: 0 })

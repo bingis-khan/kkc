@@ -1,6 +1,0 @@
-Tree
-	Cons (Ptr Tree2)
-	Nil
-
-Tree2
-	One Tree

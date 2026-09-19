@@ -29,6 +29,8 @@ fn set-ptr(x Ptr a, e a)
 fn uninit-buf() -> Array n a: @undefined
 
 use Cnile
+	CastPtr
+
 fn zeroed() -> a
 	x = @undefined
 	Cnile.memset(cast-ptr(&x), 0, size-of(x))
@@ -120,3 +122,11 @@ fn set-ms-byte-of-pointer (ptr Ptr a, b U8) -> Ptr a  # RETURNS INVALID PTR BTW
 	exp = 0x100000000000000 # 2^8^7
 	return @cast(s - ptr get-ms-byte-of-pointer() u8-size() + exp * u8-size(b))
 
+
+# CastPtr
+# TODO: change Ptr to CPtr OR change to Maybe (Ptr a)
+fn castptr-ptr(cptr CastPtr a) -> Maybe (Ptr a)
+	if (@cast(cptr) as Ptr Cnile.Void) is-ptr-null()
+		return None
+	return Just(@cast(cptr))
+fn ptr-castptr(ptr Ptr a) -> CastPtr a: @cast(ptr)

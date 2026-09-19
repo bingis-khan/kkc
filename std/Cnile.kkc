@@ -68,9 +68,6 @@ CPollfd
 CastPtr a
 	this-field-is-only-for-sizing-cast-the-whole-thing Ptr Void
 
-# TODO: change Ptr to CPtr OR change to Maybe (Ptr a)
-fn castptr-ptr(cptr CastPtr a) -> Ptr a: @cast(cptr)
-fn ptr-castptr(ptr Ptr a) -> CastPtr a: @cast(ptr)
 
 # C nullable pointer yah.
 #[ctype 'void*']

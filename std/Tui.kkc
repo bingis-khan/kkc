@@ -562,10 +562,6 @@ fn free-screen(screen Ptr (Screen Allocator))  # TODO: the parameter is not defi
 fn clear-screen(screen Ptr (Screen Allocator))
 	screen&.current Slice.map(fn _: default-cell())
 
-# fixed wcwidth as to how it's actually rendered
-fn rendered-wcwidth (c Char):
-	Math.max(Term.wcwidth(c), 1)
-
 RenderState
 	x U32
 	y U32
@@ -725,10 +721,10 @@ fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
 	xx = 0
 	for c in s chars()
 		screen put-char(c, x + xx, y)
-		xx <= xx + rendered-wcwidth(c)
+		xx <= xx + Term.rendered-wcwidth(c)
 
 fn draw-str-right(screen Ptr (Screen Allocator), s Str, x I32, y I32)
-	slen = s chars() map(rendered-wcwidth) sum()
+	slen = s chars() map(Term.rendered-wcwidth) sum()
 	w = screen&.tui&.width u32-i32()
 	x = w - x - slen
 	screen draw-str(s, x, y)

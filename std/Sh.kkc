@@ -16,10 +16,10 @@ use Bits (u32-and)
 
 fn older-than (l, r)
 	stat = undefined()
-	Cnile.stat(l, Cnile.ptr-castptr(&stat))
+	Cnile.stat(l, Mem.ptr-castptr(&stat))
 	lmtim = stat.mtim
 
-	Cnile.stat(r, Cnile.ptr-castptr(&stat))
+	Cnile.stat(r, Mem.ptr-castptr(&stat))
 	rmtim = stat.mtim
 
 	return lmtim cmp (rmtim) == LT
@@ -113,7 +113,7 @@ fn mkdir (path Str, al Allocator)
 			panic('mkdir() failed')
 
 		stat = undefined()
-		Cnile.stat(path, Cnile.ptr-castptr(&stat))
+		Cnile.stat(path, Mem.ptr-castptr(&stat))
 		if Bits.u32-and(stat.mode, Cnile.s-ifmt()) /= Cnile.s-ifdir()
 			panic('mkdir() failed: path exists but is not a directory')
 	path StrBuilder.free-const-str(al)
@@ -140,13 +140,13 @@ fn ls (path Str, al Allocator) -> Slice ConstStr
 
 	dirs =& List.mk(al)
 	while True
-		entry = Cnile.readdir(dir) Cnile.castptr-ptr()
-		if Mem.is-ptr-null(entry)
-			break
-
-		name = @cast(&entry&.d-name) as ConstStr
-		if Cnile.strcmp(name, '.') /= 0 and Cnile.strcmp(name, '..') /= 0
-			dirs List.add(name)
+		case Cnile.readdir(dir) Mem.castptr-ptr()
+			None
+				break
+			Just(entry)
+				name = @cast(&entry&.d-name) as ConstStr
+				if Cnile.strcmp(name, '.') /= 0 and Cnile.strcmp(name, '..') /= 0
+					dirs List.add(name)
 
 	Cnile.closedir(dir)
 	path StrBuilder.free-const-str(al)
@@ -185,22 +185,22 @@ fn ls-Ra-opt (path Str, fun (ConstStr, Maybe FileType, Bool) -> { should-dealloc
 			panic('ls-R: could not open directory "\(path)"')
 
 		while True
-			entry = Cnile.readdir(dir) Cnile.castptr-ptr()
-			if Mem.is-ptr-null(entry)
-				break
+			case Cnile.readdir(dir) Mem.castptr-ptr()
+				None
+					break
+				Just(entry)
+					name = @cast(&entry&.d-name) as ConstStr
+					if Cnile.strcmp(name, '.') /= 0 and Cnile.strcmp(name, '..') /= 0
+						filetype = d-type-to-type(entry&.d-type)
+						child = '\(path)/\(name)' StrBuilder.mk-const-str(al)
+						hidden = name[0] == '.'
+						res = fun(child, filetype, hidden)
 
-			name = @cast(&entry&.d-name) as ConstStr
-			if Cnile.strcmp(name, '.') /= 0 and Cnile.strcmp(name, '..') /= 0
-				filetype = d-type-to-type(entry&.d-type)
-				child = '\(path)/\(name)' StrBuilder.mk-const-str(al)
-				hidden = name[0] == '.'
-				res = fun(child, filetype, hidden)
+						if not res.skip and filetype == Just(Dir)
+							ls-R-into(child)
 
-				if not res.skip and filetype == Just(Dir)
-					ls-R-into(child)
-
-				if res.should-dealloc
-					child StrBuilder.free-const-str(al)
+						if res.should-dealloc
+							child StrBuilder.free-const-str(al)
 
 		Cnile.closedir(dir)
 

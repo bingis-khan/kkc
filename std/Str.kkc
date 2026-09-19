@@ -10,4 +10,6 @@ use StrView
 # NOTE: if I only need allocation, I can just put the Allocator class in the Prim module.
 
 # example. I would prefer people (me) would use StrView.from-str() in the future.
-fn allocate-str (s, al): StrView.from-str(s, al)
+fn mk-cstr (s, al): StrView.from-str(s, al).contents.ptr Mem.cast() as ConstStr
+fn free-cstr (s, al)
+	al Alloc.free(Slice{ ptr: @cast(s), count: 0 })

@@ -8,6 +8,7 @@ use StrInst as Str
 use Alloc (Allocator)
 use Error (or-fail)
 use List
+use Misc (is-just)
 
 
 ### Iter & Str in Str.kkc
@@ -17,13 +18,17 @@ fn from-const-str (s ConstStr)
 	return StrView { contents: Slice { ptr: s Mem.cast(), count: len } }
 
 # (this one also adds a nullchar!)
-fn from-str (s Str, al)
+fn from-str-0 (s Str, al)
 	l =& List.mk(al)
 	buf =& Mem.uninit-buf()
 	for c in s chars()
 		l List.add-all(c Char.as-u8-slice(buf))
 	l List.add(Char.nullchar() Char.char-u8())
-	return StrView { contents: l& List.to-slice() }
+
+	slice = l& List.to-slice()
+	return StrView { contents: { ptr: slice.ptr, count: slice.count - 1 } }
+
+fn from-str (s Str, al): s from-str-0(al)
 
 fn from-ascii-slice (sl Slice Cnile.AsciiChar): StrView { contents: sl Slice.cast-slice() }
 fn from-bytes (sl Slice U8): StrView { contents: sl }
@@ -94,6 +99,32 @@ fn drop-while (sv StrView, fun Char -> Bool) -> StrView
 		from <= from + c.num-bytes
 	
 	return sv byte-substr-from(from)
+
+fn drop-while-from-end (sv StrView, fun Char -> Bool) -> StrView
+	total = 0
+	until = 0
+	for c in sv chars()  # BAD - iterates from start. when we have a reverse iterator for StrView, rewrite this function.
+		total <= total + c.num-bytes
+		
+		if not fun(c)  # always point space AFTER last char
+			until <= total
+	
+	return sv byte-substr(0, until)
+
+
+# trim whitespace
+fn trim(sv StrView): sv
+	drop-while(Char.is-whitespace)
+	drop-while-from-end(Char.is-whitespace)
+	
+
+
+# only for StrViews, Str instance should come soon.
+# also, byte comparison should work here :)
+fn find (haystack StrView, needle StrView): # -> byte offset
+	haystack.contents Slice.find-slice(needle.contents)
+fn contains (haystack StrView, needle StrView):
+	haystack find(needle) is-just()
 
 
 #### Instances
