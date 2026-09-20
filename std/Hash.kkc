@@ -38,15 +38,17 @@ fn bucket-to-maybe (b Bucket k v) -> Maybe (k, v)
 fn entries (self Ptr (Hash al k v)) -> Iter.MapMaybe (Slice.SliceIter (Bucket k v)) (Bucket k v) (k, v):
 	self&.buckets map-maybe(bucket-to-maybe)
 
-fn insert-no-check (self Ptr (Hash Allocator k v), k k, v v) <= Eq k, Hashable k
+fn insert-no-check (self Ptr (Hash Allocator k v), k k, v v) -> Maybe (k, v) <= Eq k, Hashable k
 	h = k hash()
 	i = h mod (self&.buckets.count)
 	first-free = None
+	old-entry = None
 	while True
 		case self&.buckets Slice.get(i)
-			Taken ((found-k, _))
+			Taken ((found-k, found-v))
 				if found-k == k
 					first-free <= Just(i)
+					old-entry <= Just((found-k, found-v))
 					break
 				
 			Tombstone
@@ -62,6 +64,7 @@ fn insert-no-check (self Ptr (Hash Allocator k v), k k, v v) <= Eq k, Hashable k
 	insert-i = first-free or-fail('(insert-no-check): no free slot?')
 	self&.buckets Slice.set(insert-i, Taken((k, v)))
 	self <&.entries= self&.entries + 1
+	return old-entry
 
 fn resize-if-needed (self Ptr (Hash Allocator k v)) <= Eq k, Hashable k
 	load-factor = 100 * (self&.entries into-uint() + 1) / (self&.buckets.count + 1)
@@ -120,7 +123,7 @@ fn get-bucket-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr (Bucket k v)) <= E
 
 fn insert (self Ptr (Hash Allocator k v), k k, v v) <= Eq k, Hashable k
 	self resize-if-needed()
-	self insert-no-check(k, v)
+	_ = self insert-no-check(k, v)
 
 fn lookup-ptr (self Ptr (Hash al k v), k k) -> Maybe (Ptr v) <= Eq k, Hashable k
 	case self get-bucket-ptr(k)
@@ -151,6 +154,11 @@ fn remove (self Ptr (Hash al k v), k k) -> () <= Eq k, Hashable k
 			panic('(Hash.remove) Element not in Hash.')
 
 
+fn insert-and-get-old-value (self Ptr (Hash Allocator k v), k k, v v) -> Maybe (k, v) <= Eq k, Hashable k
+	self resize-if-needed()
+	return self insert-no-check(k, v)
+
+
 inst Str Hash
 	print-str (self _): (&self) entries() Str.print-as-list()
 	# currently Str.list-chars is not working in this context...
@@ -161,3 +169,6 @@ inst Str Hash
 
 inst Indexable Hash
 	elem-get (self, k): get(&self, k)
+
+inst IntoIter Hash
+	into-iter (self): entries(&self)

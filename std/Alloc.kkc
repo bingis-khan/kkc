@@ -39,7 +39,21 @@ inst Allocator CAllocator
 		return Slice { ptr: ptr, count: count }
 
 	free (CAllocator, slice Slice a) -> Unit
+		if slice.count == 0
+			return
 		Cnile.free(slice.ptr cast-ptr())
+
+
+fn allocate-one(al Allocator) -> Ptr a
+	return al allocate(1).ptr
+
+fn allocate-value(al Allocator, a a) -> Ptr a
+	mem = al allocate-one()
+	mem <&= a
+	return mem
+
+fn free-one(al Allocator, ptr Ptr a)
+	al free({ ptr, count: 1 })
 
 
 fn default(al Allocator, count Size, x a) -> Slice a

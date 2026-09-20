@@ -51,6 +51,10 @@ fn if-just (x Maybe a, fun a -> ()) -> ()
 		None
 			pass
 
+fn if-just-and (x Maybe a, cond Bool, fun a -> ()) -> ()
+	if cond
+		x if-just(fun)
+
 
 # I should add a Deallocatable/Freeable class to this and then I don't need to provide a deallocatable function!
 fn with (res a, free-fun a -> Unit, fun a -> b) -> b

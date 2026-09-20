@@ -61,7 +61,9 @@ fn mk (al alloc) -> List alloc a
 
 fn free (list Ptr (List alloc a)) -> Unit <= Allocator alloc
 	list&.al Alloc.free(list&.elements)
-	return
+
+fn deep-free (list Ptr (List alloc a), free-fun (alloc, a) -> ()) <= Allocator alloc
+	list&.al Alloc.deep-free(list&.elements, free-fun)
 
 
 fn size (l Ptr (List al a)): l&.count
@@ -152,7 +154,6 @@ fn remove-range (list Ptr (List alloc a), from Idx, to-excl Idx) -> Unit <= Allo
 		list&.al Alloc.free(list&.elements)
 		list <&.elements= new-slice
 
-	return
 
 fn remove (list Ptr (List alloc a), i Idx) -> Unit <= Allocator alloc
 	list remove-range(i, i + 1)

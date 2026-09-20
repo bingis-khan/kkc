@@ -29,7 +29,7 @@ export
 	Term.( println )
 
 	Hash.( Hash )
-	Misc.( id, fst, snd, and-maybe, fmap-maybe, is-just, is-none, if-just, with, flip )
+	Misc.( id, fst, snd, and-maybe, fmap-maybe, is-just, is-none, if-just, if-just-and, with, flip )
 	Math.( maximum, minimum )
 
 	# for build.kkc-type stuff

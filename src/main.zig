@@ -171,7 +171,7 @@ pub fn compileC(aa: std.mem.Allocator, cbackend: *const C, outName: Str, mdir: ?
     try cbackend.writeTo(&writer.interface);
 
     var copts = std.ArrayList([]const u8).empty; // aa
-    try copts.appendSlice(aa, &.{ "cc", c_filename, "-o", outname });
+    try copts.appendSlice(aa, &.{ "cc", c_filename, "-o", outname, "-g" });
 
     var prog_c_opts = cbackend.coptions.iterator();
     while (prog_c_opts.next()) |copt| {

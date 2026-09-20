@@ -1,3 +1,4 @@
+use Iter (map, reduce)
 
 class Hashable
 	hash (self _) -> Size
@@ -21,3 +22,6 @@ inst Hashable Char
 	hash (c): c
 		Char.char-u8()
 		Mem.u8-size()
+
+inst Hashable StrView
+	hash (sv): sv map(hash) reduce(0x67, fn (l, r): l * r)
