@@ -37,7 +37,7 @@ fn rendered-wcwidth (c Char):
 
 # this function should say how many terminal cells will be taken by the string
 # (didn't i already implement it somewhere?)
-fn rendered-str-width(s Str): s chars() map(rendered-wcwidth) sum()
+fn rendered-str-wcwidth (s Str): s chars() map(rendered-wcwidth) sum()
 
 
 fn trim-strview-to-wcwidth (s StrView, width-to-trim-to I32) -> StrView
@@ -50,6 +50,9 @@ fn trim-strview-to-wcwidth (s StrView, width-to-trim-to I32) -> StrView
 		
 		i <= i + 1
 	return s StrView.substr(0, i)
+
+fn trim-strview-end-to-wcwidth (s StrView, width-to-trim-to I32) -> StrView
+	return Error.todo()
 
 
 WCWidthTrimmer it

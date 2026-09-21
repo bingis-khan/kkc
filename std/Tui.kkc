@@ -109,6 +109,7 @@ Tui
 
 	should-redraw Bool  # NOTE: put it either here or in Screen. NOTE2: actually, screen already had it bruh. - `requires-full-redraw`
 	# I'll see how I approach non-screen clearing stuff like tqdm(), which would not use the Screen part and finally decide where it belongs.
+	should-generate-resize-event Bool
 
 
 fn read-byte(timeout-ms I32) -> Maybe Cnile.AsciiChar
@@ -175,6 +176,7 @@ fn mk() -> Tui
 		# , orig-termios: og-termios
 		, palette: palette
 		, should-redraw: True  # True for first draw.
+		, should-generate-resize-event: False
 		}
 
 fn sync(tui Ptr Tui)
@@ -270,6 +272,10 @@ Key
 InputEvent
 	Key Key
 	Mouse MouseEvent
+	
+	# I "readded" the resize event cuz it actually can 
+	# impact logic like cursor placement and stuff.
+	Resize U32 U32
 
 
 fn btn-to-mouse-button (btn I64):
@@ -446,6 +452,7 @@ fn update-dimensions (tui Ptr Tui)
 		return False
 
 	tui <&.should-redraw= True
+	tui <&.should-generate-resize-event= True
 	tui-global-state <&.should-resize= False
 	dim = Term.get-dimensions()
 	w = dim fst()
@@ -458,6 +465,10 @@ fn update-dimensions (tui Ptr Tui)
 
 fn read-event (tui Ptr Tui) -> Maybe InputEvent
 	tui update-dimensions()
+	if tui&.should-generate-resize-event
+		tui <&.should-generate-resize-event= False
+		tui <&.should-redraw= True
+		return Just(Resize(tui&.width, tui&.height))
 
 	case read-key()
 		None
@@ -632,8 +643,8 @@ fn render-screen(screen Ptr (Screen Allocator))
 # calls update-dimensions() anyway.
 fn resize-screen-if-needed(screen Ptr (Screen Allocator)) -> Bool
 	tui = screen&.tui
-	updated-dimensions = tui update-dimensions()
-	if not updated-dimensions
+	tui update-dimensions()
+	if not tui&.should-redraw
 		return False
 
 	screen <&.requires-full-redraw = True
@@ -724,9 +735,15 @@ fn draw-str (screen Ptr (Screen Allocator), s Str, x I32, y I32)
 		xx <= xx + Term.rendered-wcwidth(c)
 
 fn draw-str-right(screen Ptr (Screen Allocator), s Str, x I32, y I32)
-	slen = s chars() map(Term.rendered-wcwidth) sum()
+	slen = s Term.rendered-str-wcwidth()
 	w = screen&.tui&.width u32-i32()
 	x = w - x - slen
+	screen draw-str(s, x, y)
+	
+fn draw-str-right-aligned(screen Ptr (Screen Allocator), s Str, x I32, y I32)
+	slen = s Term.rendered-str-wcwidth()
+	w = screen&.tui&.width u32-i32()
+	x = x - slen
 	screen draw-str(s, x, y)
 
 fn draw-str-center(screen Ptr (Screen Allocator), s Str, x I32, y I32)

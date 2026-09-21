@@ -2475,7 +2475,7 @@ const Stmt = struct {
                         .EnumLike => try self.p("enum"),
                         else => try self.p("struct"),
                     }
-                    try self.j(.{ app.data.name, "_", app.id });
+                    try self.j(.{ sanitize(app.data.name), "_", app.id });
                 },
             }
         } //

@@ -1,6 +1,6 @@
 use StrInst (Str(*))
 use Iter
-	IntoIter(*), for-each
+	IntoIter(*), for-each, zip, from
 use List (List)
 use Alloc (Allocator)
 use Slice
@@ -26,6 +26,14 @@ fn write (builder Ptr (StrBuilder alloc), s str) -> Unit <= Str str, Allocator a
 	s chars() for-each(fn c: builder write-char(c))
 
 
+# TODO: handle index errors (so that they are not caught in List)
+fn insert-char (builder Ptr (StrBuilder alloc), pos List.Idx, c Char) <= Allocator alloc
+	List.insert-all(&builder&.chars, pos, c Char.as-u8-slice(&@undefined))
+	
+fn insert (builder Ptr (StrBuilder alloc), pos List.Idx, s str) <= Str str, Allocator alloc
+	s chars() zip(from(Mem.size-i32(pos))) for-each(fn((c,i)): builder insert-char(Mem.i32-size(i), c))
+
+
 
 fn writeln (builder, s):
 	builder write('\(s)\n')
@@ -37,6 +45,8 @@ fn num-bytes(sb Ptr (StrBuilder alloc)): sb&.chars.count
 
 # TODO(utf-8)
 fn pop (sb Ptr (StrBuilder alloc)) <= Allocator alloc: List.pop(&sb&.chars)
+fn remove (sb Ptr (StrBuilder alloc), idx List.Idx) <= Allocator alloc
+	List.remove(&sb&.chars, idx)
 
 fn trim-bytes (sb Ptr (StrBuilder Allocator), new-count Size): List.trim(&sb&.chars, new-count)
 fn popn-bytes (sb Ptr (StrBuilder Allocator), pop-bytes Size)
