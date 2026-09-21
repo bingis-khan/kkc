@@ -109,6 +109,16 @@ fn skip-while (sc Ptr (Scanner s), condition Char -> Bool) <= Iter s, IntoIter s
 	while sc char-satisfies(condition)
 		pass
 
+# skips non-chars and puts the cursor just after the char.
+fn skip-until-after (sc Ptr (Scanner s), condition Char -> Bool) -> Bool <= Iter s, IntoIter s
+	while sc char-satisfies(fn c: not condition(c))
+		pass
+	
+	return sc char-satisfies(condition)
+
+fn skip-until-after-char (sc Ptr (Scanner s), char Char) -> Bool <= Iter s, IntoIter s:
+	sc skip-until-after(fn c: c == char)
+
 ###### U8 STUFF
 
 # actually, it does not require any specific type.
