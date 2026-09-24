@@ -217,26 +217,21 @@ fn assert(cond, msg)
 
 
 class Failable
-	or-fail (x _, errmsg s) -> item
-
-	# bad name for a class geg
-	or-else (x _, alt item) -> item
+	try-get-value (x _) -> Maybe item
 
 inst Failable Maybe
-	or-fail (x, errmsg)
-		case x
-			None
-				panic(errmsg)
-				return Mem.undefined()
-			Just(xx)
-				return xx
+	try-get-value (x _): x
 
-	or-else (self, alt)
-		case self
-			None
-				return alt
-			Just(xx)
-				return xx
+
+# NOTE: or-fail is needed in the Array module.
+# maybe just don't use or-fail there and iss gunna be good?
+fn or-fail (x, errmsg)
+	case x try-get-value()
+		None
+			panic(errmsg)
+			return Mem.undefined()
+		Just(xx)
+			return xx
 
 
 #### PrimMath ####

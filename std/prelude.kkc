@@ -94,7 +94,7 @@ StrCase c1 c2  # big hack for alternative string representations. (ex: Maybe)
 # I have the perfect opportunity to support Characters with grapheme clusters.
 # Also, scalar values (in Rust for example) need to be "compressed": https://www.mathly.fr/images/utf8encoding.png
 # (which I don't really care about.)
-Char
+Char  # TODO(07.10.26): what about making it a slice anyway?
 	ptr Ptr U8  # makes it 64 bit alignmed anyway, so whatevs.
 	num-bytes Size  # all of it is basically a slice.
 

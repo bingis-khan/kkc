@@ -223,5 +223,10 @@ fn from-iter (iter it, al alloc) -> List alloc a <= Allocator alloc, IntoIter it
 	list add-all(iter)
 	return list&
 
+fn from-one (al alloc, elem a) -> List alloc a <= Allocator alloc
+	l =& mk(al)
+	l add(elem)
+	return l&
+
 # copy list into a new one.
 fn clone (l Ptr (List al a)) -> List al a <= Allocator al: from-iter(l, l&.al)

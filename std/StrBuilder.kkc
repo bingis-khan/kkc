@@ -73,6 +73,11 @@ fn free (builder Ptr (StrBuilder alloc)) <= Allocator alloc
 	List.free(&builder&.chars)
 
 
+fn overwrite (self Ptr (StrBuilder alloc), s str) <= Allocator alloc, Str str
+	self trim-bytes(0)
+	self write(s)
+
+
 inst Str StrBuilder
 	print-str (s)
 		len = s.chars.count

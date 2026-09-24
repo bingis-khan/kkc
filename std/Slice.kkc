@@ -4,6 +4,7 @@ use Mem (offset-ptr, TypeSize, size-i32, i32-size)
 use Error (or-fail, panic, todo)
 use Iter
 	IntoIter, Iter, for-each, from, to, down-to, zip, all
+	filter, head
 use StrInst as Str
 	Str(*)
 use Misc (is-just)
@@ -261,6 +262,10 @@ fn find-last-occurence-of-slice (haystack Slice a, needle Slice a) -> Maybe Idx 
 			return Just(i i32-size())
 
 	return None
+
+fn find (haystack Slice a, pred a -> Bool) -> Maybe a: haystack
+	filter(pred)
+	head()
 
 fn contains-slice (haystack Slice a, needle Slice a) -> Bool <= Eq a: haystack find-slice(needle) is-just()
 

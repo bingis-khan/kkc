@@ -55,6 +55,10 @@ fn if-just-and (x Maybe a, cond Bool, fun a -> ()) -> ()
 	if cond
 		x if-just(fun)
 
+fn if-just-is (x Maybe a, cond a -> Bool) -> Bool: (case x)
+	Just(xx): cond(xx)
+	None: False
+
 
 # I should add a Deallocatable/Freeable class to this and then I don't need to provide a deallocatable function!
 fn with (res a, free-fun a -> Unit, fun a -> b) -> b
@@ -64,3 +68,5 @@ fn with (res a, free-fun a -> Unit, fun a -> b) -> b
 
 fn flip(fun (a, b) -> c) -> (b, a) -> c:
 	fn(l, r): fun(r, l)
+
+fn but-return(a, b): b

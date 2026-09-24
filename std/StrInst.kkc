@@ -6,6 +6,7 @@ use Iter
 	head, zip, all, for-each, drop, count, to
 	Drop, Take, TakeWhile, AppendIter
 	drop-while', drop'
+use Misc (fmap-maybe)
 use Mem (TypeSize)
 use Char (is-whitespace)
 use Math
@@ -48,6 +49,10 @@ inst Iter ConstStrIter
 		char = optr Char.scan-from-mem()
 		self <&.i= self&.i + char.num-bytes
 		return Just(char)
+
+inst Str ConstStrIter
+	chars (self _): self
+	print-str (self _): self for-each(print-str)
 
 inst Str ConstStr
 	print-str (self _) -> Unit
@@ -206,6 +211,26 @@ inst Str Maybe
 				c <= 'Just(\(x))' StrCase2()
 
 		return c chars()
+		
+inst Str Either
+	print-str (self _)
+		case self
+			Left(y)
+				print-str('Left(\(y))')
+
+			Right(x)
+				print-str('Right(\(x))')
+
+	chars (self)
+		c = @undefined
+		case self
+			Left(y)
+				c <= 'Left(\(y))' StrCase1()
+
+			Right(x)
+				c <= 'Right(\(x))' StrCase2()
+
+		return c chars()
 
 
 inst Str Tuple2
@@ -320,6 +345,7 @@ inst Str StrSepBy
 
 # should be something like 'join'?
 fn sep-by (s, sep): StrSepBy { s, sep }
+fn join (s, sep): StrSepBy { s, sep }
 
 
 ### PadZeroes
@@ -428,7 +454,7 @@ fn is-blank (s): s
 	chars()
 	all(is-whitespace)
 
-fn parse-int(s)
+fn parse-uint(s)
 	fn sequence-maybe (e, b)
 		case b
 			None
@@ -438,14 +464,22 @@ fn parse-int(s)
 					None
 						return None
 					Just(xe)
-						return Just(x * 10 + Mem.i32-i64(xe))
+						return Just(x * 10 + Mem.i32-size(xe))
 
 	cs = s chars()
 	case cs head()
 		Just(x)
-			return cs Iter.reduce(Just(0), sequence-maybe)
+			return cs Iter.reduce(Just(0), sequence-maybe) fmap-maybe(from-integral)
 		None
 			return None
+			
+fn parse-int(s) -> Maybe int <= FromIntegral int, Negation int
+	cs =& s chars()
+	if cs head() == Just('-')
+		cs drop'(1)
+		return parse-uint(cs&) fmap-maybe(fn x: -x)
+	else
+		return parse-uint(cs&)
 
 fn begins-with (s Str, beg Str) -> Bool
 	scs =& s chars()
