@@ -5,6 +5,7 @@ use Mem (cast)
 use Math (rshift)
 use Iter (for-each, map, sum)
 use Prim (print, println)
+use Cnile (AsciiChar)
 
 
 # basic stuff
@@ -24,7 +25,7 @@ use Prim (print, println)
 
 fn is-terminal(): Cnile.isatty(Cnile.stdout-fileno()) > 0
 fn beep()
-	c = 7 Mem.cast() as Char
+	c = 7 Mem.cast() as AsciiChar
 	print(c)
 
 # C's wcwidth.

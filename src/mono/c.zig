@@ -1969,7 +1969,7 @@ const Stmt = struct {
                         "(",
                         Join(.{
                             UnionInstCName,
-                            fungen.envId.?,
+                            unionInstType.?.id,
                             "*",
                         }),
                         PrependAll(", ", ty.args),
@@ -1994,7 +1994,7 @@ const Stmt = struct {
                         try stmt.j(.{
                             ", .env.",
                             EnvMemCName,
-                            nuId,
+                            fungen.envId.?,
                             " = ",
                         });
                     },
