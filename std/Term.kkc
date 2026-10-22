@@ -6,6 +6,7 @@ use Math (rshift)
 use Iter (for-each, map, sum)
 use Prim (print, println)
 use Cnile (AsciiChar)
+use Into # UInt instances
 
 
 # basic stuff
@@ -354,6 +355,14 @@ fn rgb(r, g, b): RGB { r, g, b }
 fn rgb-from-hex(n) -> RGB
 	return { r: (n rshift(16)) Mem.u32-u8(), g: n rshift(8) Math.mod(256) Mem.u32-u8(), b: n Math.mod(256) Mem.u32-u8() }
 
+fn set-rgb-intensity-to(rgb RGB, new-intensity F32) -> RGB
+	fn set-part-intensity(x U8) -> U8:
+		(x Mem.uint-f32() * new-intensity)
+		Math.f32-floor()
+		Math.clamp(0, 0xff)
+		Mem.i64-u8()
+	return RGB { r: rgb.r set-part-intensity(), g: rgb.g set-part-intensity(), b: rgb.b set-part-intensity() }
+
 fn set-fg-rgb(c RGB)
 	print('\x1b[38;2;\(c.r);\(c.g);\(c.b)m')
 
@@ -379,6 +388,15 @@ inst Eq Color
 				(Color256(lc), Color256(rc)): lc == rc
 				(ColorRGB(lc), ColorRGB(rc)): lc == rc
 				_: False
+
+
+fn set-color-intensity-to (c Color, new-intensity F32) -> Color
+	case c
+		ColorRGB(rgb)
+			return ColorRGB(rgb set-rgb-intensity-to(new-intensity))
+		_ # either todo or disallow
+			return c
+
 
 fn set-fg (c Color)
 	case c

@@ -443,7 +443,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
             const refvar = self.deconRefVar();
-            const decon = try self.deconstruction(refvar);
+            const decon = try self.deconstruction(.{ .refvar = refvar });
             const nextTok = self.peek().type;
             if (nextTok != .COMMA and nextTok != .RIGHT_PAREN) {
                 const pt = try Type.init(
@@ -779,7 +779,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             if (self.check(.EQUALS)) {
                 const pm = self.foldFromHere();
                 const expr = try self.expression();
-                const vt = try self.newVar(v, null);
+                const vt = try self.newVar(v, .{});
                 try self.typeContext.unify(vt.t, expr.t, &.{ .l = self.loc(v), .r = expr.l });
 
                 try self.finishFold(pm);
@@ -799,7 +799,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
                     .Var => |vt| vt,
                     else => bb: {
                         try self.reportError(.{ .TryingToMutateNonVar = .{} });
-                        break :bb try self.newVar(v, null);
+                        break :bb try self.newVar(v, .{});
                     },
                 };
                 try self.addToEnvIfPossible(self.env, .{
@@ -823,7 +823,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
                     .Var => |vt| vt,
                     else => bb: {
                         try self.reportError(.{ .TryingToMutateNonVar = .{} });
-                        break :bb try self.newVar(v, null);
+                        break :bb try self.newVar(v, .{});
                     },
                 };
                 try self.addToEnvIfPossible(self.env, .{
@@ -898,10 +898,11 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
         } // var or mut
         else if (self.check(.LET)) {
             const refvar = self.deconRefVar();
-            const d = try self.deconstruction(refvar);
+            const d = try self.deconstruction(.{ .refvar = refvar, .late = true });
             try self.devour(.EQUALS);
             const expr = try self.expression();
             try self.typeContext.unify(d.t, expr.t, &.{ .l = d.l, .r = expr.l });
+            try self.declareVariablesOfDeconstructionInScope(d);
             break :b .{ .Decon = .{ .d = d, .refvar = refvar, .e = expr } };
         } // deconstruction (TEMP let, i'll have to rethink deconstruction and maybe make it polymorphic enough for this?)
         else if (self.check(.UNDERSCORE)) {
@@ -968,7 +969,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             defer self.endScope();
             const refvar = self.deconRefVar();
             const decon = AST.DeconBase{
-                .d = try self.deconstruction(refvar),
+                .d = try self.deconstruction(.{ .refvar = refvar }),
                 .refvar = refvar,
             };
             try self.devour(.IN);
@@ -1024,7 +1025,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
             try self.devour(.INDENT);
             self.beginScope();
             while (!self.check(.DEDENT)) {
-                const decon = try self.deconstruction(refvar);
+                const decon = try self.deconstruction(.{ .refvar = refvar });
                 try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
                 const bod = try self.body();
                 try cases.append(self.arena, .{ .decon = decon, .body = bod.stmts.items });
@@ -1204,6 +1205,48 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
     }
 
     return null;
+}
+
+fn declareVariablesOfDeconstructionInScope(self: *Self, d: *AST.Decon) !void {
+    const f = declareVariablesOfDeconstructionInScope;
+    const def = struct {
+            fn def(this: *Self, v: AST.DeconVar, t: AST.Type) !void {
+                try this.scope.currentScope().vars.put(v.v.name, .{ .thing = .{ .Var = .{ .v = v, .t = t } } });
+            }
+        }.def;
+    return switch (d.d) {
+        .Var => |v| {
+            try def(self, v, d.t);
+        },
+        .Con => |con| {
+            for (con.decons) |dd| {
+                try f(self, dd);
+            }
+        },
+        .List => |list| {
+            for (list.l) |dd| {
+                try f(self, dd);
+            }
+
+            if (list.r) |r| {
+                if (r.spreadVar) |sv| {
+                    try def(self, sv.v, sv.t);
+                }
+
+                for (r.r) |dd| {
+                    try f(self, dd);
+                }
+            }
+        },
+        .Record => |rec| {
+            for (rec) |field| {
+                try f(self, field.decon);
+            }
+        },
+        .None => {},
+        .Num => {},
+        .Str => {},
+    };
 }
 
 // parses a type definition.
@@ -1396,7 +1439,7 @@ fn externalFun(self: *Self, nameTok: Token, annotations: []AST.Annotation) !void
     if (!self.check(.RIGHT_PAREN)) {
         while (true) {
             const pname = try self.expect(.IDENTIFIER);
-            const v = try self.newVar(pname, null); // pointless fresh.
+            const v = try self.newVar(pname, .{}); // pointless fresh.
             const t = try Type.init(self, .{ .constrain = tyconstr }).sepTyo();
             try params.append(self.arena, .{ .pn = v.v.v, .pt = t.e });
 
@@ -1944,32 +1987,33 @@ fn deconRefVar(self: *Self) AST.Var {
     return .{ .name = "dref", .uid = self.gen.vars.newUnique() };
 }
 
-fn deconstruction(self: *Self, refvar: AST.Var) !*AST.Decon {
-    return try self.deconstructionIdx(refvar, null);
+const DeconOpts = struct { refvar: AST.Var, late: bool = false };
+fn deconstruction(self: *Self, opts: DeconOpts) !*AST.Decon {
+    return try self.deconstructionIdx(opts, null);
 }
 
-fn deconstructionIdx(self: *Self, refvar: AST.Var, idx: ?u32) !*AST.Decon {
+fn deconstructionIdx(self: *Self, opts: DeconOpts, idx: ?u32) !*AST.Decon {
     const ty = try self.typeContext.fresh();
     const dpBase = try AST.Decon.Path.init(self.arena, .{ .Tip = .{
-        .v = refvar,
+        .v = opts.refvar,
         .t = ty,
         .idx = idx,
     } });
-    const decon = try deconstruction_(self, dpBase);
+    const decon = try deconstruction_(self, dpBase, opts.late);
     try self.typeContext.unify(ty, decon.t, null);
     return decon;
 }
 
-fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Decon {
+fn deconstruction_(self: *Self, dp: *const AST.Decon.Path, late: bool) ParserError!*AST.Decon {
     const decon: AST.Decon = if (self.consume(.IDENTIFIER)) |vn| b: {
-        const v = try self.newVar(vn, switch (dp.*) {
+        const v = try self.newVar(vn, .{ .deconUse = switch (dp.*) {
             .Tip => |tip| if (tip.idx == null) null else .{ .dp = dp },
             .Concat => .{ .dp = dp },
-        });
+        }, .late = late });
         break :b .{
             .t = v.t,
             .l = self.loc(vn),
-            .d = .{ .Var = v.v.v },
+            .d = .{ .Var = v.v },
         };
     } // var
         else if (self.consume(.UNDERSCORE)) |ut| b: {
@@ -2032,7 +2076,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
         } // string
         else if (self.consume(.LEFT_PAREN)) |lp| b: {
             const path = try AST.Decon.Path.concat(self.arena, dp, .None);
-            const first = try self.deconstruction_(path);
+            const first = try self.deconstruction_(path, late);
             if (self.check(.COMMA)) {
                 var tups = std.ArrayList(*AST.Decon).empty; // self.arena
                 var paths = std.ArrayList(*AST.Decon.Path).empty; // self.arena
@@ -2041,7 +2085,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
 
                 const rp = bb: while (true) {
                     const pp = try AST.Decon.Path.concat(self.arena, dp, .None);
-                    try tups.append(self.arena, try self.deconstruction_(pp));
+                    try tups.append(self.arena, try self.deconstruction_(pp, late));
                     try paths.append(self.arena, pp);
 
                     if (self.consume(.RIGHT_PAREN)) |rp| break :bb rp;
@@ -2120,7 +2164,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
                         .con = con.con,
                         .field = ds.items.len,
                         .t = con.t,
-                    } }));
+                    } }), late);
                     try ds.append(self.arena, d);
                     try tys.append(self.arena, d.t);
                     tysLoc = if (tysLoc) |l| l.between(d.l) else d.l;
@@ -2165,22 +2209,22 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
                 if (self.check(.COLON)) {
                     const decon = try self.deconstruction_(try AST.Decon.Path.concat(self.arena, dp, .{
                         .Field = .{ .rec = fieldName, .t = t },
-                    }));
+                    }), late);
                     try self.typeContext.unify(fieldTy, decon.t, null);
                     try fields.append(self.arena, .{
                         .field = fieldName,
                         .decon = decon,
                     });
                 } else {
-                    const vnt = try self.newVar(fieldTok, .{ .dp = try AST.Decon.Path.concat(self.arena, dp, .{
+                    const vnt = try self.newVar(fieldTok, .{ .deconUse = .{ .dp = try AST.Decon.Path.concat(self.arena, dp, .{
                         .Field = .{ .rec = fieldName, .t = t },
-                    }) });
+                    }) }, .late = late });
                     try self.typeContext.unify(fieldTy, vnt.t, null);
                     try fields.append(self.arena, .{
                         .field = fieldName,
                         .decon = try Common.allocOne(self.arena, AST.Decon{
                             .t = fieldTy,
-                            .d = .{ .Var = vnt.v.v },
+                            .d = .{ .Var = vnt.v },
                             .l = self.loc(fieldTok),
                         }),
                     });
@@ -2208,7 +2252,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
 
             // for now, parse an easy version of this.
             var decons = &left;
-            var spreadVar: ?AST.Var = null;
+            var spreadVar: ?AST.DeconVar = null;
             var hadSpread = false;
             var idx: u32 = 0;
             const lrefvar = self.deconRefVar();
@@ -2224,9 +2268,9 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
                         try self.devour(.DOT);
 
                         if (self.consume(.IDENTIFIER)) |svtok| {
-                            const sv = try self.newVar(svtok, null);
+                            const sv = try self.newVar(svtok, .{ .late = late });
                             try self.typeContext.unify(sv.t, spreadInnerTy, &.{ .l = self.loc(svtok) });
-                            spreadVar = sv.v.v;
+                            spreadVar = sv.v;
                         }
 
                         hadSpread = true;
@@ -2235,7 +2279,7 @@ fn deconstruction_(self: *Self, dp: *const AST.Decon.Path) ParserError!*AST.Deco
                         refvar = rrefvar.?;
                         idx = 0;
                     } else {
-                        const decon = try self.deconstructionIdx(refvar, idx);
+                        const decon = try self.deconstructionIdx(.{ .refvar = refvar, .late = late }, idx);
                         try self.typeContext.unify(decon.t, elemTy, &.{ .l = decon.l });
                         try decons.append(self.arena, decon);
                         idx += 1;
@@ -2802,7 +2846,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
             } else {
                 while (true) {
                     const refvar = self.deconRefVar();
-                    const decon = try self.deconstruction(refvar);
+                    const decon = try self.deconstruction(.{ .refvar = refvar });
                     try params.append(self.arena, .{ .d = decon, .refvar = refvar });
 
                     if (self.consume(.RIGHT_PAREN)) |rparen| {
@@ -2824,7 +2868,7 @@ fn term(self: *Self, minPrec: u32) !*AST.Expr {
         } else {
             // single param
             const refvar = self.deconRefVar();
-            const decon = try self.deconstruction(refvar);
+            const decon = try self.deconstruction(.{ .refvar = refvar });
             try params.append(self.arena, .{ .d = decon, .refvar = refvar });
             try self.devour(.COLON);
         }
@@ -3478,7 +3522,7 @@ fn caseExpr(self: *Self, prev: ParsingMode.SimpleMode, caseexpr: *AST.Expr, temp
     try self.devour(.INDENT);
     self.beginScope();
     while (!self.check(.DEDENT)) {
-        const decon = try self.deconstruction(refvar);
+        const decon = try self.deconstruction(.{ .refvar = refvar });
         try self.typeContext.unify(switchOn.t, decon.t, &.{ .l = switchOn.l, .r = decon.l });
 
         if (self.check(.COLON)) {
@@ -4662,21 +4706,23 @@ fn addAllInstances(self: *Self, exports: *const Module.Exports) !void {
 }
 
 // VARS
-fn newVar(self: *@This(), varTok: Token, deconUse: ?AST.DeconUse) !Module.VarAndType {
+fn newVar(self: *@This(), varTok: Token, opts: struct { deconUse: ?AST.DeconUse = null, late: bool = false }) !Module.VarAndType {
     const varName = varTok.literal(self.lexer.source);
     const t = try self.typeContext.fresh();
     const thisVar = AST.Var{
         .name = varName,
         .uid = self.gen.vars.newUnique(),
     };
-    try self.scope.currentScope().vars.put(varName, .{ .thing = .{ .Var = .{
-        .v = .{ .v = thisVar, .dc = deconUse },
-        .t = t,
-    } } });
-    return .{
-        .v = .{ .v = thisVar, .dc = deconUse },
+
+    const v = Module.VarAndType{
+        .v = .{ .v = thisVar, .dc = opts.deconUse },
         .t = t,
     };
+
+    if (!opts.late) {
+        try self.scope.currentScope().vars.put(varName, .{ .thing = .{ .Var = v } });
+    }
+    return v;
 }
 
 fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {

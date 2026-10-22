@@ -145,9 +145,7 @@ Dir
 
 fn open-dir-os(s CStr) -> Maybe Dir
 	dir-ptr = Cnile.opendir(s)
-	if dir-ptr Mem.is-ptr-null()
-		return None
-	return Just({ handle: dir-ptr })
+	return dir-ptr Cnile.from-c-ptr() Misc.fmap-maybe(fn dp: { handle: dp })
 	
 fn open-dir(s Str, al Allocator) -> Maybe Dir
 	cstr = s Str.mk-cstr(al)

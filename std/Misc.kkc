@@ -9,8 +9,6 @@ fn id(x): x
 # prev =& pane&.cursor own()
 fn own(x): x
 
-fn fst(Tuple2(l, _)): l
-fn snd(Tuple2(_, r)): r
 fn is-just(m Maybe a) -> Bool
 	case m
 		None
@@ -70,3 +68,9 @@ fn flip(fun (a, b) -> c) -> (b, a) -> c:
 	fn(l, r): fun(r, l)
 
 fn but-return(a, b): b
+
+
+# tuple shit
+fn fst(Tuple2(l, _)): l
+fn snd(Tuple2(_, r)): r
+

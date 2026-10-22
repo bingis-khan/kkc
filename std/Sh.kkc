@@ -9,7 +9,7 @@ use StrBuilder
 use Alloc (Allocator(*))
 use Str (Str(*), split)
 use Array  # instances
-use Misc (with)
+use Misc (with, is-none)
 use StrView (StrView)
 use Bits (u32-and)
 
@@ -134,13 +134,15 @@ fn cat(path Str, al Allocator) -> StrView: path
 
 fn ls (path Str, al Allocator) -> Slice ConstStr
 	path = path StrBuilder.mk-const-str(al)
-	dir = Cnile.opendir(path)
-	if Mem.is-ptr-null(dir)
+	mdir = Cnile.opendir(path) Cnile.from-c-ptr()
+	if mdir is-none()
 		panic('ls: could not open directory')
+	
+	let Just(dir) = mdir
 
 	dirs =& List.mk(al)
 	while True
-		case Cnile.readdir(dir) Mem.castptr-ptr()
+		case Cnile.readdir(dir) Cnile.from-c-ptr()
 			None
 				break
 			Just(entry)
@@ -180,12 +182,13 @@ fn d-type-to-type (x U8)
 
 fn ls-Ra-opt (path Str, fun (ConstStr, Maybe FileType, Bool) -> { should-dealloc Bool, skip Bool }, al Allocator)
 	fn ls-R-into (path ConstStr)
-		dir = Cnile.opendir(path)
-		if Mem.is-ptr-null(dir)
+		mdir = Cnile.opendir(path) Cnile.from-c-ptr()
+		if mdir is-none()
 			panic('ls-R: could not open directory "\(path)"')
 
+		let Just(dir) = mdir
 		while True
-			case Cnile.readdir(dir) Mem.castptr-ptr()
+			case Cnile.readdir(dir) Cnile.from-c-ptr()
 				None
 					break
 				Just(entry)

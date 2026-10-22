@@ -53,6 +53,7 @@ fn is-ptr-null(p Ptr a): @memeq(p, null-ptr())
 fn ptr-to-int(p Ptr a) -> Size: @cast(p)
 fn ptr-eq(l Ptr a, r Ptr a):
 	@memeq(l, r)
+fn ptr-address-equal(l Ptr a, r Ptr a): @memeq(l, r)
 
 
 fn from-nullable-c-str (s ConstStr)
@@ -104,6 +105,8 @@ fn int-f64 (x)
 		return size-f64(into-uint(x))
 	else
 		return size-f64(into-uint(-x))
+
+fn uint-f32 (x): x into-uint() size-f32()
 
 fn int-f32 (x)
 	if x >= 0

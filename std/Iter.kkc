@@ -45,20 +45,22 @@ fn map (iterable, fun)
 
 # MAPPPP
 MapMaybe it from to
-	MapMaybe it (from -> Maybe to)
+	it it
+	fun (from -> Maybe to)
 
 inst IntoIter MapMaybe
-	into-iter (self MapMaybe it from to) -> MapMaybe it from to
+	into-iter (self _) -> _
 		return self
 
 inst Iter MapMaybe
-	next (Ptr(MapMaybe(it, fun)))
+	next (Ptr(mmb))
+		mmb =& mmb
 		while True
-			case next(&it)
+			case next(&mmb&.it)
 				None
 					return None
 				Just(x)
-					case fun(x)
+					case mmb&.fun(x)
 						None
 							pass
 						Just(xx)
@@ -67,7 +69,7 @@ inst Iter MapMaybe
 
 fn map-maybe (iterable, fun)
 	it = into-iter(iterable)
-	return MapMaybe(it, fun)
+	return MapMaybe { it, fun }
 
 
 ##### FILTERRRRRR
@@ -278,6 +280,8 @@ fn flatten (it)
 		None
 			return FlattenIter { super: it, inner: @undefined, empty: True }
 
+
+fn flat-map(it, fun): it map(fun) flatten()
 
 # all permutations!
 fn permutations (lit, rit): lit
@@ -542,6 +546,7 @@ fn null(it)
 			return False
 
 fn one-of(x, it): it any(fn e: e == x)
+fn contains(it, x): it any(fn e: e == x)
 
 
 

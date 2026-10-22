@@ -230,3 +230,8 @@ fn from-one (al alloc, elem a) -> List alloc a <= Allocator alloc
 
 # copy list into a new one.
 fn clone (l Ptr (List al a)) -> List al a <= Allocator al: from-iter(l, l&.al)
+
+fn replace-with (l Ptr (List al a), xs) <= Allocator al
+	l trim(0)
+	l add-all(xs)
+	

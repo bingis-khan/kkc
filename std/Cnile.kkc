@@ -321,10 +321,10 @@ external
 
 	#### dirent.h ####
 	#[cstdinclude 'dirent.h']
-	opendir (path ConstStr) -> Ptr DIR  # nullable!
+	opendir (path ConstStr) -> CPtr DIR  # nullable!
 
 	#[cstdinclude 'dirent.h']
-	readdir (dir Ptr DIR) -> CastPtr Dirent  # nullable!
+	readdir (dir Ptr DIR) -> CPtr Dirent  # nullable!
 
 	#[cstdinclude 'dirent.h']
 	closedir (dir Ptr DIR) -> CInt
@@ -347,6 +347,8 @@ external
 #[coption '-lm']
 external
 	sqrt (f F64) -> F64
+	sin (f F64) -> F64
+	cos (f F64) -> F64
 
 
 

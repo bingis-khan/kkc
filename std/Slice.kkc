@@ -283,3 +283,8 @@ fn last-ptr(s Slice a) -> Ptr a
 		panic('(Slice.last-ptr) called on empty slice.')
 
 	return s get-ptr(s.count - 1)
+
+fn try-last(s Slice a) -> Maybe a
+	if s.count == 0
+		return None
+	return Just(s[s.count - 1])

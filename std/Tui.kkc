@@ -686,12 +686,16 @@ fn get-cell-ptr (screen Ptr (Screen Allocator), x I32, y I32) -> Maybe (Ptr Cell
 	i = (y * w + x) i32-size()
 	return Just(Slice.get-ptr(screen&.current, i))
 
-fn fill-default(screen Ptr (Screen Allocator))
-	# NOTE: a faster way would be to just memcpy! this is correct, but slower.
-	for y in 0 to (screen&.tui&.height u32-i32() - 1)
-		for x in 0 to (screen&.tui&.width u32-i32() - 1)
+
+fn fill-rect(screen Ptr (Screen Allocator), from-x I32, to-x I32, from-y I32, to-y I32)
+	for y in from-y to (to-y)
+		for x in from-x to (to-x)
 			cell = screen get-cell-ptr(x, y) or-fail('no cell??')
 			cell <&.bg= screen&.default-bg
+
+fn fill-default(screen Ptr (Screen Allocator))
+	# NOTE: a faster way would be to just memcpy! this is correct, but slower.
+	screen fill-rect(0, screen&.tui&.width u32-i32() - 1, 0, screen&.tui&.height u32-i32() - 1)
 
 # non-wrapping drawing thing.
 fn put-char (screen Ptr (Screen Allocator), c Char, x I32, y I32)

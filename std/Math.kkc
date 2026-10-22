@@ -37,6 +37,7 @@ fn sqrt(f F64):
 	Cnile.sqrt(f)  # geeeeeeg
 
 fn floor(f F64): @f64-i64-floor(f)
+fn f32-floor(f F32): @f64-i64-floor(@f32-f64(f))  # TODO: there should not be a separate float function bruh.
 
 fn clamp(x, mn, mx)
 	if x < mn
@@ -45,3 +46,10 @@ fn clamp(x, mn, mx)
 		return mx
 	else
 		return x
+
+
+fn minmax(l a, r a) -> (a, a) <= Ord a: 
+	if l < r:
+		(l, r)
+	else
+		(r, l)

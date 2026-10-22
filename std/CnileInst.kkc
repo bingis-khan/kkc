@@ -28,7 +28,7 @@ DIRIter
 
 inst Iter DIRIter
 	next (self Ptr _) -> Maybe (Ptr Cnile.Dirent)
-		return Cnile.readdir(self&.og) Mem.castptr-ptr()
+		return Cnile.readdir(self&.og) Cnile.from-c-ptr()
 
 inst IntoIter DIRIter
 	into-iter (self _): self

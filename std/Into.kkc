@@ -8,6 +8,10 @@ inst UInt U32
 	into-uint (self _): Mem.u32-size(self)
 	clamp-uint (self _): Mem.u32-size(self)
 
+inst UInt U8
+	into-uint (self _): Mem.u8-size(self)
+	clamp-uint (self _): Mem.u8-size(self)
+
 inst UInt I32
 	into-uint (self _)
 		if self < 0 

@@ -20,6 +20,11 @@ fn panic' (errmsg) -> a
 	Cnile.abort()
 	return Mem.undefined()
 
+fn unimplemented () -> a
+	println('unimplemented')
+	Cnile.abort()
+	return Mem.undefined()
+
 
 ### Failable
 

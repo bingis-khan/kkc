@@ -784,7 +784,7 @@ pub const Decon = struct {
             instFromString: InstFunInst,
             instEq: InstFunInst,
         },
-        Var: Var,
+        Var: DeconVar,
         Con: struct {
             con: *Con,
             decons: []*Decon,
@@ -795,7 +795,7 @@ pub const Decon = struct {
             l: []*Decon,
             lrefvar: Var,
             r: ?struct {
-                spreadVar: ?struct { v: Var, t: Type },
+                spreadVar: ?struct { v: DeconVar, t: Type },
                 r: []*Decon,
                 rrefvar: Var,
             },

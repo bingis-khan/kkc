@@ -223,7 +223,7 @@ fn genFunctionForReal(self: *Self, name: Str, params: []ast.DeconBase, ret: ast.
         for (params) |param| {
             switch (param.d.d) {
                 .Var => |v| try typarams.append(self.backend.al, .{
-                    .v = .{ .NormalVar = v },
+                    .v = .{ .NormalVar = v.v },
                     .t = try self.typeContext.mapType(m, param.d.t),
                 }),
                 else => {
@@ -828,7 +828,7 @@ pub fn genStmt(self: *Self, stmt: *ast.Stmt) GenError!void {
                     {
                         var assln = startLine(self);
                         try assln.definition(forstmt.decon.d.t, switch (forstmt.decon.d.d) {
-                            .Var => |v| v,
+                            .Var => |v| v.v,
                             else => forstmt.decon.refvar,
                         });
                         try assln.p("=");
@@ -1633,7 +1633,10 @@ const Stmt = struct {
                         try stmt.p("(double)");
                         try stmt.genExpr(intr.args[0]);
                     },
-                    .@"f64-i64-floor" => unreachable,
+                    .@"f64-i64-floor" => {
+                        try stmt.p("(int64_t)");
+                        try stmt.genExpr(intr.args[0]);
+                    },
                 }
             },
             .NamedRecord => |rec| {
@@ -2433,6 +2436,10 @@ const Stmt = struct {
             const v = @as(ast.Var, arg);
             try self.j(.{ sanitize(v.name), v.uid });
         } //
+        else if (argTy == ast.DeconVar) {
+            const dv = @as(ast.DeconVar, arg);
+            try self.j(.{ sanitize(dv.v.name), dv.v.uid });
+        } //
         else if (argTy == Sanitize) {
             const name = (@as(Sanitize, arg)).unsanitary;
 
@@ -3122,7 +3129,7 @@ fn datatype(self: *Self, tyApp: ast.TypeApplication) !TypeName {
             }
         },
         .recs => |fields| {
-            const gpr = try self.backend.typesGenerated.getOrPut(.{ .type = data, .application = tyApp.application, .outerApplication = tyApp.outerApplication });
+            const gpr = try self.backend.typesGenerated.getOrPut(tyApp);
             if (gpr.found_existing) {
                 if (!gpr.value_ptr.finished and !gpr.value_ptr.declared) {
                     const oldCW = self.backend.cur;

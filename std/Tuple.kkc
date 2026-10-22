@@ -1,0 +1,11 @@
+use Array # indexable inst
+
+# yoooo, pretty smart aint it
+inst ListLike Tuple2
+	from-listlike (arr Ptr (Array 2 a)): (arr[0], arr[1])
+
+inst ListLike Tuple3
+	from-listlike (arr Ptr (Array 3 a)): (arr[0], arr[1], arr[2])
+
+inst ListLike Tuple4
+	from-listlike (arr Ptr (Array 4 a)): (arr[0], arr[1], arr[2], arr[3])

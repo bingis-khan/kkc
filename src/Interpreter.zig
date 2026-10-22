@@ -365,7 +365,7 @@ fn tryDeconstruct(self: *Self, decon: *const ast.Decon, v: RawValueRef) !bool {
         .Var => |vn| {
             const sz = self.sizeOf(decon.t);
             const vref = Value.initLValueFromRef(v, sz);
-            try self.putRef(vn, vref);
+            try self.putRef(vn.v, vref);
             return true;
         },
         .Num => |num| {
@@ -525,7 +525,7 @@ fn tryDeconstruct(self: *Self, decon: *const ast.Decon, v: RawValueRef) !bool {
             }
 
             if (spreadInnerVal) |innerVal| {
-                try self.putRef(listDecon.r.?.spreadVar.?.v, innerVal);
+                try self.putRef(listDecon.r.?.spreadVar.?.v.v, innerVal);
             }
 
             return true;
