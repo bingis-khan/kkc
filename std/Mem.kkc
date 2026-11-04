@@ -98,6 +98,7 @@ fn u64-i64(x U64) -> I64: @cast(x)
 
 fn size-f64(x Size) -> F64: @size-f64(x)
 fn size-f32(x Size) -> F32: @size-f32(x)
+fn u32-f32(x U32) -> F32: x u32-size() size-f32()
 
 # not sure if it should be here?
 fn int-f64 (x)

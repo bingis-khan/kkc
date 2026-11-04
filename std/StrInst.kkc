@@ -581,13 +581,13 @@ FloatStrIter
 inst IntoIter F64
 	into-iter (f _)
 		buf =& @undefined as Array 32 Cnile.AsciiChar
-		Cnile.snprintf1(buf Mem.cast-ptr(), 32, '%f', f)
+		Cnile.snprintf1(buf Mem.cast-ptr(), 32, '%g', f)
 		return FloatStrIter { buf: buf&, i: 0 }
 
 inst IntoIter F32
 	into-iter (f _)
 		buf =& @undefined as Array 32 Cnile.AsciiChar
-		Cnile.snprintf1(buf Mem.cast-ptr(), 32, '%f', @f32-f64(f))
+		Cnile.snprintf1(buf Mem.cast-ptr(), 32, '%g', @f32-f64(f))
 		return FloatStrIter { buf: buf&, i: 0 }
 
 inst IntoIter FloatStrIter
