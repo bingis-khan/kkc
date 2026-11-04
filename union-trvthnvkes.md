@@ -59,6 +59,11 @@ the reason is we don't know how it's gonna get used later.
 TODO: should I produce same unions or is it undefined, possibly optimization.
 
 <!--
+ when assoc-ing depends on the same type and evaluates to the same instance function, AND the arguments are of the same type, should use the same union.
+ NOTE: if we pass in a function to an instance function, even doe the function might have the same types, it's gonna be a different type cuz of the union.
+-->
+
+<!--
 7. like/due to **1** a class function instantiation produces a new call union. and association.
 
 TODO_8. a class function can later be unified with a new function. TODO: should it produce a new union? or unify with the current one? when it's in the same scope, it does not need to make a different union, but it doesn't really matter. when a new scope (env) is made, it must produce a new union - we may not unify - otherwise we modify the inner union for everyone.

@@ -1,0 +1,8 @@
+fn fun(x): x
+
+fun2 = fn x: x
+fun(fun2)
+
+y = 420
+fun2 <= fn x: x + y
+fun2

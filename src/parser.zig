@@ -171,7 +171,7 @@ pub fn parse(self: *Self) !Module {
             std.debug.print("Err {s}.\n", .{self.name});
             // TEMP
             var fakeNewline: bool = undefined;
-            const fakeHackCtx = AST.Ctx.init(&fakeNewline, self.typeContext);
+            const fakeHackCtx = AST.Ctx.init(&fakeNewline, self.typeContext, .{});
             fakeNewline = false; // SIKE (but obv. temporary)
 
             for (self.modules.errors.list.items) |err| {

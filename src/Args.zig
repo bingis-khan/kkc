@@ -18,6 +18,7 @@ hideErrors: bool = false,
 programArgs: []Arg = &.{},
 backend: ?Backend = null,
 exeName: ?Str = null,
+simplePrint: bool = false,
 
 pub const Arg = [*:0]const u8;
 
@@ -65,6 +66,7 @@ pub fn parse(args: std.process.Args.Iterator, al: std.mem.Allocator) !@This() {
                 .dontRun => opts.dontRun = true,
                 .@"dont-compile" => opts.dontCompile = true,
                 .@"hide-errors" => opts.hideErrors = true,
+                .@"simple-print" => opts.simplePrint = true,
                 .backend => {
                     if (argIt.next()) |barg| {
                         const bopt = std.meta.stringToEnum(Backend, barg) orelse {
@@ -122,6 +124,7 @@ const ProgramOption = enum {
     @"hide-errors",
     backend,
     @"no-prelude",
+    @"simple-print",
 };
 
 const ShortOption = enum {

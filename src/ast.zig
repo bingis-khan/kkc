@@ -1,6 +1,7 @@
 const Str = @import("common.zig").Str;
 const std = @import("std");
-const Unique = @import("UniqueGen.zig").Unique;
+const UniqueGen = @import("UniqueGen.zig");
+const Unique = UniqueGen.Unique;
 const TypeContext = @import("TypeContext.zig");
 const common = @import("common.zig");
 const Intrinsic = @import("Intrinsic.zig");
@@ -20,6 +21,24 @@ pub const Ctx = struct {
     mapTypes: ?*const Match,
     lastMatch: ?*const Match, // HACK: because envs have circular dependencies to the match...
 
+    simpleUnionMap: ?*UnionMapper = null,
+    simpleTVarMap: ?*TVarMapper = null,
+    printUnionNearFunction: bool = false,
+    simpleExpressions: bool = false,
+    skipIds: bool = false,
+
+    const UnionMapper = struct {
+        map: UnionMap,
+        newUnionCounter: UniqueGen,
+    };
+    const UnionMap = std.HashMap(Unique, usize, UniqueGen.Context, std.hash_map.default_max_load_percentage);
+
+    const TVarMapper = struct {
+        map: TVarMap,
+        tvarnum: usize,
+    };
+    const TVarMap = std.HashMap(TVar, usize, TVar.comparator(), std.hash_map.default_max_load_percentage);
+
     pub fn pp(typeContext: *const TypeContext, x: anytype) void {
         var hadNewline = false;
         var ctx = Ctx.init(&hadNewline, typeContext);
@@ -28,14 +47,36 @@ pub const Ctx = struct {
     }
 
     const Self = @This();
-    pub fn init(hadNewline: *bool, typeContext: *const TypeContext) Self {
+    pub fn init(hadNewline: *bool, typeContext: *const TypeContext, opts: struct { al: ?std.mem.Allocator = null, simple: bool = false }) Self {
         hadNewline.* = true;
+        var unionMap: ?*UnionMapper = null;
+        var tvarMap: ?*TVarMapper = null;
+        if (opts.simple) {
+            if (opts.al == null) {
+                std.debug.panic("must provide an allocator when simple-printing!!", .{});
+            }
+
+            // TODO(leak): it's for debugging so idc about it rn
+            unionMap = common.allocOne(opts.al.?, UnionMapper{
+                .map = UnionMap.init(opts.al.?),
+                .newUnionCounter = .init(),
+            }) catch @panic("oom");
+            tvarMap = common.allocOne(opts.al.?, TVarMapper{
+                .map = TVarMap.init(opts.al.?),
+                .tvarnum = 0,
+            }) catch @panic("oom");
+        }
         return Ctx{
             .indent = 0,
             .hadNewline = hadNewline,
             .typeContext = typeContext,
             .mapTypes = null,
             .lastMatch = null,
+            .simpleUnionMap = unionMap,
+            .simpleTVarMap = tvarMap,
+            .printUnionNearFunction = opts.simple,
+            .simpleExpressions = opts.simple,
+            .skipIds = opts.simple,
         };
     }
 
@@ -686,7 +727,18 @@ pub const Stmt = union(enum) {
                 c.print(.{ "= ", vm.varValue, "\n" });
             },
             .Expr => |expr| {
-                c.print(.{ expr, "\n" });
+                c.print(.{expr});
+
+                // smol thing - when a var is on its own line, print its type, cuz we probably wanna see it to debug the compiler.
+                if (c.simpleExpressions) {
+                    switch (expr.e) {
+                        .Var => {
+                            c.print(.{ " :: ", expr.t });
+                        },
+                        else => {},
+                    }
+                }
+                c.print(.{"\n"});
             },
             .If => |ifstmt| {
                 c.s("if ");
@@ -1066,7 +1118,9 @@ pub const Expr = struct {
     const Rec = *@This();
 
     pub fn print(self: @This(), c: Ctx) void {
-        c.s("(");
+        if (!c.simpleExpressions) {
+            c.s("(");
+        }
         switch (self.e) {
             .Var => |v| {
                 v.v.print(c);
@@ -1080,7 +1134,10 @@ pub const Expr = struct {
             .Str => |s| {
                 var stderr = std.debug.lockStderr(&.{});
                 defer std.debug.unlockStderr();
+
+                c.s("'");
                 std.zig.stringEscape(s, &stderr.file_writer.interface) catch unreachable;
+                c.s("'");
             },
             .Intrinsic => |intr| {
                 std.debug.print("{}", .{intr.intr.ty});
@@ -1133,6 +1190,9 @@ pub const Expr = struct {
             },
             .Call => |call| {
                 call.callee.print(c);
+                if (c.printUnionNearFunction) {
+                    c.typeContext.getType(call.callee.t).Fun.env.print(c);
+                }
                 c.s("(");
                 c.sepBy(call.args, ", ");
                 c.s(")");
@@ -1171,9 +1231,12 @@ pub const Expr = struct {
                 c.print("}");
             },
         }
-        c.s(" :: ");
-        self.t.print(c);
-        c.s(")");
+
+        if (!c.simpleExpressions) {
+            c.s(" :: ");
+            self.t.print(c);
+            c.s(")");
+        }
     }
 };
 
@@ -1389,21 +1452,29 @@ pub const UnionRef = struct {
 
     pub fn print(eid: @This(), c: Ctx) void {
         const eu = c.typeContext.getUnion(eid);
-
-        c.print(.{ eu.base.id, "_", eu.env.uid });
-
-        c.print("{");
-        for (eu.env.envs.items, 0..) |env, i| {
-            if (i > 0) {
-                c.print(", ");
+        if (c.simpleUnionMap) |unionmap| {
+            const muid = unionmap.map.getOrPut(eu.env.uid) catch @panic("oom");
+            if (!muid.found_existing) {
+                muid.value_ptr.* = unionmap.newUnionCounter.newUnique();
             }
+            const uid = muid.value_ptr.*;
+            c.print(.{ "{u", uid, "}" });
+        } else {
+            c.print(.{ eu.base.id, "_", eu.env.uid });
 
-            if (env.fun) |fun| {
-                c.print(.{ "(", fun.name, ")" });
+            c.print("{");
+            for (eu.env.envs.items, 0..) |env, i| {
+                if (i > 0) {
+                    c.print(", ");
+                }
+
+                if (env.fun) |fun| {
+                    c.print(.{ "(", fun.name, ")" });
+                }
+                c.print(.{ "(", env.match, ")" });
             }
-            c.print(.{ "(", env.match, ")" });
+            c.print("}");
         }
-        c.print("}");
     }
 
     // BRUH, this only makes sense when using mono, if it's used in parser, then bruh.
@@ -1511,9 +1582,30 @@ pub const TVar = struct {
     }
 
     pub fn print(self: @This(), c: Ctx) void {
-        c.sp("{s}#{}{s}", .{ self.name, self.uid, if (self.fieldsTotal) "T" else "" });
-        if (self.fields.len > 0) {
-            c.encloseSepBy(self.fields, ", ", " {", "}");
+        if (c.simpleTVarMap) |tvmap| {
+            const tvid = tvmap.map.getOrPut(self) catch @panic("oom");
+            if (!tvid.found_existing) {
+                tvid.value_ptr.* = tvmap.tvarnum;
+                tvmap.tvarnum += 1;
+            }
+            const tvnum = tvid.value_ptr.*;
+            TVar.printFromId(tvnum, c);
+        } else {
+            c.sp("{s}#{}{s}", .{ self.name, self.uid, if (self.fieldsTotal) "T" else "" });
+            if (self.fields.len > 0) {
+                c.encloseSepBy(self.fields, ", ", " {", "}");
+            }
+        }
+    }
+
+    pub fn printFromId(id: usize, c: Ctx) void {
+        var iid = id;
+        var chars: [1]u8 = .{'0'};
+        while (true) {
+            chars[0] = @intCast('a' + (iid % 26));
+            c.print(.{&chars});
+            iid /= 26;
+            if (iid == 0) break;
         }
     }
 };
@@ -1696,7 +1788,9 @@ pub const Var = struct {
 
     pub fn print(v: @This(), c: Ctx) void {
         c.s(v.name);
-        c.sp("{}", .{v.uid}); // ZIG BUG(?): there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
+        if (!c.skipIds) {
+            c.sp("{}", .{v.uid}); // ZIG BUG(?): there was a thing, where the stack trace was pointing to this place as an error, but actually it was in TyRef.
+        }
     }
 
     pub fn comparator() type {
@@ -1746,7 +1840,11 @@ pub const Data = struct {
     }
 
     pub fn print(self: *const @This(), c: Ctx) void {
-        c.sp("{s}@{}", .{ self.name, self.uid });
+        if (!c.skipIds) {
+            c.sp("{s}@{}", .{ self.name, self.uid });
+        } else {
+            c.sp("{s}", .{ self.name });
+        }
     }
 
     pub const StructureType = enum {

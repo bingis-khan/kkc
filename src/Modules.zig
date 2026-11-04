@@ -279,7 +279,10 @@ pub fn loadModule(
 
     // ctx
     var hadNewline: bool = undefined;
-    const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+    const ctx = ast.Ctx.init(&hadNewline, self.typeContext, .{
+        .simple = true,
+        .al = self.al,
+    });
 
     if (opts.printAST orelse self.opts.printAST) {
         module.AST.print(ctx);

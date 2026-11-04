@@ -91,7 +91,7 @@ pub fn Mono(Back: type) type {
 
             const monoStartTime = std.Io.Timestamp.now(io, .real);
             var self = Self{
-                .ctx = ast.Ctx.init(&hadNewline, typeContext),
+                .ctx = ast.Ctx.init(&hadNewline, typeContext, .{}),
                 .typeContext = typeContext,
                 .tymap = &TypeMap.Empty,
                 .backend = backend,

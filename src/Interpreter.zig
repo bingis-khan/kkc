@@ -126,7 +126,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             if (!try self.tryDeconstruct(decon.d, vref.getRefToMemory())) {
                 const l = decon.d.l;
                 var hadNewline = false;
-                const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                const ctx = ast.Ctx.init(&hadNewline, self.typeContext, .{});
                 (errr.Error.ErrCtx{
                     .module = l.module,
                     .c = ctx,
@@ -242,7 +242,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
                     const l = forl.decon.d.l;
 
                     var hadNewline = false;
-                    const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                    const ctx = ast.Ctx.init(&hadNewline, self.typeContext, .{});
                     (errr.Error.ErrCtx{
                         .module = l.module,
                         .c = ctx,
@@ -263,7 +263,7 @@ fn stmt(self: *Self, s: *ast.Stmt) Err!void {
             } else {
                 const l = sw.switchOn.l;
                 var hadNewline = false;
-                const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                const ctx = ast.Ctx.init(&hadNewline, self.typeContext, .{});
                 (errr.Error.ErrCtx{
                     .module = l.module,
                     .c = ctx,
@@ -1181,7 +1181,7 @@ fn expr(self: *Self, e: *ast.Expr) Err!Value {
             } else {
                 const l = sw.switchOn.l;
                 var hadNewline = false;
-                const ctx = ast.Ctx.init(&hadNewline, self.typeContext);
+                const ctx = ast.Ctx.init(&hadNewline, self.typeContext, .{});
                 (errr.Error.ErrCtx{
                     .module = l.module,
                     .c = ctx,
