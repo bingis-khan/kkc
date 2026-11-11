@@ -484,6 +484,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         .temp__isRecursive = true,
         .env = env,
         .body = undefined,
+        .escapees = undefined,
         .temp__calls = fun.temp__calls,
         .temp__finishedParsing = fun.temp__finishedParsing,
         .temp__mono = fun.temp__mono,
@@ -526,6 +527,8 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
 
     const scheme = try self.mkSchemeForFunction(&definedTVars, params.items, ret, env, fun.name.uid, &constraints_);
 
+    const escapees = try self.findEscapeesAndReportErrors(&scheme, env, nameLoc);
+
     // NOTE: I assign all at once so tha the compiler ensures I leave no field uninitialized.
     fun.* = AST.Function{
         .name = fun.name,
@@ -534,6 +537,7 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
         .body = fnBody,
         .scheme = scheme,
         .env = env,
+        .escapees = escapees,
         .temp__isRecursive = false,
         .temp__calls = fun.temp__calls,
         .temp__finishedParsing = true,
@@ -541,6 +545,12 @@ fn function(self: *Self, fun: *AST.Function, nameLoc: Loc) !*AST.Function {
     };
 
     return fun;
+}
+
+fn findEscapeesAndReportErrors(self: *Self, scheme: *const AST.Scheme, env: *const AST.Env, functionLocation: Loc) ![]AST.Escapee {
+    var escfinder = TypeContext.FindingEscapees.init(scheme, self.typeContext, self.arena, functionLocation);
+    try escfinder.fromFirstEnv(env);
+    return try escfinder.escapees.intoSlice();
 }
 
 fn finishBodyAndInferReturnType(self: *Self, fnBody: *std.ArrayList(*AST.Stmt), returnStatus: ReturnStatus, l: Loc) !void {
@@ -1117,6 +1127,7 @@ fn statement_(self: *Self, knots: *?Knots) ParserError!?*AST.Stmt {
                     .params = undefined,
                     .ret = undefined,
                     .body = undefined,
+                    .escapees = undefined,
                     .temp__isRecursive = true,
                     .temp__calls = std.ArrayList(AST.Function.Instantiation).empty, // self.arena
                     .temp__finishedParsing = false,
@@ -4739,6 +4750,7 @@ fn newFunction(self: *@This(), funNameTok: Token) !*AST.Function {
         .params = undefined,
         .ret = undefined,
         .body = undefined,
+        .escapees = undefined,
         .temp__isRecursive = true,
         .temp__calls = std.ArrayList(AST.Function.Instantiation).empty,
         .temp__finishedParsing = false,

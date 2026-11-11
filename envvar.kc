@@ -1,0 +1,6 @@
+fn uni(l a, r a)
+	pass
+
+x = @undefined
+fn f (n a)
+	uni(x, n)

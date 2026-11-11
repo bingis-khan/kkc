@@ -12,7 +12,7 @@
 	- [x] `(`, `)`
 - [x] import synonyms
 - [ ] pointer deconstructions are a footgun
-- [ ] let-statement resolves deconstructed variables BEFORE expression (so let (from, to) = Math.minmax(from, to) returns undefined values.)
+- [x] let-statement resolves deconstructed variables BEFORE expression (so let (from, to) = Math.minmax(from, to) returns undefined values.)
 	```
 		NextElem(next-elem)
 			# if the line below is commented out, we overwrite memory. (the full example does `case p&.next-it-type`, and the next modification overwrites it.)

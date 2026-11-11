@@ -103,7 +103,7 @@ fn runTests(Runner: anytype, io: std.Io, args: std.process.Args.Iterator, env: *
 
         if (result.errors) |errors| {
             var fakeNewline: bool = undefined;
-            const fakeHackCtx = AST.Ctx.init(&fakeNewline, result.typeContext.?);
+            const fakeHackCtx = AST.Ctx.init(&fakeNewline, result.typeContext.?, .{});
             fakeNewline = false; // SIKE (but obv. temporary)
             for (errors.list.items) |err| {
                 err.err.print(fakeHackCtx, err.module);

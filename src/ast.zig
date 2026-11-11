@@ -268,6 +268,33 @@ pub fn print(self: @This(), c: Ctx) void {
 }
 
 pub const Function = struct {
+    name: Var,
+    params: []DeconBase,
+    ret: Type,
+    body: []*Stmt,
+    scheme: Scheme,
+    escapees: []Escapee,
+    env: *Env,
+
+    temp__isRecursive: bool, // TODO(true-recursion): very hacky!!
+
+    temp__mono: Mono,
+
+    // TODO(environment-representation)
+    // so, uhh, there were problems properly adding proper environments. currently it's all fucked up.
+    // In short, problems and stuff Ive done. This will be useful, because even though i might change the way it gets typechecked, itll still be useful for monomorphising. currently, i tried the monomorphization-friendly version.
+    //  - top level calls were wrong and i discovered the weird environment making thingy.
+    //  - what even should I put in the env? i tried making themem properly monomorphised (if I figure it out and make it fast, mono is gonna be easy)
+    //     - in the future, i should make a basic version that would work for a polymorphic interpreter / bytecode compiler and by these metrics define correctness. it should also be fast.
+    //  - current version is requires tracking calls and if we're finished parsing
+    //   - tracking parsing state is because when we close over the function, we later use it to "spill over", so adding stuff to lower envs would duplicate env insts.
+    //  - with class calls, we need to add "monomorphised" versions of functions, which means we must track through which "match"es they are called, so we need to track calls to duplicate the environment through each type of call.
+    //  - as a hack, the call to addEnvIfPossible is split into two versions.
+    //  - the other version expands environment from the place of the function (because outer class functions can call "inner" functions, check 5_t36)
+    //  - but, when evaluating recursive class calls, we actively add calls, so we have to check if the call is coming from the same function we are expanding the environment from and only use its one match it came from.(all of it is in addEnvIfPossible)
+    temp__calls: std.ArrayList(Instantiation), // when retroactively adding stuff to env, we want to know if a function was even called and HOW.
+    temp__finishedParsing: bool,
+
     pub const Instantiation = struct {
         t: Type,
         m: *Match,
@@ -370,31 +397,6 @@ pub const Function = struct {
         }
     };
 
-    name: Var,
-    params: []DeconBase,
-    ret: Type,
-    body: []*Stmt,
-    scheme: Scheme,
-    env: *Env,
-    temp__isRecursive: bool, // TODO(true-recursion): very hacky!!
-
-    temp__mono: Mono,
-
-    // TODO(environment-representation)
-    // so, uhh, there were problems properly adding proper environments. currently it's all fucked up.
-    // In short, problems and stuff Ive done. This will be useful, because even though i might change the way it gets typechecked, itll still be useful for monomorphising. currently, i tried the monomorphization-friendly version.
-    //  - top level calls were wrong and i discovered the weird environment making thingy.
-    //  - what even should I put in the env? i tried making themem properly monomorphised (if I figure it out and make it fast, mono is gonna be easy)
-    //     - in the future, i should make a basic version that would work for a polymorphic interpreter / bytecode compiler and by these metrics define correctness. it should also be fast.
-    //  - current version is requires tracking calls and if we're finished parsing
-    //   - tracking parsing state is because when we close over the function, we later use it to "spill over", so adding stuff to lower envs would duplicate env insts.
-    //  - with class calls, we need to add "monomorphised" versions of functions, which means we must track through which "match"es they are called, so we need to track calls to duplicate the environment through each type of call.
-    //  - as a hack, the call to addEnvIfPossible is split into two versions.
-    //  - the other version expands environment from the place of the function (because outer class functions can call "inner" functions, check 5_t36)
-    //  - but, when evaluating recursive class calls, we actively add calls, so we have to check if the call is coming from the same function we are expanding the environment from and only use its one match it came from.(all of it is in addEnvIfPossible)
-    temp__calls: std.ArrayList(Instantiation), // when retroactively adding stuff to env, we want to know if a function was even called and HOW.
-    temp__finishedParsing: bool,
-
     fn print(self: @This(), c: Ctx) void {
         c.print(.{ self.name, " (" });
         c.sepBy(self.params, ", ");
@@ -406,6 +408,10 @@ pub const Function = struct {
         self.ret.print(c);
         c.s(" ## ");
         self.scheme.print(c);
+        if (self.escapees.len > 0) {
+            c.s(" #/ ");
+            c.encloseSepBy(self.escapees, ", ", "{", "}");
+        }
         c.s("\n");
 
         printBody(self.body, c);
@@ -416,6 +422,42 @@ pub const Function = struct {
         // TODO: what about "recursive" definitions?
         return self.name.uid >= other.name.uid;
     }
+};
+
+pub const Escapee = struct {
+    u: UnionRef,
+
+    // HACK: identify env in a union by its index in the union and not anything else. This is bad - we should be able to somehow refer to Env entries. FIXME
+    // (maybe the difficulty is also the reason why env escaping and stuff is super weird.)
+    i: usize,
+
+    e: *Env,
+
+    fn print(self: @This(), c: Ctx) void {
+        c.print(.{ "(", self.u, ", ", self.i, ", ", self.e, ")" });
+    }
+
+    pub const Context = struct {
+        tc: *const TypeContext,
+
+        pub fn eql(ctx: @This(), a: Escapee, b: Escapee) bool {
+            const au = ctx.tc.getUnion(a.u).env.uid;
+            const bu = ctx.tc.getUnion(b.u).env.uid;
+            if (au != bu) return false;
+
+            if (a.i != b.i) return false;
+
+            std.debug.assert(a.e == b.e);
+            return true;
+        }
+
+        pub fn hash(ctx: @This(), k: Escapee) u64 {
+            _ = ctx;
+            _ = k;
+            return 0;  // TEST WURST CASE
+        }
+        
+    };
 };
 
 pub const EnvFun = struct {
@@ -1452,29 +1494,31 @@ pub const UnionRef = struct {
 
     pub fn print(eid: @This(), c: Ctx) void {
         const eu = c.typeContext.getUnion(eid);
+
+        c.print("{");
         if (c.simpleUnionMap) |unionmap| {
             const muid = unionmap.map.getOrPut(eu.env.uid) catch @panic("oom");
             if (!muid.found_existing) {
                 muid.value_ptr.* = unionmap.newUnionCounter.newUnique();
             }
             const uid = muid.value_ptr.*;
-            c.print(.{ "{u", uid, "}" });
+            c.print(.{ "u", uid });
         } else {
             c.print(.{ eu.base.id, "_", eu.env.uid });
-
-            c.print("{");
-            for (eu.env.envs.items, 0..) |env, i| {
-                if (i > 0) {
-                    c.print(", ");
-                }
-
-                if (env.fun) |fun| {
-                    c.print(.{ "(", fun.name, ")" });
-                }
-                c.print(.{ "(", env.match, ")" });
-            }
-            c.print("}");
         }
+
+        for (eu.env.envs.items, 0..) |env, i| {
+            if (i > 0) {
+                c.print(",");
+            }
+            c.print(" ");
+
+            if (env.fun) |fun| {
+                c.print(.{ "(", fun.name, ")" });
+            }
+            c.print(.{ "(", env.match, ")" });
+        }
+        c.print("}");
     }
 
     // BRUH, this only makes sense when using mono, if it's used in parser, then bruh.
@@ -1843,7 +1887,7 @@ pub const Data = struct {
         if (!c.skipIds) {
             c.sp("{s}@{}", .{ self.name, self.uid });
         } else {
-            c.sp("{s}", .{ self.name });
+            c.sp("{s}", .{self.name});
         }
     }
 
@@ -1938,6 +1982,36 @@ pub const Scheme = struct {
 
     pub const Empty = empty();
 
+    pub fn containsTVar(self: *const @This(), tv: TVar) bool {
+        for (self.tvars) |tvornum| {
+            switch (tvornum) {
+                .TVar => |etv| if (etv.eq(tv)) return true,
+                else => {},
+            }
+        }
+
+        return false;
+    }
+
+    pub fn containsTNum(self: *const @This(), tn: TNum) bool {
+        for (self.tvars) |tvornum| {
+            switch (tvornum) {
+                .TNum => |etn| if (etn.eq(tn)) return true,
+                else => {},
+            }
+        }
+
+        return false;
+    }
+
+    pub fn containsUnion(self: *const @This(), u: UnionRef, tc: *const TypeContext) bool {
+        for (self.envVars) |un| {
+            if (un.unionEq(u, tc)) return true;
+        }
+
+        return false;
+    }
+
     pub fn print(self: @This(), c: Ctx) void {
         c.s("{");
         c.sepBy(self.tvars, ", ");
@@ -2005,6 +2079,10 @@ pub const TNum = struct {
 
     pub fn asVar(self: @This()) Var {
         return .{ .name = self.name, .uid = self.uid };
+    }
+
+    pub fn eq(self: @This(), other: @This()) bool {
+        return self.uid == other.uid;
     }
 };
 
@@ -2164,11 +2242,11 @@ pub const Match = struct {
             c.sepBy(self.tvars, " ");
         }
         if (self.envVars.len > 0) {
-            c.s(" |] ");
+            c.s(" |: ");
             c.sepBy(self.envVars, " ");
         }
         if (self.assocs.len > 0) {
-            c.s(" |> ");
+            c.s(" |; ");
             for (self.assocs, 0..) |maref, i| {
                 if (i >= 1) {
                     c.print(" ");

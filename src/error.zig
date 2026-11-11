@@ -236,6 +236,16 @@ pub const Error = union(enum) {
         loc: Loc,
     },
 
+    TVarWouldEscapeItsScope: struct {
+        tvar: ast.TVar,
+        loc: Loc,
+    },
+
+    UnionWouldEscapeItsScope: struct {
+        union_: ast.UnionRef,
+        loc: Loc,
+    },
+
     fn p(comptime fmt: anytype, args: anytype) void {
         std.debug.print(fmt ++ "\n", args);
     }
@@ -500,6 +510,14 @@ pub const Error = union(enum) {
             .TriedDefiningSecondMultilineOnSameLine => |e| {
                 err.atLocation(e.loc, .{ .label = .{"bruh, you defined a second multiline thing here"} });
             },
+
+            .TVarWouldEscapeItsScope => |e| {
+                err.atLocation(e.loc, .{ .label = .{"tvar ", e.tvar, " would escape its scope"} });
+            },
+            .UnionWouldEscapeItsScope => |e| {
+                err.atLocation(e.loc, .{ .label = .{"union ", e.union_, " would escape its scope"} });
+            },
+
         }
     }
 };
@@ -571,9 +589,8 @@ fn errorAtLocation(module: ModuleInfo, c: ast.Ctx, loc: Loc, labels: anytype) vo
 
         // PRINT THE UNDERLINE
         // TEMP: with normal stdio, just count the number once.
-        const lineLengthMeasure = std.Io.Writer.Discarding.init(&.{});
-        var measureWriter = lineLengthMeasure.writer;
-        measureWriter.print("{}", .{loc.line}) catch {};
+        var lineLengthMeasure = std.Io.Writer.Discarding.init(&.{});
+        lineLengthMeasure.writer.print("{}", .{loc.line}) catch {};
         for (0..lineLengthMeasure.fullCount() + 1) |_| {
             c.print(" "); // pad
         }

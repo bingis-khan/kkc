@@ -1,8 +1,26 @@
-fn fun(x): x
+# class A
+# 	fun (self _)
 
-fun2 = fn x: x
-fun(fun2)
+# inst A I32
+# 	fun (self _)
+# 		pass
 
-y = 420
-fun2 <= fn x: x + y
-fun2
+# fn f(x)
+# 	fun(x)
+
+# fn f2(x)
+# 	f(x)
+
+
+# fn g (x)
+# 	f2(x)
+# 	f2(x)
+
+# g(1)
+
+fn uni(l a, r a)
+	pass
+x = @undefined
+fn f (n a)
+	uni(x, fn())
+		_ = n

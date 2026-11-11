@@ -1096,8 +1096,6 @@ pub fn ftvsFromMatch(self: *Self, store: *FTVs, m: *const ast.Match) !void {
 
 pub fn ftvsFromEnv(self: *Self, envftvs: *FTVs, env: *ast.Env) !void {
     for (env.insts.items) |inst| {
-        // TODO: this is incorrect. For functions, I must extract ftvs from UNINSTANTIATED types.
-        // NOTE: but that's what I'm doing now??
         switch (inst.v) {
             .TNum => {},
             .Var => try self.ftvs(envftvs, inst.t),
@@ -1120,6 +1118,162 @@ pub fn ftvsFromEnv(self: *Self, envftvs: *FTVs, env: *ast.Env) !void {
         }
     }
 }
+
+// namespace idea?
+pub const FindingEscapees = struct {
+    scheme: *const ast.Scheme,
+    tc: *const Self,
+    loc: Loc,
+
+    escapees: Set(ast.Escapee, ast.Escapee.Context),
+    atHere: ?ast.Escapee = null,
+
+    pub fn init(scheme: *const ast.Scheme, tc: *const Self, al: std.mem.Allocator, functionLocation: Loc) @This() {
+        return .{ .scheme = scheme, .tc = tc, .escapees = .initContext(al, .{ .tc = tc }), .loc = functionLocation };
+    }
+
+    pub fn fromFirstEnv(self: *@This(), env: *const ast.Env) !void {
+        for (env.insts.items) |inst| {
+            switch (inst.v) {
+                .TNum => {},
+                .Var => try self.fromType(inst.t),
+
+                // NOTE: we also want to check the uninstantiated params,
+                // cause a function might have a non-polymorphic tyvar parameter and thus might unify to a tvar.
+                .Fun => |fun| {
+                    for (fun.params) |p| {
+                        try self.fromType(p.d.t);
+                    }
+
+                    try self.fromType(fun.ret);
+                },
+
+                .ClassFun => {},
+            }
+        }
+    }
+
+    // TODO(type-traverser): should be like normal ftvs
+    fn fromType(self: *@This(), tref: ast.Type) !void {
+        const t = self.tc.getType(tref);
+        switch (t) {
+            .TVar => |tv| {
+                if (self.scheme.containsTVar(tv)) {
+                    try self.addCurrent(tv);
+                }
+            },
+            .Fun => |fun| {
+                for (fun.args) |arg| {
+                    try self.fromType(arg);
+                }
+
+                if (self.scheme.containsUnion(fun.env, self.tc)) {
+                    try self.addCurrent(fun.env);
+                }
+
+                try self.fromUnion(fun.env);
+
+                try self.fromType(fun.ret);
+            },
+
+            .Anon => |fields| {
+                for (fields) |field_| {
+                    try self.fromType(field_.t);
+                }
+            },
+            .TyVar => |tyv| {
+                if (self.tc.getFieldsForTVar(tyv)) |tvs| {
+                    for (tvs.fields) |field_| {
+                        try self.fromType(field_.t);
+                    }
+                }
+            },
+            .Con => |con| {
+                try self.fromMatch(con.application);
+                // TODO: outer tvars
+            },
+        }
+    }
+
+    fn fromUnion(self: *@This(), uref: UnionRef) error{OutOfMemory}!void {
+        const prev = self.atHere;
+        defer self.atHere = prev;
+
+        const ur = self.tc.getUnion(uref);
+        for (ur.env.envs.items, 0..) |*env, i| {
+            self.atHere = .{ .u = ur.base, .i = i, .e = env.env };
+
+            for (env.env.insts.items) |ev| {
+                // now its normal type traversal.
+                switch (ev.v) {
+                    .Var => try self.fromType(ev.t),
+                    .Fun => try self.fromMatch(ev.m),
+                    .ClassFun => try self.fromMatch(ev.m),
+                    .TNum => |tnum| {
+                        if (self.scheme.containsTNum(tnum)) {
+                            try self.addCurrent(tnum);
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    fn fromMatch(self: *@This(), m: *const ast.Match) error{OutOfMemory}!void {
+        for (m.tvars) |tvn| {
+            switch (tvn) {
+                .Type => |t| {
+                    try self.fromType(t);
+                },
+                .Num => |tnum| {
+                    switch (self.tc.getNum(tnum)) {
+                        .TNum => |tn| {
+                            if (self.scheme.containsTNum(tn)) {
+                                try self.addCurrent(tn);
+                            }
+                        },
+                        else => {},
+                    }
+                },
+            }
+        }
+
+        for (m.envVars) |ev| {
+            if (self.scheme.containsUnion(ev, self.tc)) {
+                try self.addCurrent(ev);
+            }
+
+            try self.fromUnion(ev);
+        }
+
+        for (m.assocs) |massoc| {
+            if (massoc.*) |assoc| {
+                switch (assoc) {
+                    .Id => {},
+                    .InstFun => |ifun| {
+                        try self.fromMatch(ifun.m);
+                    },
+                }
+            }
+        }
+    }
+
+    fn addCurrent(self: *@This(), thing: anytype) !void {
+        if (self.atHere) |esc| {
+            try self.escapees.insert(esc);
+        } else {
+            if (@TypeOf(thing) == ast.TVar) {
+                try self.tc.errors.append(.{ .module = self.loc.module, .err = .{ .TVarWouldEscapeItsScope = .{ .tvar = thing, .loc = self.loc } } });
+            } else if (@TypeOf(thing) == ast.TNum) {
+                unreachable; // TODO
+            } else if (@TypeOf(thing) == ast.UnionRef) {
+                unreachable; // TODO
+            } else {
+                @compileError("addCurrent() type not supported");
+            }
+        }
+    }
+};
 
 // !! Only used in datatypes. !!
 pub const TVarStore = Set(ast.TVarOrNum, ast.TVarOrNum.comparator());

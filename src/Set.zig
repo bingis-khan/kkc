@@ -79,5 +79,16 @@ pub fn Set(comptime K: type, comptime Context: type) type {
                 .hash = try self.hash.clone(),
             };
         }
+
+        pub fn intoSlice(self: *const Self) ![]K {
+            var stuff: std.ArrayList(K) = .empty;
+
+            var it = self.iterator();
+            while (it.next()) |k| {
+                try stuff.append(self.hash.allocator, k.*);
+            }
+
+            return try stuff.toOwnedSlice(self.hash.allocator);
+        }
     };
 }

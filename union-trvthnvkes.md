@@ -55,8 +55,43 @@ the reason is we don't know how it's gonna get used later.
 	- that's because both can be "modified" by the caller.
 
 
---- assocs?
+--- assocs? and other comments
+
 TODO: should I produce same unions or is it undefined, possibly optimization.
+
+the problem:
+
+```
+inst A I32
+  # class fun uid: 24
+  fun (self :: I32)[](2) -> Unit ## {||}
+    pass
+    return Unit
+f (x :: a)[](2) -> Unit ## {a|{u0}|(1283)(a => ((a){u0} -> Unit) :$fun)}
+  fun{u0}(x)
+  return Unit
+f{u1 (f)(<(I32 |] {u2 (fun)(<()>)} |> [fun <()>])>)}(1)
+f{u3 (f)(<(I32 |] {u4 (fun)(<()>)} |> [fun <()>])>)}(2)
+```
+
+`fun` here has a different union cuz we instantiate it separately.
+sheeesh neger
+
+---
+
+it's visible when we create a new function - we have to reassociate all the stuff here.
+
+```
+g (x :: c)[@f2(1) <(c |: {u3} |; 1285)>((c){u4 (f2)(<(c |: {u3} |; 1285)>)} -> Unit), @f2(1) <(c |: {u5} |; 1286)>((c){u6 (f2)(<(c |: {u5} |; 1286)>)} -> Unit)](2) -> Unit ## {c|{u3}, {u5}|(1285)(c => ((c){u3} -> Unit) :$fun), (1286)(c => ((c){u5} -> Unit) :$fun)}
+  f2{u4 (f2)(<(c |: {u3} |; 1285)>)}(x)
+  f2{u6 (f2)(<(c |: {u5} |; 1286)>)}(x)
+  return Unit
+g{u7 (g)(<(I32 |: {u8 (fun)(<()>)} {u9 (fun)(<()>)} |; [fun <()>] [fun <()>])>)}(1)
+```
+
+here, g has 2 unions and 2 associations, even tho it can be only 1, since it depends on the same type. If the class function also creates new associations, we might need to
+
+*continued in my notes cuz it's gonna be less convoluted to link to stuff??????*
 
 <!--
  when assoc-ing depends on the same type and evaluates to the same instance function, AND the arguments are of the same type, should use the same union.
