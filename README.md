@@ -1,5 +1,7 @@
 # kkc - Kinda Kinda C
 
+> i think i have everything figured out. moved the final compiler to a private repo.
+
 A statically-typed procedural language that is a mix of C, Haskell and Python. It compiles via a C backend or can be run directly as a script.
 
 ```
